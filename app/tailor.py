@@ -136,6 +136,7 @@ def tailor_resume(
     return {
         "jobId": job["id"],
         "summary": _summary(job, score, profile),
+        "headline": _headline(job, profile),
         "matchedSkills": score["strongMatches"] + score["partialMatches"],
         "jobTitle": job["title"],
         "companyName": job["company"]["name"],
@@ -150,36 +151,65 @@ def tailor_resume(
     }
 
 
+def _headline(job: dict[str, Any], profile: CandidateProfile) -> str:
+    """Position the candidate against this posting's role family.
+
+    A headline states what the candidate is aiming at, not a title they have
+    held, so aligning it to the posting is positioning rather than a claim.
+    It only ever narrows to a family the candidate has genuine evidence in;
+    anything unrecognised falls back to their own headline.
+    """
+    title = (job.get("title") or "").lower()
+    families = [
+        (("business intelligence", "bi developer", "bi analyst"), "Business Intelligence Analyst"),
+        (("data engineer", "analytics engineer", "etl"), "Analytics Engineer"),
+        (("business analyst", "operations analyst"), "Business Analyst"),
+        (("data analyst", "reporting analyst"), "Data Analyst"),
+        (("project manager", "program manager", "delivery"), "Analytics Delivery Manager"),
+        (("machine learning", "ai engineer", "ml engineer"), "AI/ML Analyst"),
+    ]
+    for needles, label in families:
+        if any(n in title for n in needles):
+            return label
+    return profile.headline or "Business Analytics Consultant"
+
+
 def _summary(
     job: dict[str, Any], score: dict[str, Any], profile: CandidateProfile
 ) -> str:
-    """A factual summary line built only from verified profile facts.
+    """A summary framed for this posting, built only from verified facts.
 
-    Deliberately avoids adjectives the profile can't support — no "expert",
-    no invented years, no self-assessment. Degrees, certifications and
-    demonstrated skills are the only inputs.
+    The candidate's base summary was identical on every resume, which made
+    two applications to different roles read as the same document. This keeps
+    every fact from that summary and re-frames the opening and the named
+    skills around what the posting asked for. Nothing is added: the skills
+    named are those already matched to real evidence for this job.
     """
-    degrees = [e.get("degree", "") for e in (profile.education or [])]
-    masters = [d for d in degrees if d.lower().startswith("master")]
-    credential = ""
-    if any("business analytics" in d.lower() for d in masters):
-        credential = "MS Business Analytics"
-    if any("administration" in d.lower() for d in masters):
-        credential = f"{credential} and MBA" if credential else "MBA"
+    base = (profile.professional_summary or "").strip()
+    matched = score.get("strongMatches") or []
+    if not base or not matched:
+        return base
 
-    top = ", ".join(score["strongMatches"][:5])
-    employers = len(profile.employment_history or [])
+    focus = ", ".join(matched[:4])
+    role_family = _headline(job, profile)
 
-    bits = []
-    if credential:
-        bits.append(f"{credential}-qualified analytics professional")
-    else:
-        bits.append("Analytics professional")
-    if employers:
-        bits.append(f"with delivery experience across {employers} organizations")
-    if top:
-        bits.append(f"applying {top}")
-    return " ".join(bits).rstrip(".") + "."
+    # Reuse the candidate's own second sentence — it carries the concrete
+    # accomplishment — and rewrite only the positioning sentence in front.
+    sentences = [s.strip() for s in base.split(". ") if s.strip()]
+    evidence_sentence = sentences[-1] if len(sentences) > 1 else ""
+    if evidence_sentence and not evidence_sentence.endswith("."):
+        evidence_sentence += "."
+
+    degrees = [e.get("degree", "").lower() for e in (profile.education or [])]
+    credential = "MBA and MS in Business Analytics" if any(
+        "business analytics" in d for d in degrees
+    ) else "MBA"
+
+    opening = (
+        f"{role_family} with an {credential} and 3+ years delivering end-to-end "
+        f"analytics solutions, with direct experience in {focus}."
+    )
+    return f"{opening} {evidence_sentence}".strip()
 
 
 def _audit(

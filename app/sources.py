@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import html
 import re
+from itertools import zip_longest
 from typing import Any
 
 import httpx
@@ -224,11 +225,12 @@ async def fetch_every_source() -> tuple[list[dict[str, Any]], dict[str, int]]:
         tasks.append(_safe(remoteok(client)))
         results = await asyncio.gather(*tasks)
 
-    jobs: list[dict[str, Any]] = []
+    deduped: list[list[dict[str, Any]]] = []
     seen: set[tuple[str, str]] = set()
     counts: dict[str, int] = {}
 
     for batch in results:
+        kept: list[dict[str, Any]] = []
         for job in batch:
             # Dedupe across sources on (company, title) — aggregators reuse
             # the same postings that appear on company boards.
@@ -236,7 +238,18 @@ async def fetch_every_source() -> tuple[list[dict[str, Any]], dict[str, int]]:
             if key in seen:
                 continue
             seen.add(key)
-            jobs.append(job)
+            kept.append(job)
             counts[job["source"]] = counts.get(job["source"], 0) + 1
+        if kept:
+            deduped.append(kept)
+
+    # Interleave one job per source at a time. Concatenating the batches left
+    # the pool in fetch order, so the largest board sat entirely at the front:
+    # anything downstream that reads a prefix — scoring caps this, browsing
+    # without a query hits it too — saw only that one company. Round-robin
+    # makes any prefix representative of the whole pool.
+    jobs: list[dict[str, Any]] = []
+    for row in zip_longest(*deduped):
+        jobs.extend(job for job in row if job is not None)
 
     return jobs, counts

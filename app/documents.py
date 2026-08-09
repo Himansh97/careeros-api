@@ -249,14 +249,15 @@ def _render_pdf(resume: dict[str, Any], profile: Any,
         return t
 
     flow: list[Any] = [Paragraph(_escape(profile.name.upper()), name_s)]
-    if getattr(profile, "headline", ""):
-        flow.append(Paragraph(_escape(profile.headline), headline_s))
+    headline = resume.get("headline") or getattr(profile, "headline", "")
+    if headline:
+        flow.append(Paragraph(_escape(headline), headline_s))
     flow.append(Paragraph(_escape(_contact_line(profile)), contact_s))
     if getattr(profile, "credentials_line", []):
         flow.append(Paragraph(_escape("  |  ".join(profile.credentials_line)), creds_s))
     flow.append(Spacer(1, 3))
 
-    summary = getattr(profile, "professional_summary", "") or resume.get("summary", "")
+    summary = resume.get("summary") or getattr(profile, "professional_summary", "")
     if summary:
         flow += [Paragraph("PROFESSIONAL SUMMARY", section_s), rule(),
                  Paragraph(_escape(summary), body_s)]
@@ -328,8 +329,9 @@ def build_docx(resume: dict[str, Any], profile: Any) -> bytes:
         r.font.size = Pt(size)
 
     centered(profile.name.upper(), 16, bold=True)
-    if getattr(profile, "headline", ""):
-        centered(profile.headline, 10.5, italic=True)
+    headline = resume.get("headline") or getattr(profile, "headline", "")
+    if headline:
+        centered(headline, 10.5, italic=True)
     centered(_contact_line(profile), 9)
     if getattr(profile, "credentials_line", []):
         centered("  |  ".join(profile.credentials_line), 9, italic=True)
@@ -351,7 +353,7 @@ def build_docx(resume: dict[str, Any], profile: Any) -> bytes:
         rr = p.add_run("\t" + right)
         rr.bold = True
 
-    summary = getattr(profile, "professional_summary", "") or resume.get("summary", "")
+    summary = resume.get("summary") or getattr(profile, "professional_summary", "")
     if summary:
         section_heading("PROFESSIONAL SUMMARY")
         document.add_paragraph(summary)
