@@ -125,6 +125,12 @@ def tailor_resume(
     # matching more evidence keeps more of it. Bullets stay relevance-ordered
     # so anything trimmed later is the least relevant.
 
+    # Align wording to the posting's vocabulary before auditing, so the
+    # keyword-alignment score reflects what the employer will actually read.
+    from .phrasing import align_resume
+
+    align_resume({"sections": sections}, job.get("description", ""))
+
     resume_score, audit = _audit(job, score, sections)
 
     return {
