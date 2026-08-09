@@ -249,9 +249,6 @@ def _render_pdf(resume: dict[str, Any], profile: Any,
         return t
 
     flow: list[Any] = [Paragraph(_escape(profile.name.upper()), name_s)]
-    headline = resume.get("headline") or getattr(profile, "headline", "")
-    if headline:
-        flow.append(Paragraph(_escape(headline), headline_s))
     flow.append(Paragraph(_escape(_contact_line(profile)), contact_s))
     if getattr(profile, "credentials_line", []):
         flow.append(Paragraph(_escape("  |  ".join(profile.credentials_line)), creds_s))
@@ -329,9 +326,6 @@ def build_docx(resume: dict[str, Any], profile: Any) -> bytes:
         r.font.size = Pt(size)
 
     centered(profile.name.upper(), 16, bold=True)
-    headline = resume.get("headline") or getattr(profile, "headline", "")
-    if headline:
-        centered(headline, 10.5, italic=True)
     centered(_contact_line(profile), 9)
     if getattr(profile, "credentials_line", []):
         centered("  |  ".join(profile.credentials_line), 9, italic=True)
