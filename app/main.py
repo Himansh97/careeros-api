@@ -175,6 +175,10 @@ async def tailor(job_id: str) -> dict[str, Any]:
     resume = tailor_resume(job, s, p)
     resume["updatedAt"] = datetime.now(timezone.utc).isoformat()
 
+    from .resume_qa import check_resume
+
+    resume["qaFindings"] = check_resume(resume, p)
+
     record = upsert_application(job, s)
     if record:
         set_resume_score(record["id"], resume["resumeScore"])
