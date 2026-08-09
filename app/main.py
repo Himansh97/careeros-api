@@ -204,10 +204,26 @@ async def tailor(job_id: str) -> dict[str, Any]:
 
 @app.post("/api/jobs/{job_id}/outreach")
 async def outreach(job_id: str) -> dict[str, Any]:
+    from .outreach_store import upsert_outreach
+
     p = _profile()
     job = await _job_or_404(job_id)
     s = score_job(job, p)
-    return build_outreach(job, s, p)
+    draft = build_outreach(job, s, p)
+
+    # Persist so the Outreach page and follow-up scheduling have something to
+    # work from — generating a draft and forgetting it makes both useless.
+    record = upsert_outreach(
+        {
+            "jobId": job_id,
+            "company": job["company"]["name"],
+            "jobTitle": job["title"],
+            "emailSubject": draft["emailSubject"],
+            "emailDraft": draft["emailDraft"],
+            "linkedinDraft": draft["linkedinDraft"],
+        }
+    )
+    return {**draft, "outreachId": record.get("id"), "status": record.get("status")}
 
 
 @app.get("/api/applications")
@@ -324,6 +340,123 @@ async def contact_status(contact_id: str, req: ContactStatus) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="Contact not found")
     set_contact_status(contact_id, req.status)
     return get_contact(contact_id) or {}
+
+
+# ------------------------------------------------------------------ outreach
+@app.get("/api/outreach")
+async def outreach_list() -> dict[str, Any]:
+    from .outreach_store import list_outreach
+
+    return {"outreach": list_outreach()}
+
+
+class OutreachAction(BaseModel):
+    action: str  # "sent" | "replied"
+
+
+@app.post("/api/outreach/{outreach_id}/status")
+async def outreach_status(outreach_id: str, req: OutreachAction) -> dict[str, Any]:
+    from .automation import get_rules
+    from .outreach_store import get_outreach, mark_replied, mark_sent
+
+    if not get_outreach(outreach_id):
+        raise HTTPException(status_code=404, detail="Outreach not found")
+    if req.action == "sent":
+        return mark_sent(outreach_id, get_rules()["followUpDelayBusinessDays"]) or {}
+    if req.action == "replied":
+        return mark_replied(outreach_id) or {}
+    raise HTTPException(status_code=400, detail="action must be sent|replied")
+
+
+@app.get("/api/follow-ups")
+async def followups() -> dict[str, Any]:
+    from .outreach_store import list_followups
+
+    return {"followUps": list_followups()}
+
+
+# ------------------------------------------------------------ saved searches
+class SavedSearchPayload(BaseModel):
+    label: str
+    filters: dict[str, Any] = {}
+
+
+@app.get("/api/saved-searches")
+async def saved_searches() -> dict[str, Any]:
+    from .outreach_store import list_searches
+
+    return {"searches": list_searches()}
+
+
+@app.post("/api/saved-searches")
+async def create_saved_search(payload: SavedSearchPayload) -> dict[str, Any]:
+    from .outreach_store import save_search
+
+    return save_search(payload.label, payload.filters)
+
+
+@app.delete("/api/saved-searches/{search_id}")
+async def remove_saved_search(search_id: str) -> dict[str, Any]:
+    from .outreach_store import delete_search
+
+    delete_search(search_id)
+    return {"deleted": search_id}
+
+
+@app.post("/api/saved-searches/{search_id}/toggle")
+async def toggle_saved_search(search_id: str) -> dict[str, Any]:
+    from .outreach_store import list_searches, toggle_search
+
+    toggle_search(search_id)
+    return next((s for s in list_searches() if s["id"] == search_id), {})
+
+
+# --------------------------------------------------------------- automation
+@app.get("/api/automation")
+async def automation_status() -> dict[str, Any]:
+    from .automation import get_rules, is_running, latest_run
+
+    run = latest_run()
+    return {
+        "running": is_running(),
+        "rules": get_rules(),
+        "lastRun": run,
+        "note": (
+            "A run discovers, scores and tailors. It never submits an "
+            "application or sends a message — everything lands in Approvals."
+        ),
+    }
+
+
+class RunRequest(BaseModel):
+    maxTailor: int | None = None
+
+
+@app.post("/api/automation/run")
+async def automation_run(req: RunRequest) -> dict[str, Any]:
+    from .automation import run_autopilot
+
+    return await run_autopilot(req.maxTailor)
+
+
+class RulesPayload(BaseModel):
+    minimumFitToTailor: int | None = None
+    minimumResumeScore: int | None = None
+    maxApplicationsPerDay: int | None = None
+    submissionMode: str | None = None
+    emailMode: str | None = None
+    jobRecencyDays: int | None = None
+    autoRejectBelowFit: int | None = None
+    recruiterConfidenceMinimum: int | None = None
+    followUpDelayBusinessDays: int | None = None
+    targetQueries: list[str] | None = None
+
+
+@app.patch("/api/automation/rules")
+async def automation_rules(payload: RulesPayload) -> dict[str, Any]:
+    from .automation import save_rules
+
+    return save_rules(payload.model_dump(exclude_none=True))
 
 
 @app.get("/api/approvals")
