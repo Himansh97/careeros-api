@@ -77,6 +77,23 @@ def _edu_period(edu: dict[str, Any]) -> str:
     return period
 
 
+def _coursework_for(
+    entry: dict[str, Any], coursework: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Coursework claims belonging to this education entry.
+
+    An academic claim carries the institution in its employer field, so the
+    two match on that.
+    """
+    institution = (entry.get("institution") or "").strip().lower()
+    if not institution:
+        return []
+    return [
+        c for c in coursework
+        if (c.get("employer") or "").strip().lower() == institution
+    ]
+
+
 def _role_meta(profile: Any, employer: str) -> dict[str, Any]:
     for role in profile.employment_history or []:
         if role.get("employer") == employer:
@@ -294,12 +311,20 @@ def _render_pdf(resume: dict[str, Any], profile: Any,
     education = getattr(profile, "education", []) or []
     if education:
         flow += [Paragraph("EDUCATION", section_s), rule()]
+        coursework = resume.get("coursework") or []
         for e in education:
             left = f"<b>{_escape(e.get('degree',''))}</b> - {_escape(e.get('institution',''))}"
             if e.get("location"):
                 left += f", {_escape(e['location'])}"
             right = _edu_period(e)
             flow.append(split_row(left, f"<b>{_escape(right)}</b>", left_ratio=0.80))
+            items = [
+                ListItem(Paragraph(_escape(c["text"]), body_s), leftIndent=11)
+                for c in _coursework_for(e, coursework)
+            ]
+            if items:
+                flow.append(ListFlowable(items, bulletType="bullet", start="•",
+                                         leftIndent=12, bulletFontSize=7, spaceBefore=1))
 
     doc.build(flow)
     return buf.getvalue()
@@ -387,11 +412,14 @@ def build_docx(resume: dict[str, Any], profile: Any) -> bytes:
     education = getattr(profile, "education", []) or []
     if education:
         section_heading("EDUCATION")
+        coursework = resume.get("coursework") or []
         for e in education:
             left = f"{e.get('degree','')} - {e.get('institution','')}"
             if e.get("location"):
                 left += f", {e['location']}"
             split_row(left, _edu_period(e))
+            for c in _coursework_for(e, coursework):
+                document.add_paragraph(c["text"], style="List Bullet")
 
     buf = io.BytesIO()
     document.save(buf)

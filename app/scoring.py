@@ -113,6 +113,37 @@ def _find_evidence(
     return None, "gap"
 
 
+# Memoised scores, keyed by job id. Scoring is deterministic — same job, same
+# profile, same result — and a search re-scores its whole candidate set on
+# every filter change, so this turns repeat browsing from ~3s into ~0.
+#
+# The cache is tied to a specific profile OBJECT, and a reference to it is held
+# alongside, so the entry can only be reused while that exact profile is still
+# in play. Editing the evidence file reloads the profile, which replaces the
+# object and drops every stale score with it.
+_score_cache: dict[str, dict[str, Any]] = {}
+_score_cache_profile: CandidateProfile | None = None
+
+
+def score_job_cached(job: dict[str, Any], profile: CandidateProfile) -> dict[str, Any]:
+    """score_job, memoised per job id for the lifetime of a loaded profile."""
+    global _score_cache_profile
+
+    if _score_cache_profile is not profile:
+        _score_cache.clear()
+        _score_cache_profile = profile
+
+    job_id = job.get("id") or ""
+    if not job_id:
+        return score_job(job, profile)
+
+    hit = _score_cache.get(job_id)
+    if hit is None:
+        hit = score_job(job, profile)
+        _score_cache[job_id] = hit
+    return hit
+
+
 def score_job(job: dict[str, Any], profile: CandidateProfile) -> dict[str, Any]:
     """Score one job, returning the score plus a full explanation.
 

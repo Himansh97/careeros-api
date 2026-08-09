@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from .config import ALLOWED_ORIGINS, GREENHOUSE_COMPANIES
+from .config import ALLOWED_ORIGINS, GREENHOUSE_COMPANIES, SCORE_BUDGET
 from .contacts import (
     company_domain,
     get_contact,
@@ -22,7 +22,7 @@ from .providers import configured_providers
 from .discovery import fetch_all_jobs, filter_jobs, source_counts
 from .outreach import build_outreach
 from .profile import ProfileNotFound, load_profile
-from .scoring import score_job
+from .scoring import score_job_cached as score_job
 from .store import (
     add_approval,
     advance,
@@ -137,20 +137,48 @@ async def search(req: SearchRequest) -> dict[str, Any]:
     matched = filter_jobs(all_jobs, req.query, req.location, req.workArrangements)
 
     stamped = datetime.now(timezone.utc).isoformat()
+    # One query for the whole pipeline rather than a lookup per job — search
+    # scores dozens of jobs and each would otherwise open its own connection.
+    from .store import list_applications
+
+    by_job = {a["jobId"]: a for a in list_applications()}
+
+    # Full scoring parses whole descriptions, so it can't run on every job the
+    # sources return. It used to run on the first 120 in FETCH order, which
+    # meant the result was sorted by fit but chosen arbitrarily — a 98-scoring
+    # role at position 452 was invisible while sales roles led the list.
+    # Pre-rank on titles first (cheap), then deep-score the best candidates.
+    from .prescreen import rank_for_scoring
+
+    candidates, set_aside = rank_for_scoring(matched, p, SCORE_BUDGET)
+
     scored: list[dict[str, Any]] = []
-    # Scoring reads full descriptions, so cap the working set for responsiveness.
-    for job in matched[: max(req.limit * 3, 60)]:
+    for job in candidates:
         s = score_job(job, p)
         if req.minimumFit is not None and s["rawFitScore"] < req.minimumFit:
             continue
-        scored.append({**job, **s, "discoveredAt": stamped, "applicationStatus": "discovered"})
+        record = by_job.get(job["id"])
+        scored.append(
+            {
+                **job,
+                **s,
+                "discoveredAt": stamped,
+                "applicationStatus": record["status"] if record else "discovered",
+                "resumeScore": record.get("resumeScore") if record else None,
+            }
+        )
 
     scored.sort(key=lambda j: -j["rawFitScore"])
     return {
         "jobs": scored[: req.limit],
         "total": len(matched),
         "scored": len(scored),
-        "sources": ["Greenhouse"],
+        # Say plainly how much of the pool was actually evaluated. A ranked
+        # list built from a subset reads as "these are the best matches" when
+        # it is really "the best of what was looked at" — the UI needs to be
+        # able to tell the difference.
+        "setAside": set_aside,
+        "sources": sorted({j["source"] for j in matched}) or ["Greenhouse"],
     }
 
 
@@ -159,11 +187,19 @@ async def job_detail(job_id: str) -> dict[str, Any]:
     p = _profile()
     job = await _job_or_404(job_id)
     s = score_job(job, p)
+    # Report the real pipeline state, not a hardcoded "discovered". Both of
+    # these were fixed values, so a job that had already been tailored still
+    # came back with no resumeScore and status "discovered" — which made the
+    # UI offer "Tailor Resume" forever and silently re-run it on every click.
+    from .store import get_application
+
+    record = get_application(f"app_{job_id}")
     return {
         **job,
         **s,
         "discoveredAt": datetime.now(timezone.utc).isoformat(),
-        "applicationStatus": "discovered",
+        "applicationStatus": record["status"] if record else "discovered",
+        "resumeScore": record.get("resumeScore") if record else None,
     }
 
 
@@ -204,6 +240,74 @@ async def tailor(job_id: str) -> dict[str, Any]:
             },
         )
     return resume
+
+
+@app.put("/api/jobs/{job_id}/resume/bullets/{claim_id}")
+async def edit_bullet(job_id: str, claim_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Edit one bullet on the tailored resume.
+
+    The edit is checked against the claim it derives from, but a candidate
+    editing their own history is never blocked — see overrides.save_override.
+    Anything the evidence file can't support comes back as `warnings` and is
+    marked unverified on the resume rather than silently accepted as sourced.
+    """
+    from .overrides import save_override
+
+    text = (body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+
+    p = _profile()
+    claim = next((c for c in p.evidence if c.claim_id == claim_id), None)
+    if claim is None:
+        raise HTTPException(status_code=404, detail=f"no evidence claim '{claim_id}'")
+
+    result = save_override(
+        job_id, claim_id, text, claim.claim,
+        rationale=(body.get("rationale") or "").strip(),
+        author="user",
+    )
+    return {**result, "original": claim.claim}
+
+
+@app.delete("/api/jobs/{job_id}/resume/bullets/{claim_id}")
+async def revert_bullet(job_id: str, claim_id: str) -> dict[str, Any]:
+    """Revert one bullet to its generated wording."""
+    from .overrides import clear_override
+
+    clear_override(job_id, claim_id)
+    return {"ok": True, "jobId": job_id, "claimId": claim_id}
+
+
+@app.put("/api/jobs/{job_id}/resume/{field}")
+async def edit_document_field(job_id: str, field: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Edit the summary or headline for one job's resume."""
+    from .overrides import EDITABLE_FIELDS, save_document_edit
+
+    if field not in EDITABLE_FIELDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"field must be one of {', '.join(EDITABLE_FIELDS)}",
+        )
+    text = (body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+    return save_document_edit(job_id, field, text)
+
+
+@app.delete("/api/jobs/{job_id}/resume/edits")
+async def reset_resume_edits(job_id: str, scope: str = "user") -> dict[str, Any]:
+    """Undo edits for this job.
+
+    Defaults to the candidate's own edits, keeping the tailored resume.
+    `?scope=all` also discards the hand-tailored layer.
+    """
+    from .overrides import reset_edits
+
+    if scope not in {"user", "all"}:
+        raise HTTPException(status_code=400, detail="scope must be 'user' or 'all'")
+    reset_edits(job_id, scope)
+    return {"ok": True, "jobId": job_id, "scope": scope}
 
 
 @app.get("/api/jobs/{job_id}/resume.{fmt}")

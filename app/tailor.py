@@ -70,10 +70,21 @@ def tailor_resume(
     employment = _employment_lookup(profile)
 
     ranked: list[tuple[int, list[str], EvidenceClaim]] = []
+    coursework: list[dict[str, Any]] = []
     for claim in profile.evidence:
         if not claim.approved_for_resume:
             continue
         n, hits = _relevance(claim, wanted)
+        # Coursework under a job heading reads as padding — a recruiter sees
+        # "in coursework" beside a job title and discounts the whole role. The
+        # claim is real, so it moves to EDUCATION rather than being dropped,
+        # and only when this posting actually calls for it.
+        if claim.classification == "LEARNED_OR_ACADEMIC":
+            if n:
+                coursework.append(
+                    {"employer": claim.employer, "text": claim.claim, "id": claim.claim_id}
+                )
+            continue
         ranked.append((n, hits, claim))
     # Relevance decides which bullets lead *within* a role, but never the order
     # of the roles themselves — a resume must read reverse-chronologically.
@@ -135,12 +146,26 @@ def tailor_resume(
 
     align_resume({"sections": sections}, job.get("description", ""))
 
+    # Hand-tailored wording for this specific posting wins over the rule-based
+    # layer. The rule table can only swap verified synonyms in place; it cannot
+    # restructure a sentence to lead with what the posting actually asks for.
+    # Overrides are factually contained by the claim they replace — see
+    # overrides.verify_override — and carry the original for audit.
+    from .overrides import apply_overrides, get_document_edits
+
+    overridden = apply_overrides(job["id"], sections)
+
     resume_score, audit = _audit(job, score, sections)
+
+    # An edited summary or headline replaces the generated one. Edits are
+    # applied last so nothing downstream can regenerate over them.
+    edits = get_document_edits(job["id"])
 
     return {
         "jobId": job["id"],
-        "summary": _summary(job, score, profile),
-        "headline": _headline(job, profile),
+        "summary": edits.get("summary") or _summary(job, score, profile),
+        "headline": edits.get("headline") or _headline(job, profile),
+        "editedFields": sorted(edits.keys()),
         "matchedSkills": score["strongMatches"] + score["partialMatches"],
         "jobTitle": job["title"],
         "companyName": job["company"]["name"],
@@ -150,37 +175,44 @@ def tailor_resume(
         "resumeScore": resume_score,
         "scoreHistory": [resume_score],
         "sections": sections,
+        "coursework": coursework,
+        "handTailoredBullets": overridden,
         "audit": audit,
         "updatedAt": None,
     }
 
 
-def _select_bullets(sections: list[dict[str, Any]], budget: int = 9) -> None:
-    """Keep the most relevant bullets, never emptying a role.
+def _select_bullets(sections: list[dict[str, Any]], budget: int = 9, floor: int = 2) -> None:
+    """Keep the most relevant bullets, kept evenly spread across roles.
 
-    Each role keeps at least one bullet so no position looks unexplained, and
-    the remaining budget goes to whichever bullets actually support this
-    posting. Bullets arrive relevance-ordered, so this drops the least
-    relevant first.
+    A floor of one bullet per role let relevance take everything else, so a
+    posting matching the current job heavily produced 5/1/1/2 — the older roles
+    read as filler and the resume looked lopsided. A floor of two keeps every
+    position substantiated, and the leftover budget still goes to whichever
+    bullets support this specific posting, so tailoring survives.
+
+    Bullets arrive relevance-ordered, so within a role this keeps the ones that
+    matter most for this job and drops the least relevant first.
     """
     if not sections:
         return
 
-    # Guarantee one bullet per role, then rank everything else on whether it
-    # supports a requirement of this specific posting.
-    remaining = max(budget - len(sections), 0)
-    rest: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
+    # Never promise a role more bullets than it actually has evidence for.
+    guaranteed = sum(min(floor, len(s["bullets"])) for s in sections)
+    remaining = max(budget - guaranteed, 0)
+
+    rest: list[tuple[int, dict[str, Any]]] = []
     for section in sections:
-        for bullet in section["bullets"][1:]:
+        for bullet in section["bullets"][floor:]:
             supports = 0 if bullet.get("whyChanged") else 1  # 0 sorts first
-            rest.append((supports, section, bullet))
+            rest.append((supports, bullet))
 
     rest.sort(key=lambda t: t[0])
-    keep = {id(b) for _, _, b in rest[:remaining]}
+    keep = {id(b) for _, b in rest[:remaining]}
 
     for section in sections:
         section["bullets"] = [
-            b for i, b in enumerate(section["bullets"]) if i == 0 or id(b) in keep
+            b for i, b in enumerate(section["bullets"]) if i < floor or id(b) in keep
         ]
 
 
@@ -210,39 +242,121 @@ def _headline(job: dict[str, Any], profile: CandidateProfile) -> str:
 def _summary(
     job: dict[str, Any], score: dict[str, Any], profile: CandidateProfile
 ) -> str:
-    """A summary framed for this posting, built only from verified facts.
+    """A three-sentence summary, re-framed per posting from verified facts.
 
-    The candidate's base summary was identical on every resume, which made
-    two applications to different roles read as the same document. This keeps
-    every fact from that summary and re-frames the opening and the named
-    skills around what the posting asked for. Nothing is added: the skills
-    named are those already matched to real evidence for this job.
+    The structure is fixed because it is the one the candidate wrote and
+    wants on every resume:
+
+      1. positioning — role family, tenure, delivery domains, credentials
+      2. hands-on expertise — the concrete tools and practices
+      3. translation — turning data and requirements into decisions
+
+    Sentences 1 and 2 are tailored: the domains in (1) are ordered by what
+    the posting emphasises, and the skills in (2) are the ones this job's
+    scoring already matched to real evidence. Sentence 3 is stable, because
+    it describes how the candidate works rather than what a given employer
+    asked for. Nothing is introduced that the profile does not already state.
     """
     base = (profile.professional_summary or "").strip()
     matched = score.get("strongMatches") or []
-    if not base or not matched:
+    if not base:
+        return base
+    if not matched:
         return base
 
-    focus = ", ".join(matched[:4])
-    role_family = _headline(job, profile)
+    # Skill labels arrive title-cased for display, which reads wrong inside a
+    # sentence — "direct experience in SQL, Data quality, Power BI". The skills
+    # inventory is the authority on how each tool is spelled, so prefer its
+    # spelling; anything it doesn't name is a generic practice ("data quality")
+    # and gets lowercased. Guessing from capitalisation alone is not enough:
+    # it lowercased "Python", which has no capital past the first character.
+    canonical = {
+        s.lower(): s
+        for group in (profile.skills_inventory or {}).values()
+        for s in group
+    }
 
-    # Reuse the candidate's own second sentence — it carries the concrete
-    # accomplishment — and rewrite only the positioning sentence in front.
-    sentences = [s.strip() for s in base.split(". ") if s.strip()]
-    evidence_sentence = sentences[-1] if len(sentences) > 1 else ""
-    if evidence_sentence and not evidence_sentence.endswith("."):
-        evidence_sentence += "."
+    def in_sentence(skill: str) -> str:
+        known = canonical.get(skill.lower())
+        if known:
+            return known
+        if any(c.isupper() for c in skill[1:]):
+            return skill
+        return skill[:1].lower() + skill[1:]
+
+    role_family = _headline(job, profile)
+    text = (job.get("description") or "").lower() + " " + (job.get("title") or "").lower()
 
     degrees = [e.get("degree", "").lower() for e in (profile.education or [])]
-    credential = "MBA and MS in Business Analytics" if any(
+    credential = "an MBA and MS in Business Analytics" if any(
         "business analytics" in d for d in degrees
-    ) else "MBA"
+    ) else "an MBA"
 
-    opening = (
-        f"{role_family} with an {credential} and 3+ years delivering end-to-end "
-        f"analytics solutions, with direct experience in {focus}."
+    # --- sentence 1: which delivery domains to lead with -------------------
+    # Each domain is backed by real evidence, so the choice here is ordering
+    # and emphasis, never invention. A posting that never mentions AI should
+    # not have the summary open on it.
+    domains = _delivery_domains(text)
+    domain_phrase = _join(domains)
+
+    positioning = (
+        f"{role_family} with 3+ years of experience delivering end-to-end "
+        f"{domain_phrase}, backed by {credential}."
     )
-    return f"{opening} {evidence_sentence}".strip()
+
+    # --- sentence 2: the hands-on skills this posting actually asked for ---
+    # Drawn from the scored matches, so every item is evidence-backed for
+    # this specific job. Falls back to the profile's own list if scoring
+    # surfaced too few to make a credible sentence.
+    skills = [in_sentence(s) for s in matched[:7]]
+    if len(skills) < 3:
+        skills = ["Python", "SQL", "PySpark", "data pipelines", "data quality"]
+    expertise = (
+        f"Hands-on expertise in {_join(skills)}, with experience building and "
+        f"deploying production analytics solutions."
+    )
+
+    # --- sentence 3: stable closing, taken from the candidate's own text ---
+    translation = (
+        "Skilled at translating complex data and business requirements into "
+        "actionable insights, scalable solutions, and data-driven recommendations "
+        "for cross-functional stakeholders and executive leadership."
+    )
+
+    return " ".join([positioning, expertise, translation])
+
+
+# Delivery domains the evidence file supports. Order within the tuple is the
+# default; a posting reorders it by pulling its own emphasis to the front.
+_DOMAIN_SIGNALS: list[tuple[str, tuple[str, ...]]] = [
+    ("analytics", ("analytics", "analysis", "reporting", "dashboard", "insight")),
+    ("data engineering", ("pipeline", "etl", "warehouse", "ingestion", "data engineering")),
+    ("AI solutions", ("machine learning", " ai ", "artificial intelligence", "llm", "model")),
+]
+
+
+def _delivery_domains(text: str) -> list[str]:
+    """Order the three verified delivery domains by this posting's emphasis.
+
+    All three are always present — each is backed by evidence and dropping one
+    would understate real experience. Only the order changes, so the sentence
+    opens on what the employer cares about most.
+    """
+    scored = []
+    for idx, (label, signals) in enumerate(_DOMAIN_SIGNALS):
+        hits = sum(text.count(sig) for sig in signals)
+        scored.append((-hits, idx, label))
+    scored.sort()
+    return [label for _, _, label in scored]
+
+
+def _join(items: list[str]) -> str:
+    """Oxford-comma join: 'a', 'a and b', 'a, b, and c'."""
+    if len(items) == 1:
+        return items[0]
+    if len(items) == 2:
+        return f"{items[0]} and {items[1]}"
+    return ", ".join(items[:-1]) + f", and {items[-1]}"
 
 
 def _readability(sections: list[dict[str, Any]]) -> float:

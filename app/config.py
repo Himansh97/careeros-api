@@ -51,4 +51,11 @@ GREENHOUSE_COMPANIES: list[str] = [
 ]
 
 HTTP_TIMEOUT_SECONDS = 20.0
+
+# How many jobs get full evidence-based scoring on a search. Scoring parses a
+# whole description (~3.5ms each), so the ~3,000 jobs the sources return would
+# cost ~11s — too slow for an interactive request. Titles are pre-ranked first
+# (see prescreen.py) so this budget is spent on plausible roles rather than on
+# whichever jobs happened to be fetched first.
+SCORE_BUDGET = 600
 CACHE_TTL_SECONDS = 900  # 15 minutes
