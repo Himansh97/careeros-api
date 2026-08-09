@@ -93,7 +93,21 @@ async def fetch_all_jobs(force: bool = False) -> list[dict[str, Any]]:
     if cached and not force and ts - cached[0] < CACHE_TTL_SECONDS:
         return cached[1]
 
+    from .imported import list_imported
+
     jobs, counts = await fetch_every_source()
+
+    # Imported postings (Indeed etc.) sit alongside live ones. They're flagged
+    # so the UI can say they weren't fetched live.
+    existing = {(j["company"]["name"].lower(), j["title"].lower()) for j in jobs}
+    for j in list_imported():
+        key = (j["company"]["name"].lower(), j["title"].lower())
+        if key in existing:
+            continue
+        existing.add(key)
+        jobs.append(j)
+        counts[j["source"]] = counts.get(j["source"], 0) + 1
+
     _source_counts.clear()
     _source_counts.update(counts)
     _cache["all"] = (ts, jobs)

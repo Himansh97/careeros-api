@@ -234,6 +234,38 @@ async def application_advance(app_id: str, req: AdvanceRequest) -> dict[str, Any
     return get_application(app_id)
 
 
+class ImportedJob(BaseModel):
+    id: str | None = None
+    title: str
+    company: str
+    location: str | None = None
+    description: str = ""
+    applyUrl: str = ""
+    postedAt: str | None = None
+    workArrangement: str | None = None
+    salaryText: str | None = None
+
+
+class ImportRequest(BaseModel):
+    source: str
+    jobs: list[ImportedJob]
+
+
+@app.post("/api/jobs/import")
+async def import_external(req: ImportRequest) -> dict[str, Any]:
+    """Accept postings from sources a server can't legitimately call itself.
+
+    Indeed's public API is retired and partner-gated; LinkedIn prohibits
+    automated access. Postings gathered through a legitimate client-side
+    channel can be imported here and are then treated like any other job.
+    """
+    from .imported import import_jobs
+
+    stored = import_jobs([j.model_dump() for j in req.jobs], req.source)
+    await fetch_all_jobs(force=True)  # refresh cache so they appear immediately
+    return {"imported": stored, "source": req.source}
+
+
 @app.get("/api/jobs/{job_id}/contacts")
 async def job_contacts(job_id: str) -> dict[str, Any]:
     """Look up real recruiter contacts at the employer behind this posting."""
