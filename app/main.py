@@ -184,15 +184,15 @@ async def tailor(job_id: str) -> dict[str, Any]:
             {
                 "jobTitle": job["title"],
                 "companyName": job["company"]["name"],
-                "title": "Application ready to review",
+                "title": "Ready to apply",
                 "whatCareerOSWantsToDo": (
-                    f"Submit an application to {job['company']['name']} for "
-                    f"{job['title']} using the tailored resume "
-                    f"(score {resume['resumeScore']})."
+                    f"A tailored resume (score {resume['resumeScore']}) is ready for "
+                    f"{job['title']} at {job['company']['name']}. Open the posting to "
+                    f"apply — CareerOS does not submit on your behalf."
                 ),
                 "whyApprovalRequired": (
-                    "Submitting is irreversible and happens under your name, so it "
-                    "always waits for your review."
+                    "CareerOS never submits an application. It prepares everything "
+                    "and stops here so you review and apply yourself."
                 ),
                 "rawFitScore": s["rawFitScore"],
                 "resumeScore": resume["resumeScore"],

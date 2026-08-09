@@ -206,15 +206,15 @@ async def run_autopilot(max_tailor: int | None = None) -> dict[str, Any]:
                     {
                         "jobTitle": j["title"],
                         "companyName": j["company"]["name"],
-                        "title": "Application ready to review",
+                        "title": "Ready to apply",
                         "whatCareerOSWantsToDo": (
-                            f"Submit an application to {j['company']['name']} for "
-                            f"{j['title']} using the tailored resume "
-                            f"(score {resume['resumeScore']})."
+                            f"A tailored resume (score {resume['resumeScore']}) is ready "
+                            f"for {j['title']} at {j['company']['name']}. Open the posting "
+                            f"to apply — CareerOS does not submit on your behalf."
                         ),
                         "whyApprovalRequired": (
-                            "Submitting is irreversible and happens under your name, "
-                            "so it always waits for your review."
+                            "CareerOS never submits an application. It prepares "
+                            "everything and stops here so you review and apply yourself."
                         ),
                         "rawFitScore": s["rawFitScore"],
                         "resumeScore": resume["resumeScore"],
