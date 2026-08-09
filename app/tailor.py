@@ -7,6 +7,7 @@ isn't in career_evidence.json. Every bullet carries its source.
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from .profile import CandidateProfile, EvidenceClaim
@@ -121,9 +122,12 @@ def tailor_resume(
     # relevance ordering earlier had a 2022 role appearing above a current one.
     sections.sort(key=lambda s: _sort_key(employment.get(s["employer"])), reverse=True)
 
-    # No truncation here: the PDF exporter fits bullets to the page, so a job
-    # matching more evidence keeps more of it. Bullets stay relevance-ordered
-    # so anything trimmed later is the least relevant.
+    # Select rather than include everything. Every resume previously carried
+    # every claim, so bullet ORDER was the only thing that varied — and for two
+    # similar postings the order is identical, which is why two analyst
+    # applications came out 99.5% the same document. Dropping the claims a
+    # given posting has no use for is also just better resume practice.
+    _select_bullets(sections)
 
     # Align wording to the posting's vocabulary before auditing, so the
     # keyword-alignment score reflects what the employer will actually read.
@@ -149,6 +153,35 @@ def tailor_resume(
         "audit": audit,
         "updatedAt": None,
     }
+
+
+def _select_bullets(sections: list[dict[str, Any]], budget: int = 9) -> None:
+    """Keep the most relevant bullets, never emptying a role.
+
+    Each role keeps at least one bullet so no position looks unexplained, and
+    the remaining budget goes to whichever bullets actually support this
+    posting. Bullets arrive relevance-ordered, so this drops the least
+    relevant first.
+    """
+    if not sections:
+        return
+
+    # Guarantee one bullet per role, then rank everything else on whether it
+    # supports a requirement of this specific posting.
+    remaining = max(budget - len(sections), 0)
+    rest: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
+    for section in sections:
+        for bullet in section["bullets"][1:]:
+            supports = 0 if bullet.get("whyChanged") else 1  # 0 sorts first
+            rest.append((supports, section, bullet))
+
+    rest.sort(key=lambda t: t[0])
+    keep = {id(b) for _, _, b in rest[:remaining]}
+
+    for section in sections:
+        section["bullets"] = [
+            b for i, b in enumerate(section["bullets"]) if i == 0 or id(b) in keep
+        ]
 
 
 def _headline(job: dict[str, Any], profile: CandidateProfile) -> str:
@@ -212,6 +245,19 @@ def _summary(
     return f"{opening} {evidence_sentence}".strip()
 
 
+def _readability(sections: list[dict[str, Any]]) -> float:
+    """Penalise bullets a recruiter can't skim, not resume length."""
+    penalty = 0.0
+    for section in sections:
+        if len(section["bullets"]) > 6:
+            penalty += 0.1 * (len(section["bullets"]) - 6)
+    over_long = sum(
+        1 for s in sections for b in s["bullets"] if len(b["text"].split()) > 42
+    )
+    penalty += 0.05 * over_long
+    return max(0.0, 1.0 - penalty)
+
+
 def _audit(
     job: dict[str, Any], score: dict[str, Any], sections: list[dict[str, Any]]
 ) -> tuple[int, dict[str, Any]]:
@@ -226,14 +272,33 @@ def _audit(
     def pct(n: float, d: float) -> float:
         return (n / d) if d else 1.0
 
+    # A partial match is real evidence held to a lower standard, not an absence.
+    # scoring.py already credits it 0.5 when computing fit; the audit counted
+    # only exact matches, so the same resume scored strictly worse here than the
+    # fit score said it should. Weighting them identically removes that split.
+    def covered(rs: list[dict[str, Any]]) -> float:
+        return sum(1.0 if r["match"] == "exact" else 0.5 if r["match"] == "partial" else 0.0
+                   for r in rs)
+
+    # Achievements was pinned at 0.9 regardless of content, so it measured
+    # nothing. Score what a recruiter actually looks for: bullets carrying a
+    # quantified outcome.
+    quantified = sum(
+        1 for s in sections for b in s["bullets"]
+        if re.search(r"\d+\s*%|\b\d[\d,]{2,}\+?\b|\b\d+\+?\s+(?:markets|accounts|records)", b["text"])
+    )
+
     categories = [
-        ("requirement_coverage", "Requirement coverage", 25, pct(len(exact), max(len(reqs), 1))),
+        ("requirement_coverage", "Requirement coverage", 25, pct(covered(reqs), max(len(reqs), 1))),
         ("relevant_experience", "Relevant experience", 20, pct(bullets, 6)),
-        ("technical_skills", "Technical skills", 15, pct(len(exact), max(len(required), 1))),
-        ("achievements", "Achievements", 10, 0.9),
-        ("readability", "Readability", 10, 1.0 if bullets <= 8 else 0.8),
+        ("technical_skills", "Technical skills", 15, pct(covered(required), max(len(required), 1))),
+        ("achievements", "Achievements", 10, pct(quantified, max(bullets * 0.5, 1))),
+        # Total bullet count doesn't hurt readability — 13 bullets across four
+        # roles reads fine. What hurts is a wall of bullets under one role, or
+        # bullets too long to skim. Measure those instead of the total.
+        ("readability", "Readability", 10, _readability(sections)),
         ("ats_structure", "ATS structure", 10, 1.0),
-        ("keyword_alignment", "Keyword alignment", 5, pct(len(exact), max(len(reqs), 1))),
+        ("keyword_alignment", "Keyword alignment", 5, pct(covered(reqs), max(len(reqs), 1))),
         ("education", "Education", 5, 1.0),
     ]
 

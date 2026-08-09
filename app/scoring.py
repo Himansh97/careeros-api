@@ -24,12 +24,45 @@ def _contains(haystack: str, needle: str) -> bool:
     return re.search(rf"(?<!\w){re.escape(needle)}(?!\w)", haystack) is not None
 
 
+# Owning a tool implies the practice it exists for. Kept deliberately tiny and
+# explicit: each entry is an implication that holds unconditionally, and it only
+# ever yields a *partial* match, because the tool is evidenced while the specific
+# deliverable is not. Anything requiring a judgement call stays out — this table
+# is the obvious place for fabrication to creep in.
+TOOL_IMPLIES: dict[str, tuple[str, ...]] = {
+    "dashboarding": ("tableau", "power bi"),
+    "data visualization": ("tableau", "power bi"),
+}
+
+_STEM_SUFFIXES = ("ing", "es", "s")
+
+
+def _stem(word: str) -> str:
+    """Crude suffix strip so 'dashboarding' can meet 'dashboard'."""
+    for suffix in _STEM_SUFFIXES:
+        if word.endswith(suffix) and len(word) - len(suffix) >= 4:
+            return word[: -len(suffix)]
+    return word
+
+
 def _find_evidence(
     skill: str, profile: CandidateProfile
 ) -> tuple[EvidenceClaim | None, str]:
     """Return the best evidence for a skill and the match type."""
     needle = skill.lower()
     parts = [p for p in needle.replace("/", " ").split() if len(p) > 2]
+
+    # Industry experience is stated on every claim but was never consulted, so
+    # a posting asking for financial-services background scored it a gap while
+    # the candidate's current employer is a mortgage lender.
+    for claim in profile.evidence:
+        if not claim.approved_for_resume:
+            continue
+        industry = claim.industry.lower()
+        if _contains(industry, needle) or (
+            parts and all(_contains(industry, p) for p in parts)
+        ):
+            return claim, "exact"
 
     # Exact: the skill name appears in a claim's declared skills.
     for claim in profile.evidence:
@@ -57,11 +90,25 @@ def _find_evidence(
 
     # Partial: listed in the profile's skills inventory but with no evidence
     # bullet behind it — real, but weaker than a demonstrated accomplishment.
-    for group in profile.skills_inventory.values():
-        for listed in group:
-            low = listed.lower()
-            if low == needle or _contains(low, needle):
-                return None, "partial"
+    inventory = [s.lower() for group in profile.skills_inventory.values() for s in group]
+    for listed in inventory:
+        if listed == needle or _contains(listed, needle):
+            return None, "partial"
+
+    # Partial: a stemmed form matches ('dashboarding' vs a declared 'dashboard').
+    stem = _stem(needle)
+    if stem != needle:
+        for claim in profile.evidence:
+            if not claim.approved_for_resume:
+                continue
+            haystack = claim.claim.lower() + " " + " ".join(claim.skills).lower()
+            if _contains(haystack, stem):
+                return claim, "partial"
+
+    # Partial: the candidate owns a tool this practice is performed with.
+    for tool in TOOL_IMPLIES.get(needle, ()):
+        if any(tool in listed for listed in inventory):
+            return None, "partial"
 
     return None, "gap"
 
