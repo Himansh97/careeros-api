@@ -8,6 +8,12 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+# Secrets (e.g. HUNTER_API_KEY) live in a gitignored .env beside this package
+# so they never reach the repo or a command line that lands in shell history.
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
 CAREEROS_DIR = Path(
     os.environ.get("CAREEROS_DIR", Path.home() / "careeros")
 ).expanduser()

@@ -116,12 +116,36 @@ async def hunter_domain_search(domain: str, limit: int = 10) -> dict[str, Any]:
         except httpx.HTTPError as exc:
             return {"available": False, "reason": "request_failed", "detail": str(exc), "contacts": []}
 
-    if r.status_code == 401:
-        return {"available": False, "reason": "invalid_key", "detail": "Hunter rejected the API key.", "contacts": []}
-    if r.status_code == 429:
-        return {"available": False, "reason": "rate_limited", "detail": "Hunter free-tier quota exhausted for this month.", "contacts": []}
     if r.status_code != 200:
-        return {"available": False, "reason": "error", "detail": f"HTTP {r.status_code}", "contacts": []}
+        # Surface Hunter's own error rather than guessing at the cause. A 429
+        # can mean either a spent quota or a restricted account, and those
+        # need completely different fixes.
+        try:
+            errors = r.json().get("errors") or []
+        except ValueError:
+            errors = []
+        first = errors[0] if errors else {}
+        err_id = first.get("id") or ("invalid_key" if r.status_code == 401 else "error")
+        detail = first.get("details") or f"HTTP {r.status_code}"
+
+        hint = ""
+        if err_id == "restricted_account":
+            hint = (
+                " Hunter commonly restricts free accounts created with a personal "
+                "email (gmail/outlook) from domain search, and may ask you to "
+                "confirm your address or use a work domain. Log in to hunter.io "
+                "to see the specific reason."
+            )
+        elif err_id in {"too_many_requests", "usage_exceeded"}:
+            hint = " Free tier allows 25-50 searches per month."
+
+        return {
+            "available": False,
+            "reason": err_id,
+            "detail": detail + hint,
+            "domain": domain,
+            "contacts": [],
+        }
 
     data = r.json().get("data", {})
     people: list[dict[str, Any]] = []
