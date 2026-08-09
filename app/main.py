@@ -9,7 +9,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from .config import ALLOWED_ORIGINS, GREENHOUSE_COMPANIES
-from .discovery import fetch_all_jobs, filter_jobs
+from .contacts import (
+    company_domain,
+    get_contact,
+    hunter_domain_search,
+    hunter_key,
+    list_contacts,
+    save_contact,
+    set_contact_status,
+)
+from .discovery import fetch_all_jobs, filter_jobs, source_counts
 from .outreach import build_outreach
 from .profile import ProfileNotFound, load_profile
 from .scoring import score_job
@@ -57,11 +66,24 @@ async def _job_or_404(job_id: str) -> dict[str, Any]:
 async def health() -> dict[str, Any]:
     return {
         "status": "ok",
-        "sources": {"greenhouse": GREENHOUSE_COMPANIES},
-        "coverageNote": (
-            "Discovery covers only the Greenhouse boards listed here. It is a "
-            "real live source, but not the whole job market."
-        ),
+        "sources": ["Greenhouse", "Ashby", "The Muse", "Arbeitnow", "RemoteOK"],
+        "greenhouseCompanies": GREENHOUSE_COMPANIES,
+        "lastFetchCounts": source_counts(),
+        "contactLookup": {
+            "provider": "hunter.io",
+            "enabled": hunter_key() is not None,
+            "note": (
+                "Set HUNTER_API_KEY to enable live recruiter lookup (free tier: "
+                "25 domain searches/month). Manual contact entry always works."
+            ),
+        },
+        "notCovered": {
+            "linkedin": (
+                "No public jobs API; their terms prohibit automated access even "
+                "to publicly rendered pages. Not implemented by choice."
+            ),
+            "indeed": "No free public search API available to a server.",
+        },
     }
 
 
@@ -210,6 +232,64 @@ async def application_advance(app_id: str, req: AdvanceRequest) -> dict[str, Any
         raise HTTPException(status_code=404, detail="Application not found")
     advance(app_id, req.status, req.note or f"Moved to {req.status}")
     return get_application(app_id)
+
+
+@app.get("/api/jobs/{job_id}/contacts")
+async def job_contacts(job_id: str) -> dict[str, Any]:
+    """Look up real recruiter contacts at the employer behind this posting."""
+    job = await _job_or_404(job_id)
+    domain = company_domain(job["company"]["name"], job.get("applyUrl", ""))
+    if not domain:
+        return {
+            "available": False,
+            "reason": "no_domain",
+            "detail": (
+                "This posting is hosted on an ATS domain, so the employer's own "
+                "mail domain can't be derived from it. Add a contact manually."
+            ),
+            "contacts": [],
+        }
+    result = await hunter_domain_search(domain)
+    result["jobId"] = job_id
+    result["company"] = job["company"]["name"]
+    return result
+
+
+@app.get("/api/contacts")
+async def contacts() -> dict[str, Any]:
+    return {"contacts": list_contacts(), "lookupEnabled": hunter_key() is not None}
+
+
+class ContactPayload(BaseModel):
+    id: str | None = None
+    jobId: str | None = None
+    company: str
+    name: str
+    title: str | None = None
+    email: str | None = None
+    emailVerified: bool = False
+    linkedinUrl: str | None = None
+    confidence: int = 0
+    provider: str = "manual"
+    whySelected: str | None = None
+    status: str = "not_started"
+
+
+@app.post("/api/contacts")
+async def create_contact(payload: ContactPayload) -> dict[str, Any]:
+    return save_contact(payload.model_dump())
+
+
+class ContactStatus(BaseModel):
+    status: str
+
+
+@app.post("/api/contacts/{contact_id}/status")
+async def contact_status(contact_id: str, req: ContactStatus) -> dict[str, Any]:
+    if not get_contact(contact_id):
+        raise HTTPException(status_code=404, detail="Contact not found")
+    set_contact_status(contact_id, req.status)
+    return get_contact(contact_id) or {}
 
 
 @app.get("/api/approvals")

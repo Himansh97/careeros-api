@@ -81,23 +81,27 @@ async def _fetch_company(client: httpx.AsyncClient, slug: str) -> list[dict[str,
     return jobs
 
 
+_source_counts: dict[str, int] = {}
+
+
 async def fetch_all_jobs(force: bool = False) -> list[dict[str, Any]]:
-    """Fetch (and cache) every job across the configured Greenhouse boards."""
-    now = time.time()
+    """Fetch (and cache) every job across all configured sources."""
+    from .sources import fetch_every_source
+
+    ts = time.time()
     cached = _cache.get("all")
-    if cached and not force and now - cached[0] < CACHE_TTL_SECONDS:
+    if cached and not force and ts - cached[0] < CACHE_TTL_SECONDS:
         return cached[1]
 
-    async with httpx.AsyncClient(
-        timeout=HTTP_TIMEOUT_SECONDS, follow_redirects=True
-    ) as client:
-        results = await asyncio.gather(
-            *(_fetch_company(client, slug) for slug in GREENHOUSE_COMPANIES)
-        )
-
-    jobs = [job for batch in results for job in batch]
-    _cache["all"] = (now, jobs)
+    jobs, counts = await fetch_every_source()
+    _source_counts.clear()
+    _source_counts.update(counts)
+    _cache["all"] = (ts, jobs)
     return jobs
+
+
+def source_counts() -> dict[str, int]:
+    return dict(_source_counts)
 
 
 def filter_jobs(
