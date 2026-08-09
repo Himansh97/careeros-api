@@ -125,7 +125,7 @@ def tailor_resume(
     # padding, so cap bullets — most recent role gets the most room, since
     # that's what a recruiter actually reads.
     for i, section in enumerate(sections):
-        section["bullets"] = section["bullets"][: 4 if i == 0 else 2]
+        section["bullets"] = section["bullets"][: 5 if i == 0 else 3]
 
     resume_score, audit = _audit(job, score, sections)
 

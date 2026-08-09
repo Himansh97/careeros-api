@@ -60,6 +60,9 @@ class CandidateProfile:
     certifications: list[str]
     skills_inventory: dict[str, list[str]]
     employment_history: list[dict[str, Any]]
+    headline: str = ""
+    professional_summary: str = ""
+    credentials_line: list[str] = field(default_factory=list)
     evidence: list[EvidenceClaim] = field(default_factory=list)
     preferences: dict[str, Any] = field(default_factory=dict)
     application_answers: dict[str, Any] = field(default_factory=dict)
@@ -120,6 +123,9 @@ def load_profile() -> CandidateProfile:
         certifications=raw.get("certifications", []),
         skills_inventory=raw.get("current_skills_inventory", {}),
         employment_history=raw.get("employment_history", []),
+        headline=raw.get("headline", ""),
+        professional_summary=raw.get("professional_summary", ""),
+        credentials_line=raw.get("credentials_line", []),
         evidence=claims,
         preferences=_read_yaml("job_preferences.yaml"),
         application_answers=_read_yaml("application_answers.yaml"),
