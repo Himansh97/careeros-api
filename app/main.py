@@ -224,6 +224,15 @@ async def resume_document(job_id: str, fmt: str):
     if fmt == "pdf":
         data = build_pdf(resume, p)
         media = "application/pdf"
+
+        # Every exported PDF is validated for ATS readability. A failure is
+        # logged rather than raised — the candidate still gets their file,
+        # but the problem is not silent.
+        from .resume_qa import check_pdf
+
+        for issue in check_pdf(data, p):
+            if issue["severity"] == "high":
+                print(f"[ATS] {issue['type']}: {issue['detail']}")
     else:
         data = build_docx(resume, p)
         media = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"

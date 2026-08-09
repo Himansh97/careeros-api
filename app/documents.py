@@ -62,7 +62,7 @@ def _contact_line(profile: Any) -> str:
         .replace("www.", "")
         .rstrip("/")
     )
-    return "   ".join(b for b in [profile.phone, profile.email, linkedin, profile.location] if b)
+    return "  |  ".join(b for b in [profile.phone, profile.email, linkedin, profile.location] if b)
 
 
 def _edu_period(edu: dict[str, Any]) -> str:
@@ -71,9 +71,7 @@ def _edu_period(edu: dict[str, Any]) -> str:
     A lone graduation date leaves the employment gap the degree explains
     looking like an unexplained absence.
     """
-    grad = _pretty_month(edu.get("graduation_date", ""))
-    start = _pretty_month(edu.get("start_date", "")) if edu.get("start_date") else ""
-    period = f"{start} - {grad}" if start else grad
+    period = _pretty_month(edu.get("graduation_date", ""))
     if edu.get("gpa"):
         period += f", GPA {edu['gpa']}"
     return period
@@ -236,11 +234,11 @@ def _render_pdf(resume: dict[str, Any], profile: Any,
     def rule() -> HRFlowable:
         return HRFlowable(width="100%", thickness=0.7, color=DARK, spaceBefore=1, spaceAfter=4)
 
-    def split_row(left: str, right: str) -> Table:
+    def split_row(left: str, right: str, left_ratio: float = 0.74) -> Table:
         """Left text with a right-aligned counterpart, as LaTeX \\hfill does."""
         right_s = ParagraphStyle("R", parent=body_s, alignment=2)
         t = Table([[Paragraph(left, body_s), Paragraph(right, right_s)]],
-                  colWidths=[width * 0.72, width * 0.28])
+                  colWidths=[width * left_ratio, width * (1 - left_ratio)])
         t.setStyle(TableStyle([
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ("LEFTPADDING", (0, 0), (-1, -1), 0),
@@ -255,7 +253,7 @@ def _render_pdf(resume: dict[str, Any], profile: Any,
         flow.append(Paragraph(_escape(profile.headline), headline_s))
     flow.append(Paragraph(_escape(_contact_line(profile)), contact_s))
     if getattr(profile, "credentials_line", []):
-        flow.append(Paragraph(_escape("   ".join(profile.credentials_line)), creds_s))
+        flow.append(Paragraph(_escape("  |  ".join(profile.credentials_line)), creds_s))
     flow.append(Spacer(1, 3))
 
     summary = getattr(profile, "professional_summary", "") or resume.get("summary", "")
@@ -301,7 +299,7 @@ def _render_pdf(resume: dict[str, Any], profile: Any,
             if e.get("location"):
                 left += f", {_escape(e['location'])}"
             right = _edu_period(e)
-            flow.append(split_row(left, f"<b>{_escape(right)}</b>"))
+            flow.append(split_row(left, f"<b>{_escape(right)}</b>", left_ratio=0.80))
 
     doc.build(flow)
     return buf.getvalue()
@@ -332,7 +330,7 @@ def build_docx(resume: dict[str, Any], profile: Any) -> bytes:
         centered(profile.headline, 10.5, italic=True)
     centered(_contact_line(profile), 9)
     if getattr(profile, "credentials_line", []):
-        centered("   ".join(profile.credentials_line), 9, italic=True)
+        centered("  |  ".join(profile.credentials_line), 9, italic=True)
 
     def section_heading(text: str) -> None:
         p = document.add_paragraph()

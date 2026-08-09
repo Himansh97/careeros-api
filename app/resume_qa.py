@@ -164,3 +164,62 @@ def check_resume(resume: dict[str, Any], profile: Any) -> list[dict[str, str]]:
     order = {"high": 0, "medium": 1, "low": 2, "info": 3}
     findings.sort(key=lambda f: order.get(f["severity"], 3))
     return findings
+
+
+# --------------------------------------------------------------- ATS checks
+REQUIRED_SECTIONS = ["PROFESSIONAL SUMMARY", "SKILLS", "PROFESSIONAL EXPERIENCE", "EDUCATION"]
+
+# A resume must read as one linear column. These validate the rendered PDF
+# itself rather than the data that went into it, because layout is where ATS
+# parsing actually breaks.
+def check_pdf(pdf_bytes: bytes, profile: Any) -> list[dict[str, str]]:
+    from pypdf import PdfReader
+    import io as _io
+
+    findings: list[dict[str, str]] = []
+    reader = PdfReader(_io.BytesIO(pdf_bytes))
+    text = "".join(p.extract_text() or "" for p in reader.pages)
+
+    if len(text) < 800:
+        findings.append({
+            "severity": "high", "type": "ats_unreadable", "where": "document",
+            "detail": f"Only {len(text)} characters extracted — an ATS would read almost nothing.",
+            "fix": "Ensure text is real, not an image.",
+        })
+
+    # Sections must appear, and in the expected reading order.
+    positions = [(s, text.find(s)) for s in REQUIRED_SECTIONS]
+    for name, pos in positions:
+        if pos == -1:
+            findings.append({
+                "severity": "high", "type": "ats_missing_section", "where": name,
+                "detail": f"'{name}' heading not found in the extracted text.",
+                "fix": "Section headings must be plain text an ATS can match.",
+            })
+    found = [p for _, p in positions if p != -1]
+    if found != sorted(found):
+        findings.append({
+            "severity": "high", "type": "ats_section_order", "where": "document",
+            "detail": "Sections extract out of order, which usually means content is overlapping.",
+            "fix": "Check column widths — overlapping rows scramble parse order.",
+        })
+
+    # Contact details must survive extraction or the application is unreachable.
+    for label, value in (("email", profile.email), ("phone", profile.phone)):
+        token = (value or "").replace(" ", "").replace("(", "").replace(")", "").replace("-", "")
+        flat = text.replace(" ", "").replace("(", "").replace(")", "").replace("-", "")
+        if token and token not in flat:
+            findings.append({
+                "severity": "high", "type": "ats_missing_contact", "where": label,
+                "detail": f"{label} did not survive text extraction.",
+                "fix": "Contact details must be selectable text in the header.",
+            })
+
+    if len(reader.pages) > 2:
+        findings.append({
+            "severity": "medium", "type": "length", "where": "document",
+            "detail": f"{len(reader.pages)} pages.",
+            "fix": "Two pages is the practical ceiling at this experience level.",
+        })
+
+    return findings
