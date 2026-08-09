@@ -96,16 +96,79 @@ def _group_label(group: str) -> str:
     return label
 
 
-# --------------------------------------------------------------------- PDF
+def _page_count(pdf_bytes: bytes) -> int:
+    from pypdf import PdfReader
+
+    return len(PdfReader(io.BytesIO(pdf_bytes)).pages)
+
+
+def _trim(resume: dict[str, Any], lead: int, rest: int) -> dict[str, Any]:
+    """A copy of the resume with bullets capped per role.
+
+    Bullets arrive relevance-ordered, so trimming drops the least relevant
+    evidence first. A job matching more of the candidate's background keeps
+    more bullets — the page fills itself according to the role.
+    """
+    trimmed = dict(resume)
+    trimmed["sections"] = [
+        {**s, "bullets": s["bullets"][: lead if i == 0 else rest]}
+        for i, s in enumerate(resume.get("sections", []))
+    ]
+    return trimmed
+
+
+# Typographic density levels, loosest first. Tightening leading and font size
+# reclaims far more space than cutting bullets does, and costs nothing —
+# whereas every dropped bullet is real evidence the employer no longer sees.
+DENSITIES = [
+    {"body": 9.4, "lead": 12.6, "gap": 10, "margin": 0.62},
+    {"body": 9.1, "lead": 11.9, "gap": 9, "margin": 0.58},
+    {"body": 8.8, "lead": 11.2, "gap": 8, "margin": 0.55},
+    {"body": 8.5, "lead": 10.6, "gap": 7, "margin": 0.5},
+    {"body": 8.2, "lead": 10.1, "gap": 6, "margin": 0.45},
+]
+
+
 def build_pdf(resume: dict[str, Any], profile: Any) -> bytes:
+    """Render, measure, and re-render until the content fills one page.
+
+    Order matters: compress whitespace first, and only start dropping
+    bullets once the tightest readable typography still overflows. A page
+    that spills three lines onto a second sheet reads worse than either a
+    full single page or a genuinely full two.
+    """
+    # Pass 1 — keep every relevant bullet, tighten the layout.
+    last: bytes | None = None
+    for density in DENSITIES:
+        candidate = _render_pdf(resume, profile, density)
+        if _page_count(candidate) == 1:
+            return candidate
+        last = candidate
+
+    # Pass 2 — still overflowing, so trim least-relevant bullets at the
+    # tightest density.
+    tight = DENSITIES[-1]
+    for lead, rest in [(5, 3), (5, 2), (4, 2), (4, 1), (3, 1)]:
+        candidate = _render_pdf(_trim(resume, lead, rest), profile, tight)
+        if _page_count(candidate) == 1:
+            return candidate
+        last = candidate
+
+    return last or _render_pdf(resume, profile, tight)
+
+
+# --------------------------------------------------------------------- PDF
+def _render_pdf(resume: dict[str, Any], profile: Any,
+                density: dict[str, float] | None = None) -> bytes:
+    d = density or DENSITIES[1]
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
         buf,
         pagesize=LETTER,
-        leftMargin=0.6 * inch,
-        rightMargin=0.6 * inch,
-        topMargin=0.55 * inch,
-        bottomMargin=0.5 * inch,
+        leftMargin=d["margin"] * inch,
+        rightMargin=d["margin"] * inch,
+        topMargin=d["margin"] * inch,
+        bottomMargin=(d["margin"] - 0.1) * inch,
         title=f"{profile.name} - {resume['jobTitle']}",
         author=profile.name,
     )
@@ -122,12 +185,14 @@ def build_pdf(resume: dict[str, Any], profile: Any) -> bytes:
                                alignment=TA_CENTER)
     creds_s = ParagraphStyle("Creds", parent=base["Normal"], fontSize=8.8, leading=12,
                              alignment=TA_CENTER, fontName="Helvetica-Oblique")
-    section_s = ParagraphStyle("Section", parent=base["Heading2"], fontSize=10.5, leading=12,
-                               spaceBefore=9, spaceAfter=1, textColor=DARK,
+    section_s = ParagraphStyle("Section", parent=base["Heading2"],
+                               fontSize=d["body"] + 1.3, leading=d["lead"],
+                               spaceBefore=d["gap"], spaceAfter=1, textColor=DARK,
                                fontName="Helvetica-Bold")
-    body_s = ParagraphStyle("Body", parent=base["Normal"], fontSize=9.1, leading=12.2,
-                            alignment=TA_JUSTIFY)
-    sub_s = ParagraphStyle("Sub", parent=base["Normal"], fontSize=8.8, leading=11.4,
+    body_s = ParagraphStyle("Body", parent=base["Normal"], fontSize=d["body"],
+                            leading=d["lead"], alignment=TA_JUSTIFY)
+    sub_s = ParagraphStyle("Sub", parent=base["Normal"], fontSize=d["body"] - 0.3,
+                           leading=d["lead"] - 0.8,
                            fontName="Helvetica-Oblique",
                            textColor=colors.HexColor("#444444"))
 

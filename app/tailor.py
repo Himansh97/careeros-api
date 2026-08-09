@@ -121,11 +121,9 @@ def tailor_resume(
     # relevance ordering earlier had a 2022 role appearing above a current one.
     sections.sort(key=lambda s: _sort_key(employment.get(s["employer"])), reverse=True)
 
-    # Keep it to one page. At this experience level a two-page resume reads as
-    # padding, so cap bullets — most recent role gets the most room, since
-    # that's what a recruiter actually reads.
-    for i, section in enumerate(sections):
-        section["bullets"] = section["bullets"][: 5 if i == 0 else 3]
+    # No truncation here: the PDF exporter fits bullets to the page, so a job
+    # matching more evidence keeps more of it. Bullets stay relevance-ordered
+    # so anything trimmed later is the least relevant.
 
     resume_score, audit = _audit(job, score, sections)
 
