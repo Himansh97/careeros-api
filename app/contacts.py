@@ -109,10 +109,26 @@ async def hunter_domain_search(domain: str, limit: int = 10) -> dict[str, Any]:
 
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
         try:
+            # Ask for the HR/recruiting department first. An unfiltered search
+            # returns whoever Hunter has indexed most confidently — at a large
+            # company that's engineering and sales leadership, who are the
+            # wrong people to email about an open role.
             r = await client.get(
                 "https://api.hunter.io/v2/domain-search",
-                params={"domain": domain, "limit": limit, "api_key": key},
+                params={
+                    "domain": domain,
+                    "limit": limit,
+                    "department": "hr",
+                    "api_key": key,
+                },
             )
+            if r.status_code == 200 and not (r.json().get("data") or {}).get("emails"):
+                # No HR contacts indexed — fall back to a general search so the
+                # user at least sees who is reachable, clearly unflagged.
+                r = await client.get(
+                    "https://api.hunter.io/v2/domain-search",
+                    params={"domain": domain, "limit": limit, "api_key": key},
+                )
         except httpx.HTTPError as exc:
             return {"available": False, "reason": "request_failed", "detail": str(exc), "contacts": []}
 
