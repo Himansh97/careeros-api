@@ -69,7 +69,32 @@ def check_resume(resume: dict[str, Any], profile: Any) -> list[dict[str, str]]:
         if end is None or start is None:
             continue
         gap = start - end
-        if gap >= 4:
+        if gap < 4:
+            continue
+
+        # A degree spanning the gap explains it, provided the resume actually
+        # shows the study period rather than only a graduation date.
+        covered_by = None
+        for edu in profile.education or []:
+            e_start = _month_index(edu.get("start_date", ""))
+            e_end = _month_index(edu.get("graduation_date", ""))
+            if e_start and e_end and e_start <= end + 3 and e_end >= start - 3:
+                covered_by = edu
+                break
+
+        if covered_by:
+            findings.append({
+                "severity": "info",
+                "type": "timeline_gap_explained",
+                "where": f"{prev.get('employer')} → {nxt.get('employer')}",
+                "detail": (
+                    f"{gap} month gap is covered by {covered_by.get('degree')} "
+                    f"({covered_by.get('start_date')} to "
+                    f"{covered_by.get('graduation_date')}), shown in EDUCATION."
+                ),
+                "fix": "No action needed.",
+            })
+        else:
             findings.append({
                 "severity": "high" if gap >= 12 else "medium",
                 "type": "timeline_gap",
@@ -79,8 +104,8 @@ def check_resume(resume: dict[str, Any], profile: Any) -> list[dict[str, str]]:
                     f"{nxt.get('start_date')}. A recruiter will ask about it."
                 ),
                 "fix": (
-                    "If a degree covers this period, show the study dates in "
-                    "EDUCATION rather than only a graduation date."
+                    "If a degree covers this period, add its start date so "
+                    "EDUCATION shows the study period, not just graduation."
                 ),
             })
 
@@ -136,6 +161,6 @@ def check_resume(resume: dict[str, Any], profile: Any) -> list[dict[str, str]]:
                         "fix": "Legitimate, but be ready to explain it in a screen.",
                     })
 
-    order = {"high": 0, "medium": 1, "low": 2}
+    order = {"high": 0, "medium": 1, "low": 2, "info": 3}
     findings.sort(key=lambda f: order.get(f["severity"], 3))
     return findings

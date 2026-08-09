@@ -65,6 +65,20 @@ def _contact_line(profile: Any) -> str:
     return "   ".join(b for b in [profile.phone, profile.email, linkedin, profile.location] if b)
 
 
+def _edu_period(edu: dict[str, Any]) -> str:
+    """Show the study period, not just graduation.
+
+    A lone graduation date leaves the employment gap the degree explains
+    looking like an unexplained absence.
+    """
+    grad = _pretty_month(edu.get("graduation_date", ""))
+    start = _pretty_month(edu.get("start_date", "")) if edu.get("start_date") else ""
+    period = f"{start} - {grad}" if start else grad
+    if edu.get("gpa"):
+        period += f", GPA {edu['gpa']}"
+    return period
+
+
 def _role_meta(profile: Any, employer: str) -> dict[str, Any]:
     for role in profile.employment_history or []:
         if role.get("employer") == employer:
@@ -286,9 +300,7 @@ def _render_pdf(resume: dict[str, Any], profile: Any,
             left = f"<b>{_escape(e.get('degree',''))}</b> - {_escape(e.get('institution',''))}"
             if e.get("location"):
                 left += f", {_escape(e['location'])}"
-            right = _pretty_month(e.get("graduation_date", ""))
-            if e.get("gpa"):
-                right += f", GPA {e['gpa']}"
+            right = _edu_period(e)
             flow.append(split_row(left, f"<b>{_escape(right)}</b>"))
 
     doc.build(flow)
@@ -381,10 +393,7 @@ def build_docx(resume: dict[str, Any], profile: Any) -> bytes:
             left = f"{e.get('degree','')} - {e.get('institution','')}"
             if e.get("location"):
                 left += f", {e['location']}"
-            right = _pretty_month(e.get("graduation_date", ""))
-            if e.get("gpa"):
-                right += f", GPA {e['gpa']}"
-            split_row(left, right)
+            split_row(left, _edu_period(e))
 
     buf = io.BytesIO()
     document.save(buf)
