@@ -67,7 +67,15 @@ def _find_evidence(
 
 
 def score_job(job: dict[str, Any], profile: CandidateProfile) -> dict[str, Any]:
-    """Score one job, returning the score plus a full explanation."""
+    """Score one job, returning the score plus a full explanation.
+
+    Eligibility is evaluated first. A role the candidate legally cannot hold
+    is capped and flagged rather than being allowed to top the rankings on
+    skill match alone.
+    """
+    from .eligibility import check_eligibility
+
+    eligibility = check_eligibility(job, profile)
     reqs = extract_requirements(job.get("description", ""))
 
     requirements: list[dict[str, Any]] = []
@@ -111,12 +119,22 @@ def score_job(job: dict[str, Any], profile: CandidateProfile) -> dict[str, Any]:
     total = round(mandatory_pts + technical_pts + preferred_pts + evidence_pts + logistics_pts)
     total = max(0, min(100, total))
 
+    # An ineligible role must never outrank one the candidate can actually
+    # take. Skill fit is preserved separately so the reason stays legible.
+    skill_score = total
+    if eligibility["verdict"] == "INELIGIBLE":
+        total = 0
+    elif eligibility["verdict"] == "REVIEW_REQUIRED":
+        total = min(total, 60)
+
     strong = [r["label"] for r in requirements if r["match"] == "exact"]
     partial = [r["label"] for r in requirements if r["match"] == "partial"]
     gaps = [r["label"] for r in requirements if r["match"] == "gap"]
 
     return {
         "rawFitScore": total,
+        "skillScore": skill_score,
+        "eligibility": eligibility,
         "requirements": requirements,
         "strongMatches": strong,
         "partialMatches": partial,
@@ -130,13 +148,28 @@ def score_job(job: dict[str, Any], profile: CandidateProfile) -> dict[str, Any]:
             "education": 100,
             "logistics": 100,
         },
-        "explanation": _explain(total, strong, gaps, required),
+        "explanation": _explain(total, strong, gaps, required, eligibility, skill_score),
     }
 
 
 def _explain(
-    total: int, strong: list[str], gaps: list[str], required: list[dict[str, Any]]
+    total: int,
+    strong: list[str],
+    gaps: list[str],
+    required: list[dict[str, Any]],
+    eligibility: dict[str, Any] | None = None,
+    skill_score: int | None = None,
 ) -> str:
+    if eligibility and eligibility["verdict"] == "INELIGIBLE":
+        reasons = "; ".join(b["detail"] for b in eligibility["blockers"])
+        return (
+            f"INELIGIBLE — {reasons} Skills would otherwise score "
+            f"{skill_score}/100, but no resume changes overcome this."
+        )
+    if eligibility and eligibility["verdict"] == "REVIEW_REQUIRED":
+        reasons = "; ".join(w["detail"] for w in eligibility["warnings"])
+        return f"Capped pending review — {reasons} Skill match alone: {skill_score}/100."
+
     missing_required = [r["label"] for r in required if r["match"] == "gap"]
     bits = [f"Scored {total}/100 from {len(strong)} directly evidenced requirement(s)."]
     if missing_required:
