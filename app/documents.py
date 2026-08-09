@@ -38,14 +38,39 @@ def _escape(text: str) -> str:
     )
 
 
+def _pretty_month(token: str) -> str:
+    """'2025-05' -> 'May 2025'. Shared with the tailoring layer's formatting."""
+    from .tailor import _pretty_date
+
+    return _pretty_date(token)
+
+
 def safe_filename(name: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9]+", "_", name).strip("_")
     return cleaned or "resume"
 
 
 def _contact_line(profile: Any) -> str:
-    bits = [profile.location, profile.phone, profile.email, profile.linkedin_url]
+    linkedin = (profile.linkedin_url or "").replace("https://", "").replace(
+        "http://", "").replace("www.", "").rstrip("/")
+    bits = [profile.location, profile.phone, profile.email, linkedin]
     return "  |  ".join(b for b in bits if b)
+
+
+def _skills_line(resume: dict[str, Any], profile: Any) -> str:
+    """One skills line, led by what this posting actually asked for.
+
+    Dumping every category cost half a page and buried the relevant skills
+    among ones the employer never mentioned.
+    """
+    matched = [m for m in (resume.get("matchedSkills") or []) if m]
+    seen = {m.lower() for m in matched}
+    for group in (getattr(profile, "skills_inventory", {}) or {}).values():
+        for item in group:
+            if item.lower() not in seen:
+                seen.add(item.lower())
+                matched.append(item)
+    return ", ".join(matched[:22])
 
 
 def build_pdf(resume: dict[str, Any], profile: Any) -> bytes:
@@ -91,8 +116,13 @@ def build_pdf(resume: dict[str, Any], profile: Any) -> bytes:
         Paragraph(_escape(_contact_line(profile)), contact_style),
         Spacer(1, 7),
         HRFlowable(width="100%", thickness=0.6, color="#BBBBBB", spaceAfter=4),
-        Paragraph("EXPERIENCE", section_style),
     ]
+
+    if resume.get("summary"):
+        flow.append(Paragraph("SUMMARY", section_style))
+        flow.append(Paragraph(_escape(resume["summary"]), bullet_style))
+
+    flow.append(Paragraph("EXPERIENCE", section_style))
 
     for section in resume.get("sections", []):
         flow.append(Paragraph(_escape(section.get("heading", "")), role_style))
@@ -115,17 +145,13 @@ def build_pdf(resume: dict[str, Any], profile: Any) -> bytes:
             line = f"{e.get('degree','')} — {e.get('institution','')}"
             grad = e.get("graduation_date")
             if grad:
-                line += f" ({grad})"
+                line += f" ({_pretty_month(grad)})"
             flow.append(Paragraph(_escape(line), bullet_style))
 
-    skills = getattr(profile, "skills_inventory", {}) or {}
-    if skills:
+    skill_line = _skills_line(resume, profile)
+    if skill_line:
         flow.append(Paragraph("SKILLS", section_style))
-        for group, items in skills.items():
-            label = group.replace("_", " ").title()
-            flow.append(
-                Paragraph(f"<b>{_escape(label)}:</b> {_escape(', '.join(items))}", bullet_style)
-            )
+        flow.append(Paragraph(_escape(skill_line), bullet_style))
 
     certs = getattr(profile, "certifications", []) or []
     if certs:
@@ -166,6 +192,10 @@ def build_docx(resume: dict[str, Any], profile: Any) -> bytes:
         r.bold = True
         r.font.size = Pt(11)
 
+    if resume.get("summary"):
+        section_heading("SUMMARY")
+        document.add_paragraph(resume["summary"])
+
     section_heading("EXPERIENCE")
     for sec in resume.get("sections", []):
         p = document.add_paragraph()
@@ -185,17 +215,13 @@ def build_docx(resume: dict[str, Any], profile: Any) -> bytes:
         for e in education:
             line = f"{e.get('degree','')} — {e.get('institution','')}"
             if e.get("graduation_date"):
-                line += f" ({e['graduation_date']})"
+                line += f" ({_pretty_month(e['graduation_date'])})"
             document.add_paragraph(line)
 
-    skills = getattr(profile, "skills_inventory", {}) or {}
-    if skills:
+    skill_line = _skills_line(resume, profile)
+    if skill_line:
         section_heading("SKILLS")
-        for group, items in skills.items():
-            p = document.add_paragraph()
-            r = p.add_run(f"{group.replace('_', ' ').title()}: ")
-            r.bold = True
-            p.add_run(", ".join(items))
+        document.add_paragraph(skill_line)
 
     certs = getattr(profile, "certifications", []) or []
     if certs:
