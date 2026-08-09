@@ -284,6 +284,8 @@ def _render_pdf(resume: dict[str, Any], profile: Any,
         flow.append(split_row(left, _escape(dates)))
         if meta.get("subtitle"):
             flow.append(Paragraph(_escape(meta["subtitle"]), sub_s))
+        if meta.get("tools"):
+            flow.append(Paragraph(_escape(meta["tools"]), sub_s))
         bullets = [ListItem(Paragraph(_escape(b.get("text", "")), body_s), leftIndent=11)
                    for b in section.get("bullets", [])]
         if bullets:
@@ -376,9 +378,11 @@ def build_docx(resume: dict[str, Any], profile: Any) -> bytes:
         if meta.get("location"):
             heading += f", {meta['location']}"
         split_row(heading, section.get("subheading", "").split(" · ")[0])
-        if meta.get("subtitle"):
+        for line in (meta.get("subtitle"), meta.get("tools")):
+            if not line:
+                continue
             p = document.add_paragraph()
-            r = p.add_run(meta["subtitle"])
+            r = p.add_run(line)
             r.italic = True
             r.font.size = Pt(9)
         for b in section.get("bullets", []):
