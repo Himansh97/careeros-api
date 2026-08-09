@@ -93,6 +93,13 @@ def company_domain(company_name: str, apply_url: str) -> str | None:
     return host
 
 
+async def lookup_contacts(domain: str, limit: int = 10) -> dict[str, Any]:
+    """Find contacts via the provider chain, failing over as quotas run out."""
+    from .providers import find_contacts
+
+    return await find_contacts(domain, limit)
+
+
 async def hunter_domain_search(domain: str, limit: int = 10) -> dict[str, Any]:
     """Look up real, Hunter-verified addresses for a domain."""
     key = hunter_key()

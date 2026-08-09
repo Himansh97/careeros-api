@@ -12,12 +12,13 @@ from .config import ALLOWED_ORIGINS, GREENHOUSE_COMPANIES
 from .contacts import (
     company_domain,
     get_contact,
-    hunter_domain_search,
+    lookup_contacts,
     hunter_key,
     list_contacts,
     save_contact,
     set_contact_status,
 )
+from .providers import configured_providers
 from .discovery import fetch_all_jobs, filter_jobs, source_counts
 from .outreach import build_outreach
 from .profile import ProfileNotFound, load_profile
@@ -70,11 +71,12 @@ async def health() -> dict[str, Any]:
         "greenhouseCompanies": GREENHOUSE_COMPANIES,
         "lastFetchCounts": source_counts(),
         "contactLookup": {
-            "provider": "hunter.io",
-            "enabled": hunter_key() is not None,
+            "providers": configured_providers(),
+            "enabled": any(p["configured"] for p in configured_providers()),
             "note": (
-                "Set HUNTER_API_KEY to enable live recruiter lookup (free tier: "
-                "25 domain searches/month). Manual contact entry always works."
+                "Providers are tried in order and fail over automatically when a "
+                "quota is exhausted or an account is restricted. Manual contact "
+                "entry always works with no key at all."
             ),
         },
         "notCovered": {
@@ -281,7 +283,7 @@ async def job_contacts(job_id: str) -> dict[str, Any]:
             ),
             "contacts": [],
         }
-    result = await hunter_domain_search(domain)
+    result = await lookup_contacts(domain)
     result["jobId"] = job_id
     result["company"] = job["company"]["name"]
     return result
