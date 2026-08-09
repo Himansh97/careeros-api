@@ -202,6 +202,35 @@ async def tailor(job_id: str) -> dict[str, Any]:
     return resume
 
 
+@app.get("/api/jobs/{job_id}/resume.{fmt}")
+async def resume_document(job_id: str, fmt: str):
+    """Download the tailored resume as an ATS-friendly PDF or DOCX."""
+    from fastapi.responses import Response
+
+    from .documents import build_docx, build_pdf, safe_filename
+
+    if fmt not in {"pdf", "docx"}:
+        raise HTTPException(status_code=400, detail="format must be pdf or docx")
+
+    p = _profile()
+    job = await _job_or_404(job_id)
+    resume = tailor_resume(job, score_job(job, p), p)
+
+    stem = safe_filename(f"{p.name}_{job['company']['name']}_{job['title']}")
+    if fmt == "pdf":
+        data = build_pdf(resume, p)
+        media = "application/pdf"
+    else:
+        data = build_docx(resume, p)
+        media = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+    return Response(
+        content=data,
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{stem}.{fmt}"'},
+    )
+
+
 @app.post("/api/jobs/{job_id}/outreach")
 async def outreach(job_id: str) -> dict[str, Any]:
     from .outreach_store import upsert_outreach
