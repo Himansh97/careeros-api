@@ -218,8 +218,119 @@ async def anymail(client: httpx.AsyncClient, domain: str, limit: int) -> dict[st
     return {"ok": True, "provider": "anymailfinder.com", "organization": None, "contacts": people}
 
 
+# --------------------------------------------------------------------------
+# Apollo.io — people search filtered to recruiting titles at a domain.
+#
+# Apollo frequently returns a masked placeholder
+# (email_not_unlocked@domain.com) instead of a real address unless the plan
+# allows revealing it. That is still useful: the name, title and LinkedIn
+# profile are real, and they're enough to reach the person on LinkedIn. The
+# masked value is never presented as an email address.
+# --------------------------------------------------------------------------
+RECRUITER_TITLES = [
+    "recruiter",
+    "technical recruiter",
+    "talent acquisition",
+    "talent partner",
+    "head of talent",
+    "recruiting manager",
+    "people operations",
+]
+
+
+def _apollo_email(raw: str | None) -> tuple[str | None, bool]:
+    """Return (email, is_real). Apollo masks locked addresses."""
+    if not raw:
+        return None, False
+    if "email_not_unlocked" in raw or raw.startswith("not_unlocked"):
+        return None, False
+    return raw, True
+
+
+async def apollo(client: httpx.AsyncClient, domain: str, limit: int) -> dict[str, Any]:
+    key = os.environ.get("APOLLO_API_KEY")
+    if not key:
+        return {"ok": False, "reason": "no_key", "provider": "apollo.io"}
+
+    r = await client.post(
+        "https://api.apollo.io/api/v1/mixed_people/search",
+        headers={
+            "X-Api-Key": key,
+            "Content-Type": "application/json",
+            "Cache-Control": "no-cache",
+        },
+        json={
+            "q_organization_domains": domain,
+            "person_titles": RECRUITER_TITLES,
+            "page": 1,
+            "per_page": limit,
+        },
+    )
+
+    if r.status_code != 200:
+        detail = ""
+        try:
+            body = r.json()
+            detail = body.get("error") or body.get("message") or ""
+        except ValueError:
+            pass
+        reason = {
+            401: "unauthorized",
+            403: "plan_excludes_api",
+            402: "payment_required",
+            422: "unauthorized",
+            429: "too_many_requests",
+        }.get(r.status_code, f"http_{r.status_code}")
+        if reason == "plan_excludes_api" and not detail:
+            # Verified against a real free-plan key: people search returns 403
+            # regardless of the key being valid. Only organizations/enrich is
+            # reachable, and that returns company data, not people.
+            detail = (
+                "Apollo's free plan excludes the people-search API even with a "
+                "valid key. A paid plan is required for contact lookup."
+            )
+        return {
+            "ok": False,
+            "provider": "apollo.io",
+            "reason": reason,
+            "detail": detail or f"HTTP {r.status_code}",
+        }
+
+    payload = r.json()
+    people = []
+    for p in payload.get("people", []) or []:
+        name = (p.get("name") or "").strip() or " ".join(
+            filter(None, [p.get("first_name"), p.get("last_name")])
+        )
+        if not name:
+            continue
+        email, real = _apollo_email(p.get("email"))
+        people.append(
+            _person(
+                name=name,
+                title=p.get("title"),
+                email=email,
+                # Without a revealed address there's nothing to be confident
+                # about, so score the record rather than the (absent) email.
+                confidence=75 if real else 40,
+                verified=real and p.get("email_status") == "verified",
+                linkedin=p.get("linkedin_url"),
+                provider="apollo.io",
+            )
+        )
+    return {
+        "ok": True,
+        "provider": "apollo.io",
+        "organization": (payload.get("organizations") or [{}])[0].get("name")
+        if payload.get("organizations")
+        else None,
+        "contacts": people,
+    }
+
+
 PROVIDERS: list[tuple[str, Callable]] = [
     ("hunter.io", hunter),
+    ("apollo.io", apollo),
     ("tomba.io", tomba),
     ("anymailfinder.com", anymail),
 ]
@@ -228,6 +339,11 @@ PROVIDERS: list[tuple[str, Callable]] = [
 def configured_providers() -> list[dict[str, Any]]:
     return [
         {"name": "hunter.io", "configured": bool(os.environ.get("HUNTER_API_KEY")), "freeTier": "25-50 domain searches/month"},
+        {
+            "name": "apollo.io",
+            "configured": bool(os.environ.get("APOLLO_API_KEY")),
+            "freeTier": "credits vary by account; emails may stay masked",
+        },
         {
             "name": "tomba.io",
             "configured": bool(os.environ.get("TOMBA_API_KEY") and os.environ.get("TOMBA_SECRET")),
