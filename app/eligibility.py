@@ -24,6 +24,21 @@ CITIZENSHIP_PATTERNS = [
     r"must\s+be\s+authorized.{0,40}without\s+sponsorship",
 ]
 
+# ITAR / EAR export-control language. This is a separate category because the
+# wording rarely says "citizenship required" — it enumerates the statuses that
+# qualify as a US person. F-1/OPT is not among them, so a candidate can read
+# the paragraph and still miss that it excludes them.
+EXPORT_CONTROL_PATTERNS = [
+    r"\bitar\b",
+    r"export\s+control",
+    r"export\s+regulations",
+    r"\bu\.?s\.?\s+person(?:s)?\s+(?:status|requirement|as\s+defined)",
+    r"must\s+be\s+a?\s*\(?i\)?\s*u\.?s\.?\s+citizen\s+or\s+national",
+    r"citizen\s+or\s+national.{0,80}permanent\s+resident",
+    r"lawful\s+permanent\s+resident.{0,60}(?:refugee|asylee)",
+    r"\bear\b\s+(?:regulations|controlled)",
+]
+
 CLEARANCE_PATTERNS = [
     r"\bsecret\s+clearance\b",
     r"\btop\s+secret\b",
@@ -72,7 +87,20 @@ def check_eligibility(job: dict[str, Any], profile: Any) -> dict[str, Any]:
 
     citizenship = _hits(desc, CITIZENSHIP_PATTERNS)
     clearance = _hits(desc, CLEARANCE_PATTERNS)
+    export_control = _hits(desc, EXPORT_CONTROL_PATTERNS)
     no_sponsor = _hits(desc, NO_SPONSORSHIP_PATTERNS)
+
+    if export_control:
+        entry = {
+            "type": "export_control",
+            "detail": (
+                "Posting is subject to ITAR/export-control rules, which limit "
+                "eligibility to US citizens, permanent residents, refugees or "
+                "asylees. F-1/OPT does not qualify."
+            ),
+            "quote": export_control[0][:220],
+        }
+        (blockers if non_citizen else warnings).append(entry)
 
     if citizenship:
         entry = {
