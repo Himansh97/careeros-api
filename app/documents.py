@@ -96,6 +96,29 @@ def _group_label(group: str) -> str:
     return label
 
 
+def _prioritised_skills(resume: dict[str, Any], profile: Any) -> list[tuple[str, list[str]]]:
+    """Order skill groups, and skills within them, by what the job asked for.
+
+    The content is unchanged — every skill the candidate has is still listed.
+    Only the ordering adapts, so a recruiter scanning the first line sees the
+    skills their posting actually named instead of a fixed house order.
+    """
+    wanted = {w.lower() for w in (resume.get("matchedSkills") or [])}
+    groups = list((getattr(profile, "skills_inventory", {}) or {}).items())
+
+    def rank_item(item: str) -> int:
+        low = item.lower()
+        return 0 if any(w == low or w in low for w in wanted) else 1
+
+    ordered: list[tuple[str, list[str], int]] = []
+    for name, items in groups:
+        hits = sum(1 for i in items if rank_item(i) == 0)
+        ordered.append((name, sorted(items, key=rank_item), hits))
+
+    ordered.sort(key=lambda g: -g[2])
+    return [(name, items) for name, items, _ in ordered]
+
+
 def _page_count(pdf_bytes: bytes) -> int:
     from pypdf import PdfReader
 
@@ -226,10 +249,10 @@ def _render_pdf(resume: dict[str, Any], profile: Any,
         flow += [Paragraph("PROFESSIONAL SUMMARY", section_s), rule(),
                  Paragraph(_escape(summary), body_s)]
 
-    skills = getattr(profile, "skills_inventory", {}) or {}
+    skills = _prioritised_skills(resume, profile)
     if skills:
         flow += [Paragraph("SKILLS", section_s), rule()]
-        for group, items in skills.items():
+        for group, items in skills:
             flow.append(Paragraph(
                 f"<b>{_escape(_group_label(group))}:</b> {_escape(', '.join(items))}", body_s))
         certs = getattr(profile, "certifications", []) or []
@@ -321,10 +344,10 @@ def build_docx(resume: dict[str, Any], profile: Any) -> bytes:
         section_heading("PROFESSIONAL SUMMARY")
         document.add_paragraph(summary)
 
-    skills = getattr(profile, "skills_inventory", {}) or {}
+    skills = _prioritised_skills(resume, profile)
     if skills:
         section_heading("SKILLS")
-        for group, items in skills.items():
+        for group, items in skills:
             p = document.add_paragraph()
             r = p.add_run(f"{_group_label(group)}: ")
             r.bold = True
