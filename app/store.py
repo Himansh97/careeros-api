@@ -100,12 +100,36 @@ def upsert_application(job: dict[str, Any], score: dict[str, Any]) -> dict[str, 
     return get_application(app_id)
 
 
+# Statuses that mean the candidate has already acted. Re-tailoring must not
+# walk any of these backwards.
+_COMMITTED_STATUSES = ("applied", "interviewing", "offer", "rejected", "withdrawn")
+
+
 def set_resume_score(app_id: str, resume_score: int) -> None:
+    """Record a resume score, without rewinding an application already sent.
+
+    This unconditionally forced status back to "ready", so re-running /tailor
+    on a job the candidate had already applied to silently erased that fact —
+    the one piece of state in the pipeline they cannot reconstruct. A score
+    refresh is not evidence that an application was un-sent.
+    """
     with connect() as conn:
-        conn.execute(
-            "UPDATE applications SET resume_score=?, status=?, next_action=?, updated_at=? WHERE id=?",
-            (resume_score, "ready", "Review and approve", now(), app_id),
-        )
+        row = conn.execute(
+            "SELECT status FROM applications WHERE id=?", (app_id,)
+        ).fetchone()
+        committed = row and (row["status"] or "") in _COMMITTED_STATUSES
+
+        if committed:
+            conn.execute(
+                "UPDATE applications SET resume_score=?, updated_at=? WHERE id=?",
+                (resume_score, now(), app_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE applications SET resume_score=?, status=?, next_action=?, "
+                "updated_at=? WHERE id=?",
+                (resume_score, "ready", "Review and approve", now(), app_id),
+            )
         add_timeline(conn, app_id, f"Resume tailored — score {resume_score}")
 
 
