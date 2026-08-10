@@ -1,0 +1,41 @@
+name: CI
+
+# Encodes the bar the repo already meets rather than inventing a new one: both
+# test files pass locally today. They guard the two things most expensive to get
+# wrong — that a hand-written bullet stays contained by the evidence claim it
+# derives from, and that a tailored resume keeps a defensible shape.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compile every module
+        # Catches syntax and import-time errors across the app without needing
+        # the candidate's data files, which are gitignored and absent in CI.
+        run: python -m compileall -q app scripts
+
+      - name: Override containment tests
+        run: python tests/test_overrides.py
+
+      # tests/test_distribution.py is deliberately NOT run here: it calls
+      # load_profile(), which reads the candidate's real data files. Those are
+      # gitignored by design and absent in CI, so the test can only pass on a
+      # developer machine. Run it locally before shipping resume changes.
+

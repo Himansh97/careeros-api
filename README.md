@@ -1,5 +1,10 @@
 # careeros-api
 
+> **Part of CareerOS** — [careeros](https://github.com/Himansh97/careeros) (data + docs + state) · **careeros-api** (backend) · [careeros-web](https://github.com/Himansh97/careeros-web) (frontend)
+>
+> Current state: [`careeros/docs/STATE.md`](https://github.com/Himansh97/careeros/blob/main/docs/STATE.md)
+
+
 Backend for CareerOS. Live job discovery, evidence-based scoring, resume
 tailoring, and outreach drafting.
 

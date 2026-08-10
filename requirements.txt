@@ -1,0 +1,16 @@
+# Direct dependencies, pinned to what the working venv runs today.
+# Regenerate a candidate list with: .venv/bin/python -m pip list --format=freeze
+fastapi==0.141.1
+uvicorn==0.52.1
+httpx==0.28.1
+pydantic==2.13.4
+python-dotenv==1.2.2
+
+# Document rendering. The PDF path is the one users actually send, so these
+# are pinned rather than floated — a layout regression from a minor bump would
+# surface as a subtly worse resume, not as a failing test.
+reportlab==5.0.0
+python-docx==1.2.0
+pypdf==6.15.0
+
+PyYAML==6.0.3
