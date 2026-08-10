@@ -65,30 +65,42 @@ def hunter_key() -> str | None:
     return os.environ.get("HUNTER_API_KEY") or None
 
 
+# Hosts that are never the employer. An apply URL points at whoever hosts the
+# posting, which for an aggregator or ATS is not the company hiring — so a
+# lookup against it returns staff of the wrong organisation entirely. This
+# listed only ATS vendors, so a Dice-hosted AIT Global posting resolved to
+# dice.com and produced a Dice recruiter as the contact for an AIT Global job.
+# Returning nothing is correct here: no contact beats the wrong contact.
+THIRD_PARTY_HOSTS = (
+    # ATS vendors
+    "greenhouse.io", "ashbyhq.com", "lever.co", "workable.com",
+    "smartrecruiters.com", "jobvite.com", "icims.com", "myworkdayjobs.com",
+    "workday.com", "bamboohr.com", "breezy.hr", "recruitee.com",
+    "teamtailor.com", "personio.de", "ripplematch.com", "rippling.com",
+    # Job boards and aggregators
+    "indeed.com", "dice.com", "ziprecruiter.com", "linkedin.com",
+    "glassdoor.com", "monster.com", "careerbuilder.com", "simplyhired.com",
+    "themuse.com", "arbeitnow.com", "remoteok.com", "weworkremotely.com",
+    "builtin.com", "wellfound.com", "angel.co", "jobright.ai",
+    # URL shorteners — the destination is unknown until followed
+    "bit.ly", "tinyurl.com", "lnkd.in",
+)
+
+
 def company_domain(company_name: str, apply_url: str) -> str | None:
     """Infer the company's domain from its own apply URL.
 
     This is inference about a *company domain*, not about a person — and it's
-    checkable, since the URL genuinely belongs to the employer.
+    checkable, since the URL genuinely belongs to the employer. Returns None
+    whenever the URL belongs to a third party rather than the employer.
     """
     m = re.search(r"https?://([^/]+)", apply_url or "")
     if not m:
         return None
-    host = m.group(1).lower().lstrip("www.")
-    # Skip ATS-hosted domains; they aren't the employer's mail domain.
-    if any(
-        ats in host
-        for ats in (
-            "greenhouse.io",
-            "ashbyhq.com",
-            "lever.co",
-            "workable.com",
-            "themuse.com",
-            "arbeitnow.com",
-            "remoteok.com",
-            "smartrecruiters.com",
-        )
-    ):
+    host = m.group(1).lower()
+    if host.startswith("www."):
+        host = host[4:]
+    if any(bad in host for bad in THIRD_PARTY_HOSTS):
         return None
     return host
 
