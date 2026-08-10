@@ -392,6 +392,32 @@ def main() -> int:
         print("Nothing matched.", file=sys.stderr)
         return 1
 
+    # Drop anything not worth opening a form for. Selection previously filtered
+    # on fit score alone, so `--all` staged the ITAR and citizenship/clearance
+    # roles the eligibility gate had already ruled out, plus postings that had
+    # since been taken down. Walking a candidate through an application they
+    # cannot legally accept wastes their time at best.
+    kept: list[dict] = []
+    for a in targets:
+        job = api(f"/api/jobs/{a['jobId']}")
+        if job is None:
+            print(f"  SKIP {company_name(a)} — {a['title']}: posting no longer live")
+            continue
+        verdict = (job.get("eligibility") or {}).get("verdict")
+        if verdict == "INELIGIBLE":
+            why = "; ".join(
+                b.get("detail", b.get("type", ""))
+                for b in (job.get("eligibility") or {}).get("blockers", [])
+            )[:90]
+            print(f"  SKIP {company_name(a)} — {a['title']}: INELIGIBLE — {why}")
+            continue
+        kept.append(a)
+
+    if not kept:
+        print("Nothing eligible to apply to.", file=sys.stderr)
+        return 1
+    targets = kept
+
     profile = load_profile()
     stored = profile.application_answers
 
@@ -418,7 +444,7 @@ def main() -> int:
     with sync_playwright() as pw:
         # headless=False is the point, not a default: the candidate has to be
         # able to read the form and press the button.
-        browser = pw.chromium.launch(headless=False, slow_mo=120)
+        browser = pw.chromium.launch(headless=False, slow_mo=20)
         for a in targets:
             url = apply_form_url(a["jobId"], a.get("applyUrl") or "")
             if not url:
@@ -431,7 +457,7 @@ def main() -> int:
             page = browser.new_page()
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=60000)
-                page.wait_for_timeout(2500)
+                page.wait_for_timeout(800)
                 print(f"\n=== {company_name(a)} — {a['title']} ===")
                 print(prefill(page, answers, resume).render())
             except Exception as exc:

@@ -133,6 +133,21 @@ async def fetch_all_jobs(force: bool = False) -> list[dict[str, Any]]:
     return jobs
 
 
+def add_to_cache(job: dict[str, Any]) -> None:
+    """Make a single job visible immediately, without refetching everything.
+
+    Importing one pasted link used to call `fetch_all_jobs(force=True)`, which
+    re-hit five job boards for ~3,000 postings so that one job would resolve —
+    slow enough that the request timed out before returning. The cached list is
+    just a list; the new job belongs at the front of it.
+    """
+    cached = _cache.get("all")
+    if not cached:
+        return
+    ts, jobs = cached
+    _cache["all"] = (ts, [job] + [j for j in jobs if j["id"] != job["id"]])
+
+
 def source_counts() -> dict[str, int]:
     return dict(_source_counts)
 

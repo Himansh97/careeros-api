@@ -48,10 +48,22 @@ def _gap_line(score: dict[str, Any]) -> str:
     find it themselves and discard the application. Naming it costs little and
     is the only honest option — the resume never implies the experience, so the
     email must not either.
+
+    Only requirements from the *recognised* vocabulary are ever named. The
+    open-vocabulary layer exists so an unknown term still counts as a gap on
+    the scorecard, and for that it can afford to be noisy — but its output is
+    not fit to print. It produced "I haven't worked directly with Snowflake,
+    WEB, MIS" and "HP125, ERP, SSRS", where WEB, MIS and HP125 are fragments
+    scraped out of the posting rather than skills. Conceding a fake skill to a
+    recruiter is worse than conceding a real one.
     """
+    from .skills import SKILL_ALIASES
+
     missing = [
         r["label"] for r in score.get("requirements", [])
-        if r.get("match") == "gap" and r.get("importance") == "required"
+        if r.get("match") == "gap"
+        and r.get("importance") == "required"
+        and r["label"] in SKILL_ALIASES
     ]
     if not missing:
         return ""

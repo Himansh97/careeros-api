@@ -217,7 +217,7 @@ def score_job(job: dict[str, Any], profile: CandidateProfile) -> dict[str, Any]:
     from .eligibility import check_eligibility
 
     eligibility = check_eligibility(job, profile)
-    reqs = extract_requirements(job.get("description", ""))
+    reqs = extract_requirements(job.get("description", ""), job.get("title", ""))
 
     requirements: list[dict[str, Any]] = []
     for idx, (skill, is_required) in enumerate(reqs):

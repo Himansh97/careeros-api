@@ -71,6 +71,52 @@ def _hits(text: str, patterns: list[str]) -> list[str]:
     return found
 
 
+# Countries and cities that identify a posting as based outside the US. Kept to
+# unambiguous names: a false positive here silently hides a job the candidate
+# could have taken, which is worse than the noise it prevents.
+_FOREIGN_MARKERS = (
+    "united kingdom", "england", "scotland", "ireland", "germany", "france",
+    "spain", "portugal", "netherlands", "belgium", "sweden", "norway",
+    "denmark", "finland", "poland", "romania", "czech", "austria",
+    "switzerland", "italy", "greece", "brazil", "mexico", "argentina",
+    "colombia", "chile", "peru", "canada", "australia", "new zealand",
+    "singapore", "japan", "china", "hong kong", "korea", "philippines",
+    "vietnam", "thailand", "malaysia", "indonesia", "israel", "turkey",
+    "south africa", "nigeria", "kenya", "egypt", "uae", "dubai",
+    "london", "dublin", "berlin", "munich", "paris", "madrid", "barcelona",
+    "amsterdam", "stockholm", "copenhagen", "warsaw", "prague", "vienna",
+    "zurich", "milan", "são paulo", "sao paulo", "mexico city", "toronto",
+    "vancouver", "montreal", "sydney", "melbourne", "tokyo", "bangalore",
+    "bengaluru", "hyderabad", "mumbai", "pune", "chennai", "delhi", "noida",
+    "gurgaon", "gurugram", "manila", "tel aviv",
+)
+
+# Signals that a posting is US-based even when a foreign marker also appears —
+# "Remote, Canada; Remote, US" lists both, and a US option makes it viable.
+_US_MARKERS = (
+    "united states", " usa", " u.s.", "remote, us", "remote - us", "us remote",
+    "remote (us", "anywhere in the us",
+)
+
+
+def _foreign_location(job: dict[str, Any]) -> str | None:
+    """The non-US place this role is based, or None.
+
+    Only the location field is consulted. Descriptions mention offices and
+    customers all over the world, so scanning them would flag almost everything.
+    """
+    location = (job.get("location") or "").lower()
+    if not location or "not specified" in location:
+        return None
+    if any(m in location for m in _US_MARKERS):
+        return None
+    # A US state abbreviation or "remote" alone means it is reachable.
+    if re.search(r",\s*[A-Z]{2}\b", job.get("location") or ""):
+        return None
+    hit = next((m for m in _FOREIGN_MARKERS if m in location), None)
+    return hit.title() if hit else None
+
+
 def check_eligibility(job: dict[str, Any], profile: Any) -> dict[str, Any]:
     """Return a verdict plus the exact wording that triggered it."""
     desc = job.get("description", "") or ""
@@ -84,6 +130,25 @@ def check_eligibility(job: dict[str, Any], profile: Any) -> dict[str, Any]:
 
     blockers: list[dict[str, str]] = []
     warnings: list[dict[str, str]] = []
+
+    # A role based outside the country the candidate is authorised to work in is
+    # a hard blocker of exactly the same kind as ITAR — the work authorisation
+    # simply does not reach it. The gate only read the description before, so a
+    # Dublin/London People Analytics role scored 96 and led the shortlist, and a
+    # São Paulo posting sat alongside it. F-1 OPT authorises work in the US only.
+    foreign = _foreign_location(job)
+    if foreign and non_citizen:
+        blockers.append(
+            {
+                "type": "work_location",
+                "detail": (
+                    f"Role is based in {foreign}. F-1/OPT authorises employment "
+                    "in the United States only, and confers no right to work "
+                    "abroad."
+                ),
+                "quote": job.get("location", "") or foreign,
+            }
+        )
 
     citizenship = _hits(desc, CITIZENSHIP_PATTERNS)
     clearance = _hits(desc, CLEARANCE_PATTERNS)

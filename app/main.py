@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+import httpx
 from pydantic import BaseModel
 
 from .config import ALLOWED_ORIGINS, GREENHOUSE_COMPANIES, SCORE_BUDGET
@@ -13,13 +14,14 @@ from .contacts import (
     company_domain,
     get_contact,
     lookup_contacts,
+    resolve_domain_by_company,
     hunter_key,
     list_contacts,
     save_contact,
     set_contact_status,
 )
 from .providers import configured_providers
-from .discovery import failed_sources, fetch_all_jobs, filter_jobs, source_counts
+from .discovery import add_to_cache, failed_sources, fetch_all_jobs, filter_jobs, source_counts
 from .outreach import build_outreach
 from .profile import ProfileNotFound, load_profile
 from .scoring import score_job_cached as score_job
@@ -367,6 +369,12 @@ async def outreach(job_id: str) -> dict[str, Any]:
     # recruiter could be found while /contacts returned verified ones.
     contact = None
     domain = company_domain(job["company"]["name"], job.get("applyUrl", ""))
+    if not domain:
+        # ATS- and board-hosted postings expose no employer domain, which left
+        # most applications with no addressee at all. Hunter can resolve the
+        # company name to a domain, and only its answer is trusted — never a
+        # pattern guessed from the name.
+        domain = await resolve_domain_by_company(job["company"]["name"])
     if domain:
         found = await lookup_contacts(domain)
         contact = pick_contact(found.get("contacts") or [])
@@ -451,6 +459,105 @@ async def import_external(req: ImportRequest) -> dict[str, Any]:
     stored = import_jobs([j.model_dump() for j in req.jobs], req.source)
     await fetch_all_jobs(force=True)  # refresh cache so they appear immediately
     return {"imported": stored, "source": req.source}
+
+
+@app.post("/api/jobs/{job_id}/prefill")
+async def prefill_application(job_id: str) -> dict[str, Any]:
+    """Open the employer's form in a visible browser with the answers filled in.
+
+    This runs `scripts/prefill_apply.py`, which refuses to click any control
+    matching `SUBMIT_PATTERNS`. Nothing here weakens that: the endpoint only
+    starts the script and reports what it filled.
+
+    It opens a window on the machine running this API, so it is local-only by
+    nature — a remote deployment would silently do nothing useful, which is why
+    failure is reported rather than swallowed.
+    """
+    import asyncio
+    import sys
+    from pathlib import Path
+
+    await _job_or_404(job_id)  # 404 early rather than launching a browser
+
+    script = Path(__file__).resolve().parent.parent / "scripts" / "prefill_apply.py"
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, str(script), job_id,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+    )
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=180)
+    except asyncio.TimeoutError:
+        proc.kill()
+        raise HTTPException(
+            status_code=504,
+            detail="The form took too long to load. Try opening it directly.",
+        ) from None
+
+    text = (out or b"").decode(errors="replace")
+    if proc.returncode != 0:
+        raise HTTPException(status_code=500, detail=text.strip()[-400:] or "prefill failed")
+
+    return {
+        "jobId": job_id,
+        "report": text.strip()[-4000:],
+        "note": "Review every answer, then submit it yourself. Nothing was sent.",
+    }
+
+
+class FromUrlRequest(BaseModel):
+    url: str
+
+
+@app.post("/api/jobs/from-url")
+async def job_from_url(req: FromUrlRequest) -> dict[str, Any]:
+    """Turn a pasted posting link into a scored, tailorable job.
+
+    Blocked hosts return `blocked: true` rather than an error — the caller is
+    expected to offer the paste-the-description path, which reaches the same
+    scoring code and is the honest way to handle a source we may not fetch.
+    """
+    from .imported import import_jobs
+    from .job_urls import UnresolvableURL, blocked_reason, resolve
+
+    reason = blocked_reason(req.url)
+    if reason:
+        from .job_urls import _host
+
+        return {"blocked": True, "host": _host(req.url), "reason": reason}
+
+    try:
+        job = await resolve(req.url)
+    except UnresolvableURL as exc:
+        return {"blocked": False, "unresolved": True, "reason": str(exc)}
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502, detail=f"Could not reach the job board: {exc}"
+        ) from exc
+
+    if not (job.get("title") and job.get("description")):
+        return {
+            "blocked": False,
+            "unresolved": True,
+            "reason": "That posting came back empty — it may have been taken down.",
+        }
+
+    import_jobs([job], source=job.get("source") or "pasted-link", live=True)
+    # Make it visible now. A full forced refetch would re-hit five job boards
+    # for thousands of postings to surface this one, and timed out doing so.
+    await fetch_all_jobs()
+    add_to_cache(job)
+
+    p = _profile()
+    score = score_job(job, p)
+    return {
+        "jobId": job["id"],
+        "title": job["title"],
+        "company": job["company"]["name"],
+        "location": job.get("location"),
+        "applyUrl": job.get("applyUrl"),
+        "rawFitScore": score["rawFitScore"],
+        "eligibility": score.get("eligibility"),
+    }
 
 
 @app.get("/api/jobs/{job_id}/contacts")

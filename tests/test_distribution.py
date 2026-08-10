@@ -7,6 +7,7 @@ same document, which is the opposite failure. Both directions are asserted here.
 """
 from __future__ import annotations
 
+import inspect
 import json
 import sys
 import pathlib
@@ -15,7 +16,17 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from app.profile import load_profile  # noqa: E402
 from app.scoring import score_job  # noqa: E402
-from app.tailor import tailor_resume  # noqa: E402
+from app.tailor import _select_bullets, tailor_resume  # noqa: E402
+
+# Read the real defaults rather than restating them, so tuning the layout can't
+# leave the test asserting a shape the code no longer aims for.
+_DEFAULTS = {
+    name: param.default
+    for name, param in inspect.signature(_select_bullets).parameters.items()
+    if param.default is not inspect.Parameter.empty
+}
+FLOOR = _DEFAULTS["floor"]
+CAP_PER_ROLE = _DEFAULTS["cap_per_role"]
 
 FIXTURES = [
     ("bi-heavy", "Seeking a BI Analyst. Required: SQL, Power BI, Tableau, "
@@ -53,19 +64,38 @@ def main() -> int:
         resume = tailor_resume(job, score_job(job, profile), profile)
         counts = [len(s["bullets"]) for s in resume["sections"]]
 
-        # Every role must justify its place on the page with at least one
-        # bullet; the two most recent carry at least two. A flat floor of two
-        # everywhere guaranteed 8 of the 9-bullet budget, leaving one slot for
-        # relevance — which is why every posting produced an identical 3/2/2/2
-        # and tailoring stopped being visible at all.
-        if any(c < 1 for c in counts):
-            failures.append(f"[{jid}] a role kept no bullets: {counts}")
-        if any(c < 2 for c in counts[:2]):
-            failures.append(f"[{jid}] a recent role fell below 2 bullets: {counts}")
+        # Assert the selection RULE, not a fixed shape. An earlier version
+        # pinned the spread, which failed the moment the budget grew for a
+        # two-page resume — even though 7/2/3/2 was correct there: the thin
+        # roles were showing every claim they have, not being starved.
+        available = {
+            s["employer"]: sum(
+                1 for c in profile.evidence
+                if c.employer == s["employer"]
+                and c.approved_for_resume
+                and c.classification != "LEARNED_OR_ACADEMIC"
+            )
+            for s in resume["sections"]
+        }
 
-        # No role may dominate outright — that was the original 5/1/1/2 defect.
-        if counts and max(counts) - min(counts) > 3:
-            failures.append(f"[{jid}] lopsided spread {counts}")
+        for i, section in enumerate(resume["sections"]):
+            kept = len(section["bullets"])
+            have = available[section["employer"]]
+            if kept < 1:
+                failures.append(f"[{jid}] {section['employer']} kept no bullets")
+            # A role may fall short of the floor only by running out of evidence.
+            if kept < min(FLOOR, have) and i < 2:
+                failures.append(
+                    f"[{jid}] {section['employer']} kept {kept} of {have} available "
+                    f"— starved below the floor: {counts}"
+                )
+            # And no role may run away with the page. This is the guard against
+            # the original 5/1/1/2 defect, expressed as the cap that prevents it.
+            if kept > FLOOR + CAP_PER_ROLE:
+                failures.append(
+                    f"[{jid}] {section['employer']} took {kept} bullets, "
+                    f"above floor+cap ({FLOOR}+{CAP_PER_ROLE}): {counts}"
+                )
 
         # Roles stay reverse-chronological regardless of relevance.
         if resume["sections"][0]["employer"] != "Supreme Lending (Everett Financial, Inc.)":

@@ -148,14 +148,33 @@ CORE_SKILLS = {
 }
 
 
-def extract_requirements(description: str) -> list[tuple[str, bool]]:
+def _in_title(alias: str, title_text: str) -> bool:
+    """Word-boundary match against the job title.
+
+    Titles are short, so a substring test is especially dangerous here — "go"
+    would fire on "Google" and "R" on almost anything.
+    """
+    return re.search(rf"(?<!\w){re.escape(alias)}(?!\w)", title_text) is not None
+
+
+def extract_requirements(
+    description: str, title: str = ""
+) -> list[tuple[str, bool]]:
     """Return (skill, is_required) pairs found in a job description.
 
     `is_required` is a heuristic: a skill mentioned in a sentence containing
     "required"/"must have", or that appears more than twice, is treated as
     required; otherwise preferred.
+
+    A skill named in the job TITLE is always required, however the body reads.
+    "Senior Backend Engineer, Analytics Instrumentation (Golang)" mentions Go
+    once, in passing, so it was scored preferred — the gap cost almost nothing
+    and the role came out at 91 for a candidate who has never written Go, while
+    Python (mentioned often, and evidenced) counted as a required match. An
+    employer does not put a language in the title as a nice-to-have.
     """
     text = f" {description.lower()} "
+    title_text = f" {title.lower()} "
     found: list[tuple[str, bool]] = []
 
     for skill, aliases in SKILL_ALIASES.items():
@@ -170,18 +189,22 @@ def extract_requirements(description: str) -> list[tuple[str, bool]]:
             continue
 
         required = occurrences >= 3 or skill in CORE_SKILLS
+        # Named in the title — required, whatever the body says.
+        if any(_in_title(alias, title_text) for alias in aliases):
+            required = True
         # Look for explicit requirement language near the first mention.
-        for alias in aliases:
-            idx = text.find(alias)
-            if idx == -1:
-                continue
-            window = text[max(0, idx - 220) : idx + 220]
-            if any(
-                phrase in window
-                for phrase in ("required", "must have", "you have", "minimum")
-            ):
-                required = True
-                break
+        if not required:
+            for alias in aliases:
+                idx = text.find(alias)
+                if idx == -1:
+                    continue
+                window = text[max(0, idx - 220) : idx + 220]
+                if any(
+                    phrase in window
+                    for phrase in ("required", "must have", "you have", "minimum")
+                ):
+                    required = True
+                    break
         found.append((skill, required))
 
     found.extend(extract_unknown_requirements(description, found))

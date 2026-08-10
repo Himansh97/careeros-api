@@ -105,6 +105,53 @@ def company_domain(company_name: str, apply_url: str) -> str | None:
     return host
 
 
+async def resolve_domain_by_company(company_name: str) -> str | None:
+    """Ask Hunter which domain a company name belongs to.
+
+    Most postings are hosted on an ATS or a job board, so the apply URL yields
+    no employer domain and contact lookup simply gave up — five of eight
+    shortlisted applications had no addressee for that reason alone. Guessing
+    the domain from the name would be fabrication ("Scope Infotech" ->
+    scopeinfotech.com is a coin flip), but Hunter maintains the mapping, so
+    asking is a lookup rather than a guess.
+
+    The answer is only accepted when Hunter's own organisation name agrees with
+    the company we asked about — otherwise a near-miss would attach a stranger's
+    colleagues to the application.
+    """
+    key = hunter_key()
+    if not key or not company_name.strip():
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
+            r = await client.get(
+                "https://api.hunter.io/v2/domain-search",
+                params={"company": company_name, "limit": 1, "api_key": key},
+            )
+    except httpx.HTTPError:
+        return None
+    if r.status_code != 200:
+        return None
+
+    data = (r.json() or {}).get("data") or {}
+    domain = data.get("domain")
+    organization = (data.get("organization") or "").strip().lower()
+    if not domain:
+        return None
+
+    # Require the names to agree, tolerating legal suffixes: Hunter answers
+    # "AIT Global Inc." for "AIT Global", and demanding an exact match threw
+    # away a correct domain. Containment either way accepts that while still
+    # refusing an unrelated company.
+    asked = re.sub(r"[^a-z0-9]", "", company_name.strip().lower())
+    org = re.sub(r"[^a-z0-9]", "", organization)
+    if org and asked and asked not in org and org not in asked:
+        return None
+    if any(bad in domain.lower() for bad in THIRD_PARTY_HOSTS):
+        return None
+    return domain
+
+
 async def lookup_contacts(domain: str, limit: int = 10) -> dict[str, Any]:
     """Find contacts via the provider chain, failing over as quotas run out."""
     from .providers import find_contacts
