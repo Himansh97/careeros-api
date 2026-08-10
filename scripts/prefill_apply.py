@@ -14,8 +14,10 @@ Requires: pip install playwright && playwright install chromium
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -23,12 +25,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.prefill import (  # noqa: E402
     SENSITIVE,
+    ambiguous_reason,
+    best_option,
+    is_consent_question,
+    YES_NO_FALLBACK,
     PrefillReport,
     build_answers,
+    apply_form_url,
     match_field,
     _is_submit,
 )
 from app.profile import load_profile  # noqa: E402
+
+# The process stays alive while the browser is open, so buffered output
+# would never reach the terminal. Flush every print.
+print = functools.partial(__builtins__.print if not isinstance(__builtins__, dict)
+                          else __builtins__['print'], flush=True)
 
 API = "http://localhost:8000"
 OUT = Path.home() / "Desktop" / "CareerOS-Applications"
@@ -81,7 +93,14 @@ def resume_for(job_id: str, company: str, title: str) -> Path | None:
 
 
 def describe(el) -> str:
-    """Everything a field says about itself, for matching against."""
+    """Everything a field says about itself, for matching against.
+
+    Greenhouse labels its custom questions with `<label for="question_123">`
+    while the input carries that value as its NAME, not its id. Looking the
+    label up by id alone found nothing, so every employer question arrived as
+    an opaque "question_68123366" and was skipped — the fields most worth
+    surfacing were the ones that went missing.
+    """
     parts = []
     for attr in ("aria-label", "name", "id", "placeholder"):
         try:
@@ -90,16 +109,143 @@ def describe(el) -> str:
                 parts.append(v)
         except Exception:
             pass
-    # The visible <label> usually carries the real question.
+    # ElementHandle has no `.page`; it has `owner_frame()`. The old code read
+    # `el.page`, which raised AttributeError straight into a bare except — so
+    # this lookup never ran once, and every employer question arrived as an
+    # opaque "question_68123369". Silent failure inside a broad except is why
+    # it looked like a matching problem for so long.
+    frame = el.owner_frame()
     try:
-        fid = el.get_attribute("id")
-        if fid:
-            lab = el.page.query_selector(f'label[for="{fid}"]')
+        for key in (el.get_attribute("id"), el.get_attribute("name")):
+            if not key or frame is None:
+                continue
+            lab = frame.query_selector(f'label[for="{key}"]')
             if lab:
                 parts.append(lab.inner_text())
+                break
+        else:
+            # Custom dropdowns (react-select and friends) render a visible
+            # combobox carrying no name at all, keeping the real question on a
+            # sibling label. Walk up until an ancestor contains one, so the
+            # field reads as its question rather than "question_68123366" —
+            # which is exactly the set of fields most worth surfacing.
+            txt = el.evaluate(
+                "e => { let n = e;"
+                " for (let i = 0; i < 6 && n; i++) { n = n.parentElement; if (!n) break;"
+                "  const l = n.querySelector('label');"
+                "  if (l && l.innerText && l.innerText.trim().length > 6)"
+                "    return l.innerText.trim();"
+                "  const t = (n.innerText || '').trim();"
+                "  if (t && t.length > 6 && t.length < 220) return t.split('\n')[0];"
+                " } return ''; }"
+            )
+            if txt:
+                parts.append(txt)
     except Exception:
         pass
     return " ".join(parts)
+
+
+def choose_option(page, el, value: str, tag: str, key: str = "") -> bool:
+    """Select `value` in a dropdown, native or React-style.
+
+    Greenhouse renders its custom questions as react-select: a text input with
+    role="combobox" whose options only exist in the DOM once the control is
+    opened. `select_option` does nothing there, so the control is clicked, the
+    rendered options are read, and the best match is clicked. Nothing is typed
+    into it — an option that does not exist is left for the candidate rather
+    than invented.
+    """
+    if tag == "select":
+        options = [(o.inner_text() or "").strip() for o in el.query_selector_all("option")]
+        live = [o for o in options if o]
+        pick = best_option(live, value)
+        if not pick and key in YES_NO_FALLBACK and {o.lower() for o in live} <= {"yes", "no"}:
+            pick = best_option(live, YES_NO_FALLBACK[key])
+        if not pick:
+            return False
+        el.select_option(label=pick)
+        return True
+
+    # react-select ids every option as `react-select-<input id>-option-N`.
+    # Querying options page-wide instead returned whichever menus happened to
+    # be in the DOM — on this form, the phone country-code list — so opening
+    # "Country" produced 246 options reading "Afghanistan +93". Scope to the
+    # control that was actually clicked.
+    own_id = ""
+    try:
+        own_id = el.get_attribute("id") or ""
+    except Exception:
+        pass
+    scoped = f'[id^="react-select-{own_id}-option"]' if own_id else ""
+
+    def options():
+        hs = page.query_selector_all(scoped) if scoped else []
+        if not hs:
+            container = el.evaluate_handle(
+                "e => e.closest('.select__container, .select-shell') || e.parentElement"
+            ).as_element()
+            if container:
+                hs = container.query_selector_all('[role="option"], .select__option')
+        return hs, [(h.inner_text() or "").strip() for h in hs]
+
+    try:
+        el.scroll_into_view_if_needed(timeout=3000)
+        el.click(timeout=3000)
+        page.wait_for_timeout(300)
+
+        # Read the list BEFORE typing. An enumerated dropdown (Yes/No, Country)
+        # renders every option on open, and typing a long stored value into it
+        # filters the list to nothing — which is why "OPT (F-1 Optional
+        # Practical Training)" produced zero options on a plain Yes/No control.
+        handles, texts = options()
+        live = [t for t in texts if t]
+
+        if not live:
+            # No options on open means a typeahead, which renders matches only
+            # once the query narrows them.
+            try:
+                el.type(value[:40], delay=25)
+                page.wait_for_timeout(700)
+            except Exception:
+                pass
+            handles, texts = options()
+            live = [t for t in texts if t]
+
+        pick = best_option(live, value)
+
+        if not pick and key in YES_NO_FALLBACK and {t.lower() for t in live} <= {"yes", "no"} and live:
+            pick = best_option(live, YES_NO_FALLBACK[key])
+
+        if not pick and live and len(live) > 8:
+            # Long enumerated list (countries): narrow it by typing, then retry.
+            try:
+                el.type(value[:24], delay=25)
+                page.wait_for_timeout(600)
+                handles, texts = options()
+                live = [t for t in texts if t]
+                pick = best_option(live, value)
+            except Exception:
+                pass
+
+        if not pick and len(live) == 1:
+            pick = live[0]
+
+        if not pick:
+            page.keyboard.press("Escape")
+            return False
+        for h, t in zip(handles, texts):
+            if t == pick:
+                h.click(timeout=3000)
+                page.wait_for_timeout(200)
+                return True
+        page.keyboard.press("Escape")
+    except Exception:
+        try:
+            page.keyboard.press("Escape")
+        except Exception:
+            pass
+    return False
 
 
 def prefill(page, answers: dict[str, str], resume: Path | None) -> PrefillReport:
@@ -129,6 +275,22 @@ def prefill(page, answers: dict[str, str], resume: Path | None) -> PrefillReport
             continue
 
         label = describe(el)
+
+        # Some questions must not be auto-answered even though a stored value
+        # would match — the stored answer does not fit the question as asked.
+        if is_consent_question(label):
+            report.unfilled.append(f"{label.strip()[:70]} (your choice)")
+            continue
+
+        reason = ambiguous_reason(label)
+        if reason:
+            report.needs_you.append((label.strip()[:80], reason))
+            try:
+                el.evaluate(HIGHLIGHT)
+            except Exception:
+                pass
+            continue
+
         key = match_field(label)
         if not key or key not in answers or key in used:
             if label.strip() and not key:
@@ -138,17 +300,10 @@ def prefill(page, answers: dict[str, str], resume: Path | None) -> PrefillReport
         value = answers[key]
         try:
             tag = (el.evaluate("e => e.tagName") or "").lower()
-            if tag == "select":
-                # Only pick an option that already exists; never invent one.
-                matched = False
-                for opt in el.query_selector_all("option"):
-                    text = (opt.inner_text() or "").strip().lower()
-                    if text and text in value.lower() or value.lower() in text:
-                        el.select_option(label=opt.inner_text().strip())
-                        matched = True
-                        break
-                if not matched:
-                    report.unfilled.append(f"{label.strip()} (dropdown — choose yourself)")
+            role = (el.get_attribute("role") or "").lower()
+            if tag == "select" or role == "combobox":
+                if not choose_option(page, el, value, tag, key):
+                    report.unfilled.append(f"{label.strip()[:70]} (dropdown — choose yourself)")
                     continue
             else:
                 el.fill(value)
@@ -196,14 +351,15 @@ def main() -> int:
         print("Nothing matched.", file=sys.stderr)
         return 1
 
-    stored = load_profile().application_answers
+    profile = load_profile()
+    stored = profile.application_answers
 
     if args.dry_run:
         for a in targets:
             job = api(f"/api/jobs/{a['jobId']}") or {}
-            answers = build_answers(stored, job)
+            answers = build_answers(stored, job, profile)
             print(f"\n  {company_name(a)} — {a['title']}")
-            print(f"  {a.get('applyUrl')}")
+            print(f"  {apply_form_url(a['jobId'], a.get('applyUrl') or '')}")
             for k, v in answers.items():
                 mark = "VERIFY →" if k in SENSITIVE else "        "
                 print(f"    {mark} {k}: {v[:58]}")
@@ -223,12 +379,12 @@ def main() -> int:
         # able to read the form and press the button.
         browser = pw.chromium.launch(headless=False, slow_mo=120)
         for a in targets:
-            url = a.get("applyUrl")
+            url = apply_form_url(a["jobId"], a.get("applyUrl") or "")
             if not url:
                 print(f"  {company_name(a)}: no apply URL")
                 continue
             job = api(f"/api/jobs/{a['jobId']}") or {}
-            answers = build_answers(stored, job)
+            answers = build_answers(stored, job, profile)
             resume = resume_for(a["jobId"], company_name(a), a["title"])
 
             page = browser.new_page()
@@ -241,8 +397,23 @@ def main() -> int:
                 print(f"  {company_name(a)}: could not load — {exc}")
 
         print("\nAll tabs are open and filled. Review, then submit each yourself.")
-        input("Press Enter to close the browser… ")
-        browser.close()
+        # Hold the window open until the candidate is finished with it. When
+        # launched from a terminal that is a keypress; when launched detached
+        # (no TTY) input() would raise EOFError and close the browser out from
+        # under them mid-application, so wait on the tabs instead.
+        if sys.stdin.isatty():
+            input("Press Enter to close the browser… ")
+        else:
+            print("Close the browser window when you're done.")
+            try:
+                while browser.is_connected() and any(
+                    not p.is_closed() for c in browser.contexts for p in c.pages
+                ):
+                    time.sleep(2)
+            except (KeyboardInterrupt, Exception):
+                pass
+        if browser.is_connected():
+            browser.close()
     return 0
 
 

@@ -75,7 +75,51 @@ FIELD_MAP: list[tuple[str, tuple[str, ...]]] = [
     ("veteran_disclosure", ("veteran", "protected veteran")),
     ("disability_disclosure", ("disability", "disabled")),
     ("website", ("website", "portfolio", "github")),
+    ("country", ("country where you", "country of residence", "which country",
+                 "country you currently reside", "country")),
+    ("school", ("school", "university", "college", "institution")),
+    ("degree_level", ("degree",)),
+    ("discipline", ("discipline", "field of study", "major")),
+    ("current_employer", ("current or previous employer", "current employer",
+                          "most recent employer", "previous employer")),
+    ("current_title", ("current or previous job title", "current job title",
+                       "most recent title", "previous job title")),
+    ("previously_employed_here", ("ever been employed by", "previously employed by",
+                                  "worked at our company", "former employee")),
 ]
+
+# Questions whose stored answer does not fit the question as asked, so filling
+# them would put a wrong answer on a form the candidate signs.
+#
+# The live example: the stored sponsorship answer is "No, not required", which
+# is true of today. Stripe asks whether sponsorship will be required "now OR IN
+# THE FUTURE" — and on F-1 OPT the honest answer to the future half is normally
+# yes, because OPT expires. Same stored value, materially different question.
+# So this is surfaced for the candidate rather than answered for them.
+AMBIGUOUS_PATTERNS: tuple[tuple[str, str], ...] = (
+    (
+        "now or in the future",
+        "Asks about sponsorship NOW OR IN THE FUTURE. Your stored answer covers "
+        "today only; on OPT the future half usually needs a different answer. "
+        "Answer this one yourself.",
+    ),
+    (
+        "in the future",
+        "Asks about a future requirement, which your stored answer does not "
+        "cover. Answer this one yourself.",
+    ),
+)
+
+
+def ambiguous_reason(label: str) -> str | None:
+    """Why a field must not be auto-answered, if it must not be."""
+    low = (label or "").lower()
+    if "sponsor" not in low and "authoriz" not in low:
+        return None
+    for pattern, reason in AMBIGUOUS_PATTERNS:
+        if pattern in low:
+            return reason
+    return None
 
 
 @dataclass
@@ -87,6 +131,7 @@ class PrefillReport:
     sensitive_filled: list[tuple[str, str]] = field(default_factory=list)
     attached: str | None = None
     unfilled: list[str] = field(default_factory=list)
+    needs_you: list[tuple[str, str]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
     def render(self) -> str:
@@ -97,8 +142,19 @@ class PrefillReport:
             out.append(f"  filled    {key}: {val[:56]}")
         for key, val in self.sensitive_filled:
             out.append(f"  VERIFY →  {key}: {val[:56]}")
+        for label, why in self.needs_you:
+            out.append(f"  ANSWER →  {label}")
+            out.append(f"            {why}")
         for label in self.unfilled:
-            out.append(f"  left     {label[:70]}")
+            # Truncate the question, not the trailing marker that says why it
+            # was left — cutting "(your choice)" off made a deliberate skip
+            # look identical to a failure to match.
+            marker = ""
+            for suffix in ("(your choice)", "(dropdown — choose yourself)", "(could not fill)"):
+                if label.endswith(suffix):
+                    label, marker = label[: -len(suffix)].rstrip(), " " + suffix
+                    break
+            out.append(f"  left     {label[:64]}{marker}")
         for note in self.notes:
             out.append(f"  note      {note}")
         out.append("  NOT SUBMITTED — review the highlighted fields, then submit yourself.")
@@ -146,7 +202,33 @@ def _clean(value: Any) -> str:
     return text.strip(" ,;")
 
 
-def build_answers(profile_answers: dict[str, Any], job: dict[str, Any]) -> dict[str, str]:
+def _education(profile: Any) -> tuple[str, str, str]:
+    """Most recent degree, as (school, degree, discipline)."""
+    entries = list(getattr(profile, "education", None) or [])
+    if not entries:
+        return "", "", ""
+    top = entries[0]
+    degree = str(top.get("degree", ""))
+    discipline = ""
+    if " in " in degree:
+        discipline = degree.split(" in ", 1)[1]
+    return str(top.get("institution", "")), degree, discipline
+
+
+def _current_role(profile: Any) -> tuple[str, str]:
+    """Current or most recent (employer, title)."""
+    roles = list(getattr(profile, "employment_history", None) or [])
+    if not roles:
+        return "", ""
+    current = next((r for r in roles if str(r.get("end_date", "")).lower() == "present"), roles[0])
+    return str(current.get("employer", "")), str(current.get("title", ""))
+
+
+def build_answers(
+    profile_answers: dict[str, Any],
+    job: dict[str, Any],
+    profile: Any = None,
+) -> dict[str, str]:
     """Flatten stored answers into the values a form actually asks for."""
     a = {k: (_clean(v) if isinstance(v, str) else v) for k, v in (profile_answers or {}).items()}
     demo = {k: _clean(v) for k, v in (a.get("demographic_preferences") or {}).items()}
@@ -176,6 +258,40 @@ def build_answers(profile_answers: dict[str, Any], job: dict[str, Any]) -> dict[
         "disability_disclosure": str(demo.get("disability_disclosure", "")),
     }
 
+    # Country is asked constantly and is derivable from the stored address
+    # rather than being a separate answer to maintain.
+    addr = str(a.get("address", ""))
+    if re.search(r",\s*[A-Z]{2}\b", addr) or "united states" in addr.lower():
+        answers["country"] = "United States"
+
+    if profile is not None:
+        school, degree, discipline = _education(profile)
+        # Greenhouse's Degree control is an enum of levels, not free text, so
+        # the full degree name never matches one of its options.
+        answers["degree_level"] = (
+            "Master's Degree" if degree.lower().startswith(("master", "mba", "m.s", "ms "))
+            else "Bachelor's Degree" if degree.lower().startswith(("bachelor", "b.s", "bs "))
+            else ""
+        )
+        employer, title = _current_role(profile)
+        answers.update(
+            {k: v for k, v in {
+                "school": school,
+                "degree": degree,
+                "discipline": discipline,
+                "current_employer": employer,
+                "current_title": title,
+            }.items() if v}
+        )
+        # "Have you ever been employed by <this company>?" is checkable against
+        # the employment history rather than guessed.
+        company = str((job.get("company") or {}).get("name", "")).lower()
+        if company:
+            employers = " ".join(
+                str(r.get("employer", "")) for r in (getattr(profile, "employment_history", None) or [])
+            ).lower()
+            answers["previously_employed_here"] = "Yes" if company in employers else "No"
+
     salary = salary_answer(job)
     if salary:
         answers["salary_expectation"] = salary
@@ -184,6 +300,90 @@ def build_answers(profile_answers: dict[str, Any], job: dict[str, Any]) -> dict[
     # they should answer themselves — in several states an employer may not ask.
 
     return {k: v for k, v in answers.items() if v}
+
+
+# Consent and marketing questions. The candidate's own preference, not a fact
+# about them, and nothing in the profile answers them — so they are left alone
+# rather than defaulted either way.
+CONSENT_PATTERNS = (
+    "opt-in", "opt in", "receive whatsapp", "receive text", "receive sms",
+    "marketing", "newsletter", "record and transcribe", "recording",
+    "consent to", "agree to receive", "brighthire",
+)
+
+
+def is_consent_question(label: str) -> bool:
+    return any(p in (label or "").lower() for p in CONSENT_PATTERNS)
+
+
+# When a question is a plain Yes/No but the stored answer is a description
+# ("OPT (F-1 Optional Practical Training)"), the description cannot match an
+# option. These are the only keys where the yes/no answer follows directly from
+# the stored fact, so it can be resolved without guessing.
+YES_NO_FALLBACK: dict[str, str] = {
+    # Holding OPT authorization IS being authorized to work. Note this is
+    # deliberately absent for sponsorship: "will you require sponsorship" does
+    # not follow from current authorization, and on OPT the honest answer
+    # changes with the timeframe the question asks about.
+    "work_authorization": "Yes",
+    "relocation": "Yes",
+}
+
+
+def option_score(option_text: str, value: str) -> int:
+    """How well a dropdown option answers a stored value. Higher is better, 0 = no.
+
+    Yes/No dropdowns are the common case and the stored answers are sentences —
+    "Yes, willing to relocate" must select the option "Yes" without also
+    matching "No" on a substring. So a leading yes/no is resolved first and
+    only against an option that is exactly that word.
+    """
+    opt = (option_text or "").strip().lower()
+    val = (value or "").strip().lower()
+    if not opt or not val:
+        return 0
+
+    for word in ("yes", "no"):
+        if val.startswith(word):
+            return 100 if opt == word or opt.startswith(word + ",") else 0
+
+    if opt == val:
+        return 90
+    if val.startswith(opt) or opt.startswith(val):
+        return 70
+    if opt in val or val in opt:
+        return 50
+    return 0
+
+
+def best_option(options: list[str], value: str) -> str | None:
+    """Pick the option that answers `value`, or None rather than guessing."""
+    scored = [(option_score(o, value), o) for o in options]
+    scored = [(s, o) for s, o in scored if s > 0]
+    if not scored:
+        return None
+    scored.sort(key=lambda t: (-t[0], len(t[1])))
+    return scored[0][1]
+
+
+def apply_form_url(job_id: str, stored_url: str) -> str:
+    """The URL of the actual application FORM, not the posting.
+
+    A Greenhouse board's `absolute_url` is whatever the employer set, and large
+    employers set it to their own careers site. Stripe's points at
+    `stripe.com/jobs/search?gh_jid=…`, which redirects to a role-search page
+    carrying one search box and no form at all — so a filler lands somewhere
+    with nothing to fill and reports, accurately but uselessly, that it found
+    no file input.
+
+    Greenhouse always exposes the real form at a canonical address derived from
+    the job's numeric token, so for Greenhouse-sourced jobs that is used
+    directly. Everything else keeps the stored URL.
+    """
+    m = re.fullmatch(r"gh_[a-z0-9\-]+_(\d+)", job_id or "")
+    if m:
+        return f"https://boards.greenhouse.io/embed/job_app?token={m.group(1)}"
+    return stored_url
 
 
 def match_field(label: str) -> str | None:
