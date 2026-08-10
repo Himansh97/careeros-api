@@ -28,7 +28,14 @@ reads it through `app/profile.py`.
    applied by the generic `scripts/apply_overrides.py`. `.gitignore` blocks
    `scripts/align_*.py` and `scripts/import_*.py` so a one-off cannot reintroduce this.
 4. **Never add a `Co-Authored-By: Claude` trailer to commits.**
-5. **Nothing auto-submits.** The API prepares and stops.
+5. **Nothing auto-submits.** The API prepares and stops. `app/prefill.py` drives a
+   *visible* browser and is structurally incapable of submitting — `SUBMIT_PATTERNS`
+   names the controls that send an application and there is no flag that overrides it.
+   This is not caution for its own sake: Indeed's terms prohibit "any automation,
+   scripting, or bots to automate the Indeed Apply process", Greenhouse prohibits
+   automated means to access its services and defends its boards with invisible
+   reCAPTCHA, and Dice permits ordinary browsers as "Approved Devices" — which is
+   exactly what a headed window the candidate drives is.
 
 ## How to run it
 
@@ -38,7 +45,12 @@ reads it through `app/profile.py`.
 ./.venv/bin/python tests/test_distribution.py    # resume shape tests
 ./.venv/bin/python scripts/build_packets.py      # regenerate application packets
 ./.venv/bin/python scripts/apply_overrides.py --all --dry-run   # verify tailored bullets
+./.venv/bin/python scripts/prefill_apply.py <job_id> --dry-run  # plan an application
+./.venv/bin/python scripts/prefill_apply.py <job_id>            # open it pre-filled
 ```
+
+`prefill_apply.py` needs `requirements-dev.txt` plus `playwright install chromium`.
+It is local-only and never runs in CI.
 
 Use `./.venv/bin/python`, not bare `python3` — dependencies (`fastapi`, `httpx`,
 `reportlab`, `python-docx`, `pypdf`, `dotenv`) live in the venv. API keys go in a

@@ -1,0 +1,7 @@
+# Local-only tooling. Deliberately NOT in requirements.txt: playwright pulls a
+# ~95MB browser, and CI has no use for it — the pre-fill tool is only ever run
+# on a developer machine with a visible window.
+#
+#   ./.venv/bin/pip install -r requirements-dev.txt
+#   ./.venv/bin/playwright install chromium
+playwright==1.62.0
