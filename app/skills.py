@@ -270,6 +270,13 @@ _HEADING_WORDS = frozenset(
         "reports", "team", "offer", "mission", "impact", "skills", "benefits",
         "description", "apply", "process", "hiring", "interview", "culture",
         "values", "expect", "day", "week", "join", "why", "how", "what",
+        # Company sidebar furniture. Reading a posting from its page rather
+        # than an ATS API drags this in: The Muse prints "Size: 10000+
+        # employees | Industry: Technology" beside the job, which arrived as
+        # requirements named Size and Industry and counted against coverage.
+        "size", "industry", "employees", "headquarters", "founded", "revenue",
+        "profile", "company", "website", "follow", "share", "similar",
+        "related", "posted", "type", "level", "seniority", "function",
     }
 )
 

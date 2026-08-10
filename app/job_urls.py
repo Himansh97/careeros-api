@@ -152,6 +152,170 @@ async def _from_ashby(client: httpx.AsyncClient, slug: str, job_id: str) -> dict
     raise UnresolvableURL(f"Ashby board '{slug}' has no posting {job_id}.")
 
 
+# Page furniture that surrounds a posting: navigation, the company sidebar,
+# cookie banners. Left in, their text becomes "requirements" — The Muse's
+# "Size: 10000+ employees | Industry: Technology" produced requirements called
+# Size and Industry, which then counted against coverage as unmet.
+_CHROME_RE = re.compile(
+    r"(?is)<(script|style|nav|header|footer|svg|noscript|iframe|form)[^>]*>.*?</\1>"
+)
+
+
+def _jsonld_posting(html: str) -> dict[str, Any] | None:
+    """A schema.org JobPosting embedded in the page, if there is one.
+
+    Google requires this block to index a posting, so a large share of career
+    pages carry it. It is published for machines to read, which makes it the
+    right thing to read — no guessing which div holds the description.
+    """
+    import json
+
+    for block in re.findall(
+        r'<script[^>]+application/ld\+json[^>]*>(.*?)</script>', html, re.S
+    ):
+        try:
+            data = json.loads(block)
+        except ValueError:
+            continue
+        for item in data if isinstance(data, list) else [data]:
+            if not isinstance(item, dict):
+                continue
+            if "JobPosting" not in str(item.get("@type", "")):
+                continue
+            org = item.get("hiringOrganization") or {}
+            loc = item.get("jobLocation") or {}
+            if isinstance(loc, list):
+                loc = loc[0] if loc else {}
+            addr = (loc or {}).get("address") or {}
+            place = ", ".join(
+                str(addr.get(k))
+                for k in ("addressLocality", "addressRegion", "addressCountry")
+                if addr.get(k)
+            )
+            return {
+                "title": item.get("title") or "",
+                "company": (org.get("name") if isinstance(org, dict) else org) or "",
+                "location": place,
+                "description": strip_html(item.get("description") or ""),
+            }
+    return None
+
+
+def _readable_text(html: str) -> str:
+    """The page's prose, with navigation and scripts removed."""
+    return strip_html(_CHROME_RE.sub(" ", html))
+
+
+async def _from_page(client: httpx.AsyncClient, url: str) -> dict[str, Any]:
+    """Read a posting from the page itself: structured data first, prose second.
+
+    This is one GET of a public page the candidate has already opened in their
+    own browser — the same request their browser made. Hosts that prohibit
+    automated access never reach here; they are refused by name upstream.
+    """
+    r = await client.get(
+        url,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 CareerOS/1.0"
+            )
+        },
+    )
+    r.raise_for_status()
+    html = r.text
+
+    page_title, page_company = _title_and_company(html)
+    posting = _jsonld_posting(html)
+
+    # Trust structured data only when it describes a job rather than a menu.
+    trusted = bool(
+        posting
+        and len(posting["description"]) > 400
+        and posting["title"].strip().lower() not in _NON_TITLES
+    )
+
+    if trusted and posting:
+        source = "Structured data"
+        title = posting["title"] or page_title
+        company = posting["company"] or page_company
+        location = posting["location"]
+        description = posting["description"]
+    else:
+        description = _readable_text(html)
+        if len(description) < 600:
+            raise UnresolvableURL(
+                "That page returned almost no text — it probably renders its "
+                "content with JavaScript. Paste the description instead."
+            )
+        source = "Pasted link"
+        # Only fall back to the structured title if it isn't the menu word we
+        # rejected a moment ago — otherwise the rejection achieves nothing and
+        # the job arrives titled "Jobs".
+        ld_title = (posting or {}).get("title", "").strip()
+        title = page_title or (ld_title if ld_title.lower() not in _NON_TITLES else "")
+        company = (
+            page_company
+            or (posting or {}).get("company", "")
+            or _host(url).split(".")[0].title()
+        )
+        location = (posting or {}).get("location") or ""
+
+    if not title:
+        raise UnresolvableURL("Couldn't work out the job title from that page.")
+
+    return _job(
+        jid=f"url_{abs(hash(url)) % 10**12}",
+        title=title,
+        company=company or "Unknown",
+        location=location,
+        description=description,
+        apply_url=url,
+        source=source,
+        ats=None,
+        posted=None,
+    )
+
+
+# Titles that mean the extraction found the page's navigation, not the job.
+# RemoteOK embeds a JobPosting whose title is "Jobs" and whose description is
+# the employer's site menu — structured data can be present and still be wrong,
+# so its output is sanity-checked rather than trusted.
+_NON_TITLES = frozenset(
+    {"jobs", "job", "home", "careers", "career", "about", "openings",
+     "remote jobs", "job board", "search", "apply"}
+)
+
+
+def _title_and_company(html: str) -> tuple[str, str]:
+    """Role and employer from the page title.
+
+    Aggregators put the real employer in the title and their own brand after a
+    separator — "Marketplace Operations Lead at Uber | The Muse". Deriving the
+    company from the hostname instead named The Muse as the employer of Uber's
+    job.
+    """
+    m = re.search(r"<title[^>]*>(.*?)</title>", html, re.S | re.I)
+    if not m:
+        return "", ""
+    raw = strip_html(m.group(1)).strip()
+    head = re.split(r"\s+[|–—\-]\s+", raw)[0].strip()
+
+    company = ""
+    at = re.split(r"\s+\bat\b\s+", head, maxsplit=1)
+    title = at[0].strip()
+    if len(at) > 1:
+        company = at[1].strip()
+
+    if title.lower() in _NON_TITLES:
+        title = ""
+    return title[:120], company[:80]
+
+
+def _page_title(html: str) -> str:
+    return _title_and_company(html)[0]
+
+
 async def resolve(url: str) -> dict[str, Any]:
     """Fetch the posting behind a URL. Raises UnresolvableURL if unsupported."""
     url = (url or "").strip()
@@ -178,8 +342,6 @@ async def resolve(url: str) -> dict[str, Any]:
             if m:
                 return await _from_ashby(client, m.group(1), m.group(2))
 
-    raise UnresolvableURL(
-        "That link isn't on a job board with a public API I can read "
-        "(Greenhouse, Lever or Ashby). Paste the job description text instead "
-        "and it will be scored exactly the same way."
-    )
+        # No recognised ATS — read the page itself. Structured data if the
+        # posting publishes it, otherwise its prose.
+        return await _from_page(client, url)
