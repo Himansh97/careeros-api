@@ -19,7 +19,7 @@ from .contacts import (
     set_contact_status,
 )
 from .providers import configured_providers
-from .discovery import fetch_all_jobs, filter_jobs, source_counts
+from .discovery import failed_sources, fetch_all_jobs, filter_jobs, source_counts
 from .outreach import build_outreach
 from .profile import ProfileNotFound, load_profile
 from .scoring import score_job_cached as score_job
@@ -70,6 +70,9 @@ async def health() -> dict[str, Any]:
         "sources": ["Greenhouse", "Ashby", "The Muse", "Arbeitnow", "RemoteOK"],
         "greenhouseCompanies": GREENHOUSE_COMPANIES,
         "lastFetchCounts": source_counts(),
+        # Named so a degraded search is visible. A failed source returns no
+        # jobs, which otherwise reads as an employer with no openings.
+        "failedSources": failed_sources(),
         "contactLookup": {
             "providers": configured_providers(),
             "enabled": any(p["configured"] for p in configured_providers()),
@@ -352,10 +355,29 @@ async def resume_document(job_id: str, fmt: str):
 async def outreach(job_id: str) -> dict[str, Any]:
     from .outreach_store import upsert_outreach
 
+    from .outreach import pick_contact
+
     p = _profile()
     job = await _job_or_404(job_id)
     s = score_job(job, p)
-    draft = build_outreach(job, s, p)
+
+    # Find a real addressee before drafting. Contact lookup already existed and
+    # worked, but only behind its own endpoint — this one never called it, so
+    # every draft was generated unaddressed and carried a note claiming no
+    # recruiter could be found while /contacts returned verified ones.
+    contact = None
+    domain = company_domain(job["company"]["name"], job.get("applyUrl", ""))
+    if domain:
+        found = await lookup_contacts(domain)
+        contact = pick_contact(found.get("contacts") or [])
+        if contact:
+            # Persist so the Contacts page and the outreach record can both
+            # reference the same person rather than each holding a loose copy.
+            contact = save_contact(
+                {**contact, "jobId": job_id, "company": job["company"]["name"]}
+            ) or contact
+
+    draft = build_outreach(job, s, p, contact)
 
     # Persist so the Outreach page and follow-up scheduling have something to
     # work from — generating a draft and forgetting it makes both useless.
@@ -364,6 +386,7 @@ async def outreach(job_id: str) -> dict[str, Any]:
             "jobId": job_id,
             "company": job["company"]["name"],
             "jobTitle": job["title"],
+            "contactId": (contact or {}).get("id"),
             "emailSubject": draft["emailSubject"],
             "emailDraft": draft["emailDraft"],
             "linkedinDraft": draft["linkedinDraft"],

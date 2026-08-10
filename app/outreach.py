@@ -18,24 +18,77 @@ from .profile import CandidateProfile
 
 
 def _best_proof(score: dict[str, Any], profile: CandidateProfile) -> str | None:
-    """Pick the strongest verified accomplishment relevant to this job."""
-    wanted = [s.lower() for s in score["strongMatches"]]
+    """Pick the strongest verified accomplishment relevant to this job.
+
+    Relevance is delegated to the resume tailorer rather than reimplemented.
+    The local copy matched requirement labels as plain substrings with no
+    aliases and no industry, so it ranked a Power BI dashboard bullet as the
+    lead proof for a *mortgage compliance* role while the MISMO schema
+    validation — the one piece of genuine domain evidence — scored zero.
+    """
+    from .tailor import _relevance
+
+    wanted = score["strongMatches"] + score["partialMatches"]
     best: tuple[int, str] | None = None
     for claim in profile.evidence:
         if not claim.approved_for_resume:
             continue
-        text = (claim.claim + " " + " ".join(claim.skills)).lower()
-        hits = sum(1 for w in wanted if w in text)
+        hits, _ = _relevance(claim, wanted)
         # Prefer claims carrying a quantified outcome — they read as credible.
-        quantified = any(ch.isdigit() for ch in claim.claim)
-        rank = hits * 2 + (1 if quantified else 0)
+        rank = hits * 2 + (1 if any(ch.isdigit() for ch in claim.claim) else 0)
         if hits and (best is None or rank > best[0]):
             best = (rank, claim.claim)
     return best[1] if best else None
 
 
+def _gap_line(score: dict[str, Any]) -> str:
+    """Name the required things the candidate cannot evidence.
+
+    A stretch application that stays silent about its gap invites the reader to
+    find it themselves and discard the application. Naming it costs little and
+    is the only honest option — the resume never implies the experience, so the
+    email must not either.
+    """
+    missing = [
+        r["label"] for r in score.get("requirements", [])
+        if r.get("match") == "gap" and r.get("importance") == "required"
+    ]
+    if not missing:
+        return ""
+    named = ", ".join(missing[:3])
+    return (
+        f"To be straightforward about fit: I haven't worked directly with {named}. "
+        f"The closest I've come is the work above, and I'd rather flag that now "
+        f"than have it surface later.\n\n"
+    )
+
+
+def pick_contact(contacts: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Best person to address, or None.
+
+    Prefers an actual recruiter with a verified address, then confidence. A
+    contact is only ever chosen from what a provider returned — no name or
+    address pattern is ever guessed.
+    """
+    usable = [c for c in contacts if c.get("email")]
+    if not usable:
+        return None
+    return sorted(
+        usable,
+        key=lambda c: (
+            bool(c.get("isRecruiter")),
+            bool(c.get("emailVerified")),
+            c.get("confidence") or 0,
+        ),
+        reverse=True,
+    )[0]
+
+
 def build_outreach(
-    job: dict[str, Any], score: dict[str, Any], profile: CandidateProfile
+    job: dict[str, Any],
+    score: dict[str, Any],
+    profile: CandidateProfile,
+    contact: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     company = job["company"]["name"]
     title = job["title"]
@@ -46,12 +99,20 @@ def build_outreach(
         f"{proof}\n\n" if proof else ""
     )
 
+    # Address the person by name when a provider actually returned one. The
+    # draft previously opened "Hello," and carried a note saying no recruiter
+    # could be identified — which stopped being true once contact lookup was
+    # wired in, but the note was hardcoded so it still claimed otherwise.
+    first_name = ((contact or {}).get("name") or "").split(" ")[0].strip()
+    greeting = f"Hello {first_name}," if first_name else "Hello,"
+
     email_subject = f"Application for {title} — {profile.name}"
     email_body = (
-        f"Hello,\n\n"
+        f"{greeting}\n\n"
         f"I'm applying for the {title} role at {company}. The overlap with my "
         f"background in {top_skills} is what stood out.\n\n"
         f"{proof_line}"
+        f"{_gap_line(score)}"
         f"Resume attached. Happy to jump on a quick call whenever useful.\n\n"
         f"Best,\n{profile.name}\n{profile.phone} | {profile.email}\n"
         f"{profile.linkedin_url}\n"
@@ -62,21 +123,32 @@ def build_outreach(
         f"My background is {top_skills}. Would love to connect."
     )[:280]
 
+    to = quote((contact or {}).get("email") or "")
     mailto = (
-        f"mailto:?subject={quote(email_subject)}&body={quote(email_body)}"
+        f"mailto:{to}?subject={quote(email_subject)}&body={quote(email_body)}"
     )
+
+    if contact:
+        note = (
+            f"{contact.get('name') or 'Contact'}"
+            f"{' — ' + contact['title'] if contact.get('title') else ''}, found via "
+            f"{contact.get('provider') or 'contact lookup'}"
+            f"{' (address verified)' if contact.get('emailVerified') else ' (address unverified — check before sending)'}."
+        )
+    else:
+        note = (
+            "No recruiter identified. No contact provider returned an address for "
+            "this employer's domain, and inferring a name or email pattern would "
+            "be fabrication. Add a contact manually to enable targeted outreach."
+        )
 
     return {
         "jobId": job["id"],
         "company": company,
         "jobTitle": title,
-        "contact": None,
-        "contactConfidence": 0,
-        "contactNote": (
-            "No recruiter identified. Greenhouse's public API exposes no contact "
-            "for this posting, and inferring a name or email pattern would be "
-            "fabrication. Add a contact manually to enable targeted outreach."
-        ),
+        "contact": contact,
+        "contactConfidence": (contact or {}).get("confidence") or 0,
+        "contactNote": note,
         "emailSubject": email_subject,
         "emailDraft": email_body,
         "linkedinDraft": linkedin_note,
