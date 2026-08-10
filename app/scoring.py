@@ -45,10 +45,53 @@ def _stem(word: str) -> str:
     return word
 
 
+def _variants(skill: str) -> list[str]:
+    """Forms a requirement might be evidenced under.
+
+    A canonical name written as "Loan origination system (LOS)" matched
+    nothing: the parenthetical is part of neither the spelled-out phrase nor
+    the acronym, so evidence declaring "LOS" or "loan origination system" was
+    reported as a gap. Both halves are the same requirement and either one
+    counts as evidence for it.
+    """
+    from .skills import SKILL_ALIASES
+
+    needle = skill.lower().strip()
+    out = [needle]
+    if "(" in needle and ")" in needle:
+        head = needle.split("(", 1)[0].strip()
+        inner = needle.split("(", 1)[1].split(")", 1)[0].strip()
+        out.extend(v for v in (head, inner) if v)
+
+    # The alias set the extractor used to FIND the requirement in the posting
+    # must also be used to find it in the evidence. Without this the match was
+    # one-directional: a JD saying "risk mitigation" was recorded under the
+    # canonical name "Risk management", and evidence declaring that exact
+    # phrase then scored as a gap because it never says "management".
+    for alias in SKILL_ALIASES.get(skill, []):
+        alias = alias.strip().lower()
+        if alias and alias not in out:
+            out.append(alias)
+    return out
+
+
 def _find_evidence(
     skill: str, profile: CandidateProfile
 ) -> tuple[EvidenceClaim | None, str]:
     """Return the best evidence for a skill and the match type."""
+    variants = _variants(skill)
+    if len(variants) > 1:
+        # Try each form on its own; the first that finds evidence wins.
+        best: tuple[EvidenceClaim | None, str] = (None, "gap")
+        for variant in variants[1:]:
+            claim, match = _find_evidence(variant, profile)
+            if match == "exact":
+                return claim, match
+            if match == "partial" and best[1] == "gap":
+                best = (claim, match)
+        if best[1] != "gap":
+            return best
+
     needle = skill.lower()
     parts = [p for p in needle.replace("/", " ").split() if len(p) > 2]
 
@@ -93,6 +136,26 @@ def _find_evidence(
     inventory = [s.lower() for group in profile.skills_inventory.values() for s in group]
     for listed in inventory:
         if listed == needle or _contains(listed, needle):
+            return None, "partial"
+
+    # Partial: an inventory *group* name generalises the requirement. Only the
+    # group's items were ever consulted, so a posting asking for "regulatory
+    # compliance" scored a gap against a profile whose compliance group lists
+    # NPPI/GLBA, HIPAA and SOC 1/SOC 2. Naming the frameworks is real evidence
+    # of the practice — but weaker than having done that specific regulatory
+    # work, so: partial.
+    #
+    # The group's own words must ALL appear in the requirement, not merely
+    # overlap it. Matching on any shared word credited "risk management" to a
+    # profile whose only match was "project and delivery management" — a
+    # different discipline that happens to end in the same noun.
+    for group in profile.skills_inventory:
+        group_words = [
+            w for w in group.replace("_", " ").split() if w not in ("and", "or")
+        ]
+        if not group_words or len(group_words) > len(parts):
+            continue
+        if all(any(_contains(p, gw) for p in parts) for gw in group_words):
             return None, "partial"
 
     # Partial: a stemmed form matches ('dashboarding' vs a declared 'dashboard').

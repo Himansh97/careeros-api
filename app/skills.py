@@ -251,6 +251,29 @@ _HEADING_WORDS = frozenset(
 )
 
 
+# Generic personal qualities. No résumé bullet can evidence "problem solving"
+# in a way a matcher could confirm, so emitting it as a requirement guarantees
+# a permanent false gap that drags coverage down. The SoFi posting labels a
+# responsibility "Problem Solving: Root Cause Analysis:" — the specific half,
+# root cause analysis, is scoreable and already matches exactly; the generic
+# half was counted as a separate unmet requirement from the same sentence.
+#
+# Only terms unscoreable *in principle* belong here. Anything a claim could
+# demonstrate — stakeholder management, mentoring, requirements gathering —
+# stays a real requirement.
+_SOFT_SKILL_TERMS = frozenset(
+    {
+        "problem solving", "problem solver", "problem-solving",
+        "attention to detail", "detail oriented", "detail-oriented",
+        "organized", "organised", "self starter", "self-starter",
+        "team player", "hard working", "hard-working", "proactive",
+        "proactive approach", "critical thinking", "time management",
+        "interpersonal skills", "work ethic", "adaptability", "flexibility",
+        "multitasking", "fast learner", "passionate", "motivated",
+    }
+)
+
+
 def _is_heading(key: str) -> bool:
     """True when a candidate term reads as a section heading.
 
@@ -259,6 +282,10 @@ def _is_heading(key: str) -> bool:
     so without this they were reported as requirements the candidate lacks,
     padding the denominator and depressing every score.
     """
+    normalised = re.sub(r"[^a-z ]+", " ", key.lower())
+    normalised = re.sub(r"\s+", " ", normalised).strip()
+    if normalised in _SOFT_SKILL_TERMS:
+        return True
     words = [w for w in re.split(r"[^a-z]+", key) if w]
     if not words:
         return True
