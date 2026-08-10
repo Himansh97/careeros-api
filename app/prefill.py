@@ -42,6 +42,7 @@ SUBMIT_PATTERNS = (
 # then outlined in the page so the candidate's eye lands on them before they
 # press anything.
 SENSITIVE = {
+    "hispanic_latino",
     "work_authorization", "visa_status", "sponsorship_requirement",
     "gender", "race_ethnicity", "veteran_disclosure", "disability_disclosure",
     "current_base_salary", "salary_expectation",
@@ -71,6 +72,11 @@ FIELD_MAP: list[tuple[str, tuple[str, ...]]] = [
                             "salary requirement")),
     ("current_base_salary", ("current salary", "current base", "current compensation")),
     ("gender", ("gender",)),
+    # Must precede race_ethnicity: "Are you Hispanic/Latino?" is a separate
+    # yes/no question, and the broader "hispanic"/"ethnicity" patterns below
+    # would otherwise claim it and answer it with a full ethnicity string.
+    ("hispanic_latino", ("hispanic/latino", "are you hispanic", "hispanic or latino",
+                         "hispanic_ethnicity")),
     ("race_ethnicity", ("race", "ethnicity", "hispanic")),
     ("veteran_disclosure", ("veteran", "protected veteran")),
     ("disability_disclosure", ("disability", "disabled")),
@@ -85,6 +91,7 @@ FIELD_MAP: list[tuple[str, tuple[str, ...]]] = [
     ("current_title", ("current or previous job title", "current job title",
                        "most recent title", "previous job title")),
     ("previously_employed_here", ("ever been employed by", "previously employed by",
+                                  "previously worked at", "worked at or consulted",
                                   "worked at our company", "former employee")),
 ]
 
@@ -258,6 +265,17 @@ def build_answers(
         "disability_disclosure": str(demo.get("disability_disclosure", "")),
     }
 
+    # Asked as its own yes/no on most EEO forms, while the stored answer is a
+    # single ethnicity string.
+    eth = str(demo.get("race_ethnicity", "")).lower()
+    if eth:
+        if any(d in eth for d in _DECLINE_VALUES):
+            answers["hispanic_latino"] = "Decline To Self Identify"
+        elif "not hispanic" in eth or "non-hispanic" in eth:
+            answers["hispanic_latino"] = "No"
+        elif "hispanic" in eth or "latino" in eth:
+            answers["hispanic_latino"] = "Yes"
+
     # Country is asked constantly and is derivable from the stored address
     # rather than being a separate answer to maintain.
     addr = str(a.get("address", ""))
@@ -330,6 +348,38 @@ YES_NO_FALLBACK: dict[str, str] = {
 }
 
 
+# EEO dropdowns phrase their options as sentences ("I am not a protected
+# veteran", "Decline To Self Identify") which no stored answer matches by
+# substring. These map the candidate's stated INTENT onto whatever wording a
+# given employer uses, without ever picking a different disclosure than the
+# one they chose.
+_DECLINE_VALUES = ("prefer not", "decline", "do not wish", "don't wish",
+                   "do not want", "not disclose", "rather not")
+_DECLINE_OPTIONS = ("decline", "don't wish", "do not wish", "do not want",
+                    "prefer not", "not to answer", "not specified")
+
+
+def _eeo_score(opt: str, val: str) -> int | None:
+    """Score EEO options by intent. None when this is not an EEO question."""
+    if any(d in val for d in _DECLINE_VALUES):
+        return 95 if any(d in opt for d in _DECLINE_OPTIONS) else 0
+
+    if "veteran" in val or "veteran" in opt:
+        declines = any(d in opt for d in _DECLINE_OPTIONS)
+        if val.startswith("no") or "not a veteran" in val:
+            return 95 if ("not a protected veteran" in opt or opt == "no") else 0
+        if val.startswith("yes") or "identify as" in val:
+            return 95 if ("identify as" in opt or opt == "yes") else 0
+        return 0 if declines else None
+
+    if "disab" in val and "disab" in opt:
+        if val.startswith("no"):
+            return 95 if opt.startswith("no") else 0
+        if val.startswith("yes"):
+            return 95 if opt.startswith("yes") else 0
+    return None
+
+
 def option_score(option_text: str, value: str) -> int:
     """How well a dropdown option answers a stored value. Higher is better, 0 = no.
 
@@ -342,6 +392,10 @@ def option_score(option_text: str, value: str) -> int:
     val = (value or "").strip().lower()
     if not opt or not val:
         return 0
+
+    eeo = _eeo_score(opt, val)
+    if eeo is not None:
+        return eeo
 
     for word in ("yes", "no"):
         if val.startswith(word):
@@ -387,11 +441,24 @@ def apply_form_url(job_id: str, stored_url: str) -> str:
 
 
 def match_field(label: str) -> str | None:
-    """Which stored answer, if any, a form field is asking for."""
+    """Which stored answer, if any, a form field is asking for.
+
+    Patterns match on word boundaries, not as bare substrings. "city" is inside
+    "ethni-city", so an EEO question — "Are you Hispanic/Latino?", label
+    `hispanic_ethnicity` — resolved to `address` and got filled with a home
+    town. The same failure mode as short skill aliases matching inside longer
+    words; it is worth being strict about by default.
+    """
     low = (label or "").strip().lower()
     if not low:
         return None
     for key, patterns in FIELD_MAP:
-        if any(p in low for p in patterns):
-            return key
+        for p in patterns:
+            # Multi-word patterns are already specific enough to be safe as
+            # substrings; single words are the ones that collide.
+            if " " in p or "/" in p or "_" in p:
+                if p in low:
+                    return key
+            elif re.search(rf"(?<![a-z0-9]){re.escape(p)}(?![a-z0-9])", low):
+                return key
     return None
