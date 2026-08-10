@@ -53,14 +53,19 @@ def main() -> int:
         resume = tailor_resume(job, score_job(job, profile), profile)
         counts = [len(s["bullets"]) for s in resume["sections"]]
 
-        # Every role a resume shows must justify its place on the page.
-        if any(c < 2 for c in counts):
-            failures.append(f"[{jid}] a role kept fewer than 2 bullets: {counts}")
+        # Every role must justify its place on the page with at least one
+        # bullet; the two most recent carry at least two. A flat floor of two
+        # everywhere guaranteed 8 of the 9-bullet budget, leaving one slot for
+        # relevance — which is why every posting produced an identical 3/2/2/2
+        # and tailoring stopped being visible at all.
+        if any(c < 1 for c in counts):
+            failures.append(f"[{jid}] a role kept no bullets: {counts}")
+        if any(c < 2 for c in counts[:2]):
+            failures.append(f"[{jid}] a recent role fell below 2 bullets: {counts}")
 
-        # No role may dominate: the gap between the fullest and thinnest role
-        # is what made the earlier resumes look lopsided.
-        if counts and max(counts) - min(counts) > 2:
-            failures.append(f"[{jid}] uneven spread {counts}")
+        # No role may dominate outright — that was the original 5/1/1/2 defect.
+        if counts and max(counts) - min(counts) > 3:
+            failures.append(f"[{jid}] lopsided spread {counts}")
 
         # Roles stay reverse-chronological regardless of relevance.
         if resume["sections"][0]["employer"] != "Supreme Lending (Everett Financial, Inc.)":

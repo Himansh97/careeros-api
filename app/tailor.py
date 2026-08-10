@@ -12,13 +12,72 @@ from typing import Any
 
 from .profile import CandidateProfile, EvidenceClaim
 from .scoring import _contains
+from .skills import SKILL_ALIASES
 
 
-def _relevance(claim: EvidenceClaim, wanted: list[str]) -> tuple[int, list[str]]:
-    """How many of the job's requirements this claim demonstrably supports."""
-    haystack = (claim.claim + " " + " ".join(claim.skills)).lower()
-    hits = [w for w in wanted if _contains(haystack, w.lower())]
-    return len(hits), hits
+def _requirement_weights(
+    wanted: list[str], score: dict[str, Any], profile: CandidateProfile
+) -> dict[str, float]:
+    """Weight each wanted requirement by how much it discriminates.
+
+    Two factors, both about how much a match is worth telling an employer:
+
+    * Importance — a required requirement outranks a preferred one.
+    * Rarity in the candidate's own evidence — a requirement a dozen claims
+      could satisfy says little about which bullet to lead with, whereas one
+      only two claims can satisfy is exactly the bullet worth the space.
+    """
+    importance = {
+        r["label"]: (2.0 if r["importance"] == "required" else 1.0)
+        for r in score.get("requirements", [])
+    }
+
+    # Rarity within the candidate's own evidence was tried here and is wrong:
+    # it made a requirement *less* valuable the more evidence backed it, so
+    # importing fifteen genuine LOS claims demoted every LOS bullet. What a
+    # bullet is worth depends on the posting, not on how much the candidate
+    # has written down. Importance alone; breadth is handled by selection.
+    return {want: importance.get(want, 1.0) for want in wanted}
+
+
+def _relevance(
+    claim: EvidenceClaim,
+    wanted: list[str],
+    weights: dict[str, float] | None = None,
+) -> tuple[int, list[str]]:
+    """How many of the job's requirements this claim demonstrably supports.
+
+    Requirements are matched through the same alias set the extractor used to
+    find them in the posting. Matching only the canonical label was asymmetric:
+    the extractor would recognise "data validation" in a JD and record the
+    requirement as "Data quality", then fail to see that same phrase in the
+    evidence. That silently hid the most job-specific claims — the MISMO schema
+    validation, which declares "data validation", scored zero relevance on a
+    mortgage compliance posting and was dropped from the resume entirely.
+
+    The claim's industry counts too, so domain experience outranks generic
+    evidence on a domain-specific posting.
+    """
+    haystack = (
+        claim.claim + " " + " ".join(claim.skills) + " " + claim.industry
+    ).lower()
+    hits = []
+    for want in wanted:
+        terms = [want, *SKILL_ALIASES.get(want, [])]
+        if any(_contains(haystack, t.lower()) for t in terms):
+            hits.append(want)
+
+    if weights is None:
+        return len(hits), hits
+
+    # Counting every matched requirement equally let common skills outvote
+    # rare ones. On a mortgage posting, a generic requirements-gathering
+    # bullet matching four widely-supported skills beat the Encompass/LOS
+    # bullet matching two — even though the LOS evidence is the only thing on
+    # the page a mortgage employer cannot find in any other candidate. Scores
+    # are scaled by 100 so the result stays an integer for sorting.
+    score = sum(weights.get(h, 1.0) for h in hits)
+    return int(round(score * 100)), hits
 
 
 MONTHS = {
@@ -67,14 +126,23 @@ def tailor_resume(
     job: dict[str, Any], score: dict[str, Any], profile: CandidateProfile
 ) -> dict[str, Any]:
     wanted = score["strongMatches"] + score["partialMatches"]
+    weights = _requirement_weights(wanted, score, profile)
     employment = _employment_lookup(profile)
 
     ranked: list[tuple[int, list[str], EvidenceClaim]] = []
     coursework: list[dict[str, Any]] = []
+    project_claims: list[tuple[int, list[str], EvidenceClaim]] = []
     for claim in profile.evidence:
         if not claim.approved_for_resume:
             continue
-        n, hits = _relevance(claim, wanted)
+        n, hits = _relevance(claim, wanted, weights)
+        # Named deliverables get their own section. Listing them as employment
+        # bullets buried a shipped platform among routine duties, and it also
+        # meant one role's bullet cap decided how much of the candidate's most
+        # substantial work an employer ever saw.
+        if claim.project:
+            project_claims.append((n, hits, claim))
+            continue
         # Coursework under a job heading reads as padding — a recruiter sees
         # "in coursework" beside a job title and discounts the whole role. The
         # claim is real, so it moves to EDUCATION rather than being dropped,
@@ -115,6 +183,14 @@ def tailor_resume(
             {
                 "id": claim.claim_id,
                 "text": claim.claim,
+                # How many of this posting's requirements the bullet supports.
+                # Selection needs the count, not just whether it's non-zero:
+                # ranking on a boolean made every relevant bullet tie, so
+                # section order decided, and a bullet answering three of the
+                # JD's requirements lost to one answering a single requirement
+                # purely because its role came later on the page.
+                "relevance": n,
+                "hits": hits,
                 "changeType": "reordered" if n > 0 else "unchanged",
                 "whyChanged": (
                     f"Prioritized — directly supports {', '.join(hits[:4])}."
@@ -138,7 +214,12 @@ def tailor_resume(
     # similar postings the order is identical, which is why two analyst
     # applications came out 99.5% the same document. Dropping the claims a
     # given posting has no use for is also just better resume practice.
-    _select_bullets(sections)
+    _order_by_coverage(sections, weights)
+    _select_bullets(sections, weights=weights)
+
+    projects = _build_projects(
+        project_claims, weights, job.get("description", "")
+    )
 
     # Align wording to the posting's vocabulary before auditing, so the
     # keyword-alignment score reflects what the employer will actually read.
@@ -176,13 +257,153 @@ def tailor_resume(
         "scoreHistory": [resume_score],
         "sections": sections,
         "coursework": coursework,
+        "projects": projects,
         "handTailoredBullets": overridden,
         "audit": audit,
         "updatedAt": None,
     }
 
 
-def _select_bullets(sections: list[dict[str, Any]], budget: int = 9, floor: int = 2) -> None:
+def _project_affinity(claims: list[EvidenceClaim], description: str) -> int:
+    """How much of a project's own vocabulary the posting actually uses.
+
+    Requirement labels alone could not rank projects sensibly: extraction only
+    names what the vocabulary recognises, so on a mortgage-compliance posting
+    SettleDesk (Ginnie Mae, MISMO, post-closing) tied with an unrelated CI/CD
+    platform — the JD never says "Ginnie Mae", so nothing distinguished them.
+    Comparing against the posting's raw text restores that signal without
+    inventing a requirement that was never stated.
+    """
+    text = (description or "").lower()
+    if not text:
+        return 0
+    tokens: set[str] = set()
+    for claim in claims:
+        for skill in claim.skills:
+            token = skill.lower().strip()
+            if len(token) > 2:
+                tokens.add(token)
+    return sum(1 for t in tokens if _contains(text, t))
+
+
+def _build_projects(
+    project_claims: list[tuple[int, list[str], EvidenceClaim]],
+    weights: dict[str, float],
+    description: str = "",
+    max_projects: int = 3,
+    max_bullets: int = 3,
+) -> list[dict[str, Any]]:
+    """Group project-tagged claims into ranked, deduplicated project entries.
+
+    Projects are ordered by how much of THIS posting they speak to, and their
+    bullets are chosen by the same marginal-coverage rule used for employment,
+    so a project earns its space by answering something the page has not
+    already answered.
+    """
+    grouped: dict[str, list[tuple[int, list[str], EvidenceClaim]]] = {}
+    for n, hits, claim in project_claims:
+        grouped.setdefault(claim.project, []).append((n, hits, claim))
+
+    entries: list[dict[str, Any]] = []
+    for name, items in grouped.items():
+        items.sort(key=lambda t: -t[0])
+        entries.append(
+            {
+                "id": name.lower().replace(" ", "-")[:48],
+                "name": name,
+                # Requirement hits, plus how much of the project's own
+                # vocabulary this posting actually uses.
+                "relevance": sum(n for n, _, _ in items)
+                + _project_affinity([c for _, _, c in items], description) * 300,
+                "bullets": [
+                    {
+                        "id": c.claim_id,
+                        "text": c.claim,
+                        "relevance": n,
+                        "hits": hits,
+                        "changeType": "reordered" if n else "unchanged",
+                        "whyChanged": (
+                            f"Prioritized — directly supports {', '.join(hits[:4])}."
+                            if hits
+                            else None
+                        ),
+                        "evidence": {
+                            "source": f"{c.source} — {c.claim_id}",
+                            "verifiedStatement": c.claim,
+                            "usedToSupport": ", ".join(hits) if hits else "General background",
+                        },
+                    }
+                    for n, hits, c in items
+                ],
+            }
+        )
+
+    entries.sort(key=lambda e: -e["relevance"])
+    entries = entries[:max_projects]
+
+    # Same marginal-gain rule as employment: within each project keep the
+    # bullets that add something new, not the ones that repeat a strong suit.
+    covered: set[str] = set()
+    for entry in entries:
+        remaining = list(entry["bullets"])
+        chosen: list[dict[str, Any]] = []
+        while remaining and len(chosen) < max_bullets:
+            best = max(
+                remaining,
+                key=lambda b: (
+                    sum(weights.get(h, 1.0) for h in b["hits"] if h not in covered),
+                    b["relevance"],
+                ),
+            )
+            remaining.remove(best)
+            chosen.append(best)
+            covered.update(best["hits"])
+        entry["bullets"] = chosen
+    return entries
+
+
+def _order_by_coverage(
+    sections: list[dict[str, Any]], weights: dict[str, float]
+) -> None:
+    """Reorder bullets within each role by what they ADD, not what they score.
+
+    Selection guarantees the first N bullets of every role, so ordering decides
+    what is guaranteed. Pure relevance order put the two highest individual
+    scorers first, and on a mortgage posting both answered "requirements
+    gathering" — the second added almost nothing, while the Encompass/LOS and
+    MISMO evidence that speaks to the posting's actual subject never made the
+    page. Coverage is tracked across roles in page order, so a requirement
+    already answered above is worth less further down.
+    """
+    covered: set[str] = set()
+    for section in sections:
+        remaining = list(section["bullets"])
+        ordered: list[dict[str, Any]] = []
+        while remaining:
+            best = max(
+                remaining,
+                key=lambda b: (
+                    sum(
+                        weights.get(h, 1.0)
+                        for h in b.get("hits", [])
+                        if h not in covered
+                    ),
+                    b.get("relevance", 0),
+                ),
+            )
+            remaining.remove(best)
+            ordered.append(best)
+            covered.update(best.get("hits", []))
+        section["bullets"] = ordered
+
+
+def _select_bullets(
+    sections: list[dict[str, Any]],
+    budget: int = 16,
+    floor: int = 3,
+    cap_per_role: int = 4,
+    weights: dict[str, float] | None = None,
+) -> None:
     """Keep the most relevant bullets, kept evenly spread across roles.
 
     A floor of one bullet per role let relevance take everything else, so a
@@ -197,22 +418,70 @@ def _select_bullets(sections: list[dict[str, Any]], budget: int = 9, floor: int 
     if not sections:
         return
 
+    # A flat floor across every role ate almost the whole budget: four roles at
+    # two bullets each guaranteed 8 of 9, leaving one slot for relevance, so a
+    # posting could barely influence the page. Recent roles now hold the floor
+    # and older ones drop to a single bullet — ordinary resume practice, and it
+    # frees enough budget for tailoring to actually show.
+    def floor_for(index: int) -> int:
+        return floor if index < 2 else max(1, floor - 1)
+
     # Never promise a role more bullets than it actually has evidence for.
-    guaranteed = sum(min(floor, len(s["bullets"])) for s in sections)
+    guaranteed = sum(
+        min(floor_for(i), len(s["bullets"])) for i, s in enumerate(sections)
+    )
     remaining = max(budget - guaranteed, 0)
 
     rest: list[tuple[int, dict[str, Any]]] = []
-    for section in sections:
-        for bullet in section["bullets"][floor:]:
-            supports = 0 if bullet.get("whyChanged") else 1  # 0 sorts first
-            rest.append((supports, bullet))
+    for order, section in enumerate(sections):
+        for bullet in section["bullets"][floor_for(order):]:
+            rest.append((order, bullet))
 
-    rest.sort(key=lambda t: t[0])
-    keep = {id(b) for _, b in rest[:remaining]}
+    # Fill the discretionary slots by requirement COVERAGE, not by per-bullet
+    # score. Ranking each bullet independently kept picking near-duplicates:
+    # the two highest scorers both answered "requirements gathering", so the
+    # second one bought almost nothing while Encompass/LOS and MISMO evidence
+    # — the only bullets speaking to this posting's actual subject — were left
+    # off. Greedy marginal gain asks what a bullet ADDS to what is already on
+    # the page, so breadth across the JD wins over repeating a strong suit.
+    weights = weights or {}
+    covered: set[str] = set()
+    for order, section in enumerate(sections):
+        for bullet in section["bullets"][: floor_for(order)]:
+            covered.update(bullet.get("hits", []))
 
-    for section in sections:
+    def marginal_gain(bullet: dict[str, Any]) -> float:
+        return sum(
+            weights.get(h, 1.0) for h in bullet.get("hits", []) if h not in covered
+        )
+
+    keep: set[int] = set()
+    taken: dict[int, int] = {}
+    # No role may take the whole discretionary budget. Relevance counts industry,
+    # so every claim at the current employer scores well on a same-industry
+    # posting and one role swept all the spare slots, producing the lopsided
+    # shape the floor exists to prevent.
+    while len(keep) < remaining:
+        available = [
+            (order, b)
+            for order, b in rest
+            if id(b) not in keep and taken.get(order, 0) < cap_per_role
+        ]
+        if not available:
+            break
+        # Highest marginal gain wins; ties fall back to page order so the
+        # choice stays stable and reverse-chronological.
+        order, bullet = max(
+            available, key=lambda pair: (marginal_gain(pair[1]), -pair[0])
+        )
+        taken[order] = taken.get(order, 0) + 1
+        keep.add(id(bullet))
+        covered.update(bullet.get("hits", []))
+
+    for order, section in enumerate(sections):
+        limit = floor_for(order)
         section["bullets"] = [
-            b for i, b in enumerate(section["bullets"]) if i < floor or id(b) in keep
+            b for i, b in enumerate(section["bullets"]) if i < limit or id(b) in keep
         ]
 
 

@@ -110,6 +110,10 @@ GROUP_LABELS = {
     "project_and_delivery_management": "Project & Delivery Management",
     "software_and_devops": "Software & DevOps",
     "compliance": "Compliance",
+    "mortgage_domain": "Mortgage Domain",
+    "cloud_and_devsecops": "Cloud & DevSecOps",
+    "ai_and_llm_engineering": "AI & LLM Engineering",
+    "frontend_and_full_stack": "Frontend & Full-Stack",
 }
 
 ACRONYMS = {"Bi": "BI", "Devops": "DevOps", "Ai": "AI", "Ml": "ML", "Sql": "SQL",
@@ -139,9 +143,17 @@ def _prioritised_skills(resume: dict[str, Any], profile: Any) -> list[tuple[str,
         low = item.lower()
         return 0 if any(w == low or w in low for w in wanted) else 1
 
-    ordered: list[tuple[str, list[str], int]] = []
+    ordered: list[tuple[str, list[str], float]] = []
     for name, items in groups:
-        hits = sum(1 for i in items if rank_item(i) == 0)
+        hits = float(sum(1 for i in items if rank_item(i) == 0))
+        # The group's own name is a category signal in its own right. Matching
+        # only individual items left "mortgage_domain" tied with generic data
+        # engineering on a mortgage posting — every specific tool in it
+        # (Encompass, MeridianLink, MISMO) is too specialised to appear in the
+        # requirement labels, so the most relevant group ranked second.
+        label = name.replace("_", " ").lower()
+        if any(w in label or label in w for w in wanted):
+            hits += 2.5
         ordered.append((name, sorted(items, key=rank_item), hits))
 
     ordered.sort(key=lambda g: -g[2])
@@ -166,6 +178,16 @@ def _trim(resume: dict[str, Any], lead: int, rest: int) -> dict[str, Any]:
         {**s, "bullets": s["bullets"][: lead if i == 0 else rest]}
         for i, s in enumerate(resume.get("sections", []))
     ]
+    # Projects shrink alongside employment. Trimming only the roles could not
+    # converge once projects existed — the overflow loop would tighten forever
+    # while the projects section held its full height.
+    projects = resume.get("projects") or []
+    if projects:
+        keep_projects = max(1, min(len(projects), rest + 1))
+        trimmed["projects"] = [
+            {**p, "bullets": p["bullets"][: max(1, rest)]}
+            for p in projects[:keep_projects]
+        ]
     return trimmed
 
 
@@ -181,32 +203,80 @@ DENSITIES = [
 ]
 
 
-def build_pdf(resume: dict[str, Any], profile: Any) -> bytes:
-    """Render, measure, and re-render until the content fills one page.
+# A resume may run to two pages, never more. Past two, a recruiter stops
+# reading and an ATS starts truncating.
+MAX_PAGES = 2
+# Below this, the final page looks abandoned rather than finished. A resume
+# that runs 1.15 pages reads worse than a tight single page — the reader sees
+# the white space, not the extra evidence.
+MIN_LAST_PAGE_FILL = 0.45
 
-    Order matters: compress whitespace first, and only start dropping
-    bullets once the tightest readable typography still overflows. A page
-    that spills three lines onto a second sheet reads worse than either a
-    full single page or a genuinely full two.
+
+def _last_page_fill(pdf_bytes: bytes) -> float:
+    """Roughly how full the final page is, 0-1.
+
+    Measured by comparing extracted line counts, because reportlab does not
+    report leftover frame space after the fact. Approximate is enough: this
+    only has to distinguish "page ends naturally" from "page is mostly blank".
     """
-    # Pass 1 — keep every relevant bullet, tighten the layout.
-    last: bytes | None = None
+    from pypdf import PdfReader
+
+    pages = PdfReader(io.BytesIO(pdf_bytes)).pages
+    if len(pages) <= 1:
+        return 1.0
+    counts = [len([ln for ln in (p.extract_text() or "").splitlines() if ln.strip()])
+              for p in pages]
+    full = max(counts[:-1]) or 1
+    return min(counts[-1] / full, 1.0)
+
+
+def build_pdf(resume: dict[str, Any], profile: Any) -> bytes:
+    """Render, measure, and re-render until the pages are genuinely full.
+
+    Three rules, in priority order:
+
+    1. Never exceed MAX_PAGES.
+    2. Never leave the final page mostly blank.
+    3. Subject to those, keep as much real evidence as possible and set it as
+       loosely — i.e. as readably — as it will go.
+
+    Loosest typography is tried first because looser type fills more of the
+    page; tightening is what gets used to claw back an overflow, not a default.
+    Bullets are only dropped once no density fits, since every dropped bullet
+    is evidence the employer no longer sees.
+    """
+    def acceptable(pdf: bytes) -> bool:
+        return (
+            _page_count(pdf) <= MAX_PAGES
+            and _last_page_fill(pdf) >= MIN_LAST_PAGE_FILL
+        )
+
+    # Pass 1 — full content, loosest readable setting that fits the rules.
+    fitted: bytes | None = None
     for density in DENSITIES:
         candidate = _render_pdf(resume, profile, density)
-        if _page_count(candidate) == 1:
+        if acceptable(candidate):
             return candidate
-        last = candidate
+        if _page_count(candidate) <= MAX_PAGES and fitted is None:
+            # Fits on pages, but the last one is thin. Hold it as a fallback
+            # while trying to do better.
+            fitted = candidate
 
-    # Pass 2 — still overflowing, so trim least-relevant bullets at the
-    # tightest density.
+    # Pass 2 — still over MAX_PAGES at the tightest setting, so trim the
+    # least relevant evidence until it fits.
     tight = DENSITIES[-1]
-    for lead, rest in [(5, 3), (5, 2), (4, 2), (4, 1), (3, 1)]:
+    for lead, rest in [(7, 4), (6, 3), (5, 3), (5, 2), (4, 2), (4, 1), (3, 1)]:
         candidate = _render_pdf(_trim(resume, lead, rest), profile, tight)
-        if _page_count(candidate) == 1:
+        if acceptable(candidate):
             return candidate
-        last = candidate
+        if _page_count(candidate) <= MAX_PAGES and fitted is None:
+            fitted = candidate
 
-    return last or _render_pdf(resume, profile, tight)
+    # Pass 3 — nothing satisfied both rules. A thin final page beats a third
+    # page, so prefer whatever at least fits the page limit.
+    if fitted is not None:
+        return fitted
+    return _render_pdf(_trim(resume, 3, 1), profile, tight)
 
 
 # --------------------------------------------------------------------- PDF
@@ -308,6 +378,22 @@ def _render_pdf(resume: dict[str, Any], profile: Any,
                                      leftIndent=12, bulletFontSize=7, spaceBefore=1))
         flow.append(Spacer(1, 3))
 
+    # Named deliverables sit after employment: a recruiter reads the roles for
+    # context first, then the projects for what was actually shipped.
+    projects = resume.get("projects") or []
+    if projects:
+        flow += [Paragraph("SELECTED PROJECTS", section_s), rule()]
+        for project in projects:
+            flow.append(Paragraph(f"<b>{_escape(project.get('name',''))}</b>", body_s))
+            bullets = [
+                ListItem(Paragraph(_escape(b.get("text", "")), body_s), leftIndent=11)
+                for b in project.get("bullets", [])
+            ]
+            if bullets:
+                flow.append(ListFlowable(bullets, bulletType="bullet", start="•",
+                                         leftIndent=12, bulletFontSize=7, spaceBefore=1))
+            flow.append(Spacer(1, 3))
+
     education = getattr(profile, "education", []) or []
     if education:
         flow += [Paragraph("EDUCATION", section_s), rule()]
@@ -408,6 +494,16 @@ def build_docx(resume: dict[str, Any], profile: Any) -> bytes:
             r.font.size = Pt(9)
         for b in section.get("bullets", []):
             document.add_paragraph(b.get("text", ""), style="List Bullet")
+
+    projects = resume.get("projects") or []
+    if projects:
+        section_heading("SELECTED PROJECTS")
+        for project in projects:
+            p = document.add_paragraph()
+            r = p.add_run(project.get("name", ""))
+            r.bold = True
+            for b in project.get("bullets", []):
+                document.add_paragraph(b.get("text", ""), style="List Bullet")
 
     education = getattr(profile, "education", []) or []
     if education:

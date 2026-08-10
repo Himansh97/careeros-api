@@ -30,6 +30,11 @@ class EvidenceClaim:
     classification: str
     approved_for_resume: bool
     source: str
+    # Named deliverable this claim belongs to. Claims carrying one are grouped
+    # under PROJECTS rather than listed as employment bullets, so a major piece
+    # of work reads as a shipped thing with its own scope instead of dissolving
+    # into a list of duties. Empty means it stays an employment bullet.
+    project: str = ""
 
     @property
     def skill_tokens(self) -> set[str]:
@@ -108,6 +113,7 @@ def load_profile() -> CandidateProfile:
             classification=c.get("classification", "UNKNOWN"),
             approved_for_resume=bool(c.get("approved_for_resume", False)),
             source=c.get("evidence_source", "career_evidence.json"),
+            project=c.get("project", ""),
         )
         for c in evidence_raw.get("claims", [])
     ]
