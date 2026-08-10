@@ -22,8 +22,11 @@ reads it through `app/profile.py`.
    whole value is that its numbers can be trusted.
 2. **An unrecognised requirement is a gap, never a pass.** Not knowing what a term means
    is not a reason to assume the candidate meets it.
-3. **PII never enters git.** Note `scripts/align_*.py` embed resume bullet text — the same
-   content `careeros` deliberately gitignores. Think before committing new ones.
+3. **PII never enters git.** Resume text is derived from `career_evidence.json`, which
+   `careeros` gitignores as personal data — so it must not be inlined in Python either.
+   Per-job overrides live in `~/careeros/overrides/<job_id>.json` (gitignored) and are
+   applied by the generic `scripts/apply_overrides.py`. `.gitignore` blocks
+   `scripts/align_*.py` and `scripts/import_*.py` so a one-off cannot reintroduce this.
 4. **Never add a `Co-Authored-By: Claude` trailer to commits.**
 5. **Nothing auto-submits.** The API prepares and stops.
 
@@ -34,6 +37,7 @@ reads it through `app/profile.py`.
 ./.venv/bin/python tests/test_overrides.py       # containment tests
 ./.venv/bin/python tests/test_distribution.py    # resume shape tests
 ./.venv/bin/python scripts/build_packets.py      # regenerate application packets
+./.venv/bin/python scripts/apply_overrides.py --all --dry-run   # verify tailored bullets
 ```
 
 Use `./.venv/bin/python`, not bare `python3` — dependencies (`fastapi`, `httpx`,
@@ -99,11 +103,19 @@ role sat at position 452, unscored, while sales roles led.
 **Scoring is memoised per profile object** (`scoring.score_job_cached`). Tied to the
 loaded profile instance, so editing the evidence file drops every stale score.
 
+**A saved summary or headline edit pins that field forever.** It wins over the generated
+one by design, which is right for a deliberate rewrite — but it does not benefit from
+later generator improvements. One saved before the summary learned to name the MS in
+Business Analytics silently kept dropping that credential from the highest-scoring
+resume. If a stored edit only *matches* what the generator would produce, delete it
+rather than keep it.
+
 ## Verification before calling anything done
 
 - Both test files pass.
 - The rendered PDF is checked, not assumed: `resume_qa.check_pdf` for extractable text,
   section order, contact survival, page count.
-- Re-extract the PDF text and confirm claimed keywords are present **and unclaimed ones
-  are absent**. Bugs here are invisible in JSON.
-- A resume is ≤2 pages with a final page ≥45% full — `documents.build_pdf` enforces both.
+- Re-extract the PDF text and confirm claimed keywords are present **and
+  unclaimed ones are absent**. Bugs here are invisible in JSON.
+- A resume is at most 2 pages with a final page at least 45% full —
+  `documents.build_pdf` enforces both.

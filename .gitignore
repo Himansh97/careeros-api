@@ -5,3 +5,11 @@ __pycache__/
 .env
 .claude/
 .DS_Store
+
+# Per-job override and evidence-import scripts must not embed resume content.
+# Overrides are resume text derived from career_evidence.json, which the careeros
+# repo gitignores as personal data — inlining it in Python routed around that.
+# The data now lives in ~/careeros/overrides/*.json and scripts/apply_overrides.py
+# reads it. These patterns stop a one-off from quietly reintroducing the problem.
+scripts/align_*.py
+scripts/import_*.py
