@@ -59,6 +59,12 @@ FIELD_MAP: list[tuple[str, tuple[str, ...]]] = [
     ("last_name", ("last name", "family name", "surname")),
     ("legal_name", ("full name", "legal name", "your name", "name")),
     ("address", ("address", "city", "location", "where are you based")),
+    # Ahead of sponsorship_requirement, whose bare "sponsor" pattern would
+    # otherwise claim the now-or-future phrasing and answer a different
+    # question than the one asked.
+    ("sponsorship_future", ("now or in the future require sponsorship",
+                            "will you now or in the future",
+                            "now or in the future")),
     ("sponsorship_requirement", ("sponsor", "visa sponsor", "require sponsorship")),
     ("work_authorization", ("authorized to work", "work authorization",
                             "legally authorized", "right to work")),
@@ -81,6 +87,15 @@ FIELD_MAP: list[tuple[str, tuple[str, ...]]] = [
     ("veteran_disclosure", ("veteran", "protected veteran")),
     ("disability_disclosure", ("disability", "disabled")),
     ("website", ("website", "portfolio", "github")),
+    # Recurring questions that are facts about the candidate but are not on a
+    # resume, so they live in application_answers.yaml. Left blank until the
+    # candidate states them once — a legal question about agreements they have
+    # signed is not something to infer from a default.
+    ("employment_restrictions", ("employment agreement", "post-employment",
+                                 "non-compete", "noncompete", "restrictive covenant",
+                                 "post employment restriction")),
+    ("interview_accommodation", ("accommodation", "accessible and inclusive",
+                                 "adjustments", "accommodations")),
     ("country", ("country where you", "country of residence", "which country",
                  "country you currently reside", "country")),
     ("school", ("school", "university", "college", "institution")),
@@ -118,8 +133,16 @@ AMBIGUOUS_PATTERNS: tuple[tuple[str, str], ...] = (
 )
 
 
-def ambiguous_reason(label: str) -> str | None:
-    """Why a field must not be auto-answered, if it must not be."""
+def ambiguous_reason(label: str, answers: dict[str, str] | None = None) -> str | None:
+    """Why a field must not be auto-answered, if it must not be.
+
+    The block is for a MISSING answer, not a permanent refusal. Once
+    `sponsorship_future` is recorded the question has a stated answer and fills
+    like any other — which also makes it consistent across every application,
+    the thing most worth getting right about it.
+    """
+    if (answers or {}).get("sponsorship_future"):
+        return None
     low = (label or "").lower()
     if "sponsor" not in low and "authoriz" not in low:
         return None
@@ -263,6 +286,12 @@ def build_answers(
         "race_ethnicity": str(demo.get("race_ethnicity", "")),
         "veteran_disclosure": str(demo.get("veteran_disclosure", "")),
         "disability_disclosure": str(demo.get("disability_disclosure", "")),
+        # Stated once by the candidate so every application answers them the
+        # same way. Inconsistent sponsorship answers across applications from
+        # the same person are exactly what gets noticed.
+        "sponsorship_future": str(a.get("sponsorship_future", "")),
+        "employment_restrictions": str(a.get("employment_restrictions", "")),
+        "interview_accommodation": str(a.get("interview_accommodation", "")),
     }
 
     # Asked as its own yes/no on most EEO forms, while the stored answer is a
@@ -393,13 +422,32 @@ def option_score(option_text: str, value: str) -> int:
     if not opt or not val:
         return 0
 
+    # An exact match always wins, before any shortcut. Without this the yes/no
+    # shortcut below claimed the FIRST option beginning "Yes," — so an answer of
+    # "Yes, F-1 Visa OPT (USA)" selected "Yes, EU Blue Card" on GitLab's visa
+    # question. A near-miss there is a false immigration claim on a signed form,
+    # not a cosmetic mismatch.
+    if opt == val:
+        return 120
+
     eeo = _eeo_score(opt, val)
     if eeo is not None:
         return eeo
 
     for word in ("yes", "no"):
-        if val.startswith(word):
-            return 100 if opt == word or opt.startswith(word + ",") else 0
+        if not val.startswith(word):
+            continue
+        if len(val) <= len(word) + 2:
+            # A bare "Yes"/"No" answers only the bare option.
+            return 100 if opt == word else 0
+        # A detailed answer ("Yes, F-1 Visa OPT (USA)") still answers a plain
+        # Yes/No control, but must NOT claim a different detailed option — the
+        # earlier shortcut scored every option beginning "Yes," as a perfect
+        # match, and the shorter-string tiebreak then picked "Yes, EU Blue
+        # Card" for an F-1 OPT answer.
+        if opt == word:
+            return 80
+        break
 
     if opt == val:
         return 90

@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import functools
 import json
+import re
 import sys
 import time
 import urllib.request
@@ -52,6 +53,12 @@ HIGHLIGHT = (
     " el.style.outlineOffset = '2px';"
     " el.style.backgroundColor = '#fffbeb'; }"
 )
+
+
+def css_escape(ident: str) -> str:
+    """Escape an id for use in a CSS selector (Greenhouse ids are plain, but
+    bracketed names like `question_123[]` appear on multi-selects)."""
+    return re.sub(r'([^a-zA-Z0-9_-])', r'\\\1', ident)
 
 
 def company_name(record: dict) -> str:
@@ -190,9 +197,24 @@ def choose_option(page, el, value: str, tag: str, key: str = "") -> bool:
         return hs, [(h.inner_text() or "").strip() for h in hs]
 
     try:
+        # Close anything a previous control left open: an open react-select menu
+        # is an overlay, and the next click lands on it instead of the field
+        # being targeted — which silently produced "no options" for whichever
+        # dropdown happened to follow a successful one.
+        try:
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(120)
+        except Exception:
+            pass
+
         el.scroll_into_view_if_needed(timeout=3000)
         el.click(timeout=3000)
-        page.wait_for_timeout(300)
+        page.wait_for_timeout(400)
+
+        # One retry: the first click sometimes only dismisses a stale overlay.
+        if not options()[0]:
+            el.click(timeout=3000)
+            page.wait_for_timeout(400)
 
         # Read the list BEFORE typing. An enumerated dropdown (Yes/No, Country)
         # renders every option on open, and typing a long stored value into it
@@ -262,7 +284,13 @@ def prefill(page, answers: dict[str, str], resume: Path | None) -> PrefillReport
         if not report.attached:
             report.notes.append("no file input found — attach the resume manually")
 
-    used: set[str] = set()
+    # Two passes. react-select re-renders the form each time an option is
+    # chosen, which detaches every ElementHandle collected beforehand — so a
+    # dropdown late in the list failed with "no options" purely because its
+    # handle was stale, while working perfectly when clicked on its own. Plan
+    # first against a snapshot, then re-resolve each field immediately before
+    # touching it.
+    plan: list[tuple[str, str, str]] = []   # (selector, label, key)
     for el in page.query_selector_all("input, textarea, select"):
         try:
             if (el.get_attribute("type") or "").lower() in {
@@ -275,26 +303,36 @@ def prefill(page, answers: dict[str, str], resume: Path | None) -> PrefillReport
             continue
 
         label = describe(el)
+        ident = el.get_attribute("id") or ""
+        name = el.get_attribute("name") or ""
+        if ident:
+            selector = f'#{css_escape(ident)}'
+        elif name:
+            selector = f'[name="{name}"]'
+        else:
+            selector = ""
+        plan.append((selector, label, ""))
 
-        # Some questions must not be auto-answered even though a stored value
-        # would match — the stored answer does not fit the question as asked.
+    used: set[str] = set()
+    for selector, label, _ in plan:
         if is_consent_question(label):
             report.unfilled.append(f"{label.strip()[:70]} (your choice)")
             continue
 
-        reason = ambiguous_reason(label)
+        reason = ambiguous_reason(label, answers)
         if reason:
             report.needs_you.append((label.strip()[:80], reason))
-            try:
-                el.evaluate(HIGHLIGHT)
-            except Exception:
-                pass
             continue
 
         key = match_field(label)
         if not key or key not in answers or key in used:
             if label.strip() and not key:
                 report.unfilled.append(label.strip())
+            continue
+
+        el = page.query_selector(selector) if selector else None
+        if el is None:
+            report.unfilled.append(f"{label.strip()[:70]} (could not re-locate)")
             continue
 
         value = answers[key]
@@ -312,9 +350,12 @@ def prefill(page, answers: dict[str, str], resume: Path | None) -> PrefillReport
                 (key, value)
             )
             if key in SENSITIVE:
-                el.evaluate(HIGHLIGHT)
+                try:
+                    el.evaluate(HIGHLIGHT)
+                except Exception:
+                    pass
         except Exception:
-            report.unfilled.append(f"{label.strip()} (could not fill)")
+            report.unfilled.append(f"{label.strip()[:70]} (could not fill)")
 
     # State plainly that nothing was pressed, and prove it by naming what was found.
     submits = [
