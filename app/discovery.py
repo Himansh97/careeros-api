@@ -82,6 +82,9 @@ async def _fetch_company(client: httpx.AsyncClient, slug: str) -> list[dict[str,
 
 
 _source_counts: dict[str, int] = {}
+# Sources that errored on the most recent fetch, surfaced via /api/health so a
+# degraded search is visible rather than looking like a quiet day on the boards.
+_last_failures: list[str] = []
 
 
 async def fetch_all_jobs(force: bool = False) -> list[dict[str, Any]]:
@@ -95,7 +98,20 @@ async def fetch_all_jobs(force: bool = False) -> list[dict[str, Any]]:
 
     from .imported import list_imported
 
-    jobs, counts = await fetch_every_source()
+    jobs, counts, failures = await fetch_every_source()
+
+    # A source that errored returns no jobs, which is indistinguishable from an
+    # employer with no openings — so a transient Greenhouse error would be
+    # cached as "Stripe has zero postings", and every saved Stripe application
+    # 404'd until the TTL expired. Carry forward the previous snapshot's jobs
+    # for anything that failed this round rather than publishing the loss.
+    if failures and cached:
+        have = {j["id"] for j in jobs}
+        recovered = [j for j in cached[1] if j["id"] not in have]
+        if recovered:
+            jobs = jobs + recovered
+            for j in recovered:
+                counts[j["source"]] = counts.get(j["source"], 0) + 1
 
     # Imported postings (Indeed etc.) sit alongside live ones. They're flagged
     # so the UI can say they weren't fetched live.
@@ -110,12 +126,20 @@ async def fetch_all_jobs(force: bool = False) -> list[dict[str, Any]]:
 
     _source_counts.clear()
     _source_counts.update(counts)
-    _cache["all"] = (ts, jobs)
+    _last_failures.clear()
+    _last_failures.extend(failures)
+    # Don't hold a degraded snapshot for the full TTL — retry sooner.
+    _cache["all"] = (ts - CACHE_TTL_SECONDS * 0.8 if failures else ts, jobs)
     return jobs
 
 
 def source_counts() -> dict[str, int]:
     return dict(_source_counts)
+
+
+def failed_sources() -> list[str]:
+    """Sources that errored on the most recent fetch."""
+    return list(_last_failures)
 
 
 def filter_jobs(

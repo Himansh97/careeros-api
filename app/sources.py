@@ -22,6 +22,38 @@ from .config import GREENHOUSE_COMPANIES, HTTP_TIMEOUT_SECONDS
 
 ASHBY_COMPANIES = ["ramp", "linear", "vanta", "clipboardhealth", "runwayml"]
 
+# Brands whose own capitalisation .title() destroys. The company name goes into
+# the resume, the filename and the outreach greeting, so writing to "Sofi" or
+# "Gitlab" is a small but real credibility cost with the people reading it.
+BRAND_CASING = {
+    "sofi": "SoFi",
+    "gitlab": "GitLab",
+    "github": "GitHub",
+    "openai": "OpenAI",
+    "paypal": "PayPal",
+    "linkedin": "LinkedIn",
+    "youtube": "YouTube",
+    "tiktok": "TikTok",
+    "ebay": "eBay",
+    "spacex": "SpaceX",
+    "deepmind": "DeepMind",
+    "hubspot": "HubSpot",
+    "salesforce": "Salesforce",
+    "servicenow": "ServiceNow",
+    "mongodb": "MongoDB",
+    "postgresql": "PostgreSQL",
+    "runwayml": "Runway ML",
+    "clipboardhealth": "Clipboard Health",
+}
+
+
+def _company_from_slug(slug: str) -> str:
+    """Human-readable employer name from an ATS board slug."""
+    key = slug.replace("-", "").replace("_", "").lower()
+    if key in BRAND_CASING:
+        return BRAND_CASING[key]
+    return slug.replace("-", " ").title()
+
 # The Muse categories relevant to this candidate's target roles.
 MUSE_CATEGORIES = [
     "Data Science",
@@ -82,11 +114,19 @@ def _job(
     }
 
 
-async def _safe(coro) -> list[dict[str, Any]]:
-    """A failing source must never take down the whole search."""
+async def _safe(coro, label: str, failures: list[str]) -> list[dict[str, Any]]:
+    """A failing source must never take down the whole search.
+
+    It must also never pass for an empty one. Swallowing the error returned
+    [], which downstream could not distinguish from "this employer has no open
+    roles" — so a transient Greenhouse error got cached as Stripe having zero
+    postings, and every saved Stripe application 404'd until the cache expired.
+    Failures are now named so the caller can refuse to cache a degraded result.
+    """
     try:
         return await coro
-    except (httpx.HTTPError, ValueError, KeyError, TypeError):
+    except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+        failures.append(f"{label}: {type(exc).__name__}")
         return []
 
 
@@ -102,7 +142,7 @@ async def greenhouse(client: httpx.AsyncClient, slug: str) -> list[dict[str, Any
             _job(
                 jid=f"gh_{slug}_{j.get('id')}",
                 title=j.get("title", ""),
-                company=slug.replace("-", " ").title(),
+                company=_company_from_slug(slug),
                 location=(j.get("location") or {}).get("name", ""),
                 description=desc,
                 apply_url=j.get("absolute_url", ""),
@@ -124,7 +164,7 @@ async def ashby(client: httpx.AsyncClient, slug: str) -> list[dict[str, Any]]:
             _job(
                 jid=f"ashby_{slug}_{j.get('id')}",
                 title=j.get("title", ""),
-                company=slug.replace("-", " ").title(),
+                company=_company_from_slug(slug),
                 location=j.get("location", ""),
                 description=desc,
                 apply_url=j.get("applyUrl") or j.get("jobUrl", ""),
@@ -212,17 +252,25 @@ async def remoteok(client: httpx.AsyncClient) -> list[dict[str, Any]]:
     return out
 
 
-async def fetch_every_source() -> tuple[list[dict[str, Any]], dict[str, int]]:
-    """Fetch all sources in parallel. Returns (jobs, per-source counts)."""
+async def fetch_every_source() -> tuple[list[dict[str, Any]], dict[str, int], list[str]]:
+    """Fetch all sources in parallel.
+
+    Returns (jobs, per-source counts, failed-source labels). The failure list
+    is what lets the caller tell a genuinely empty board from a broken fetch.
+    """
+    failures: list[str] = []
     async with httpx.AsyncClient(
         timeout=HTTP_TIMEOUT_SECONDS, follow_redirects=True
     ) as client:
         tasks: list[Any] = []
-        tasks += [_safe(greenhouse(client, s)) for s in GREENHOUSE_COMPANIES]
-        tasks += [_safe(ashby(client, s)) for s in ASHBY_COMPANIES]
-        tasks += [_safe(muse(client, c)) for c in MUSE_CATEGORIES]
-        tasks.append(_safe(arbeitnow(client)))
-        tasks.append(_safe(remoteok(client)))
+        tasks += [_safe(greenhouse(client, s), f"greenhouse/{s}", failures)
+                  for s in GREENHOUSE_COMPANIES]
+        tasks += [_safe(ashby(client, s), f"ashby/{s}", failures)
+                  for s in ASHBY_COMPANIES]
+        tasks += [_safe(muse(client, c), f"muse/{c}", failures)
+                  for c in MUSE_CATEGORIES]
+        tasks.append(_safe(arbeitnow(client), "arbeitnow", failures))
+        tasks.append(_safe(remoteok(client), "remoteok", failures))
         results = await asyncio.gather(*tasks)
 
     deduped: list[list[dict[str, Any]]] = []
@@ -252,4 +300,4 @@ async def fetch_every_source() -> tuple[list[dict[str, Any]], dict[str, int]]:
     for row in zip_longest(*deduped):
         jobs.extend(job for job in row if job is not None)
 
-    return jobs, counts
+    return jobs, counts, failures

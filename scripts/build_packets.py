@@ -55,6 +55,11 @@ def main() -> int:
             problems.append(f"{company} — {title}: job could not be fetched, packet NOT written")
             continue
 
+        # Prefer the live posting's company name over the copy stored when the
+        # application row was created — brand casing (SoFi, GitLab) is fixed at
+        # the source, and the stored copy would keep the old spelling forever.
+        company = job.get("company", {}).get("name") or company
+
         score = score_job(job, profile)
         resume = tailor_resume(job, score, profile)
         pdf = build_pdf(resume, profile)
