@@ -418,16 +418,25 @@ async def applications() -> dict[str, Any]:
 
 
 def _valid_recipient_address(address: str) -> str:
-    """Accept only a plain, exact email address suitable for a draft recipient."""
-    _, parsed = parseaddr(address)
+    """Accept a bare address or a canonical display-name address from the store."""
+    name, parsed = parseaddr(address)
+    is_bare_address = address == parsed
+    is_display_address = (
+        bool(name)
+        and "@" not in name
+        and address == f"{name} <{parsed}>"
+    )
     if (
         not address
-        or any(character.isspace() for character in address)
+        or address != address.strip()
+        or "\r" in address
+        or "\n" in address
         or address.count("@") != 1
-        or parsed != address
+        or any(character.isspace() for character in parsed)
+        or not (is_bare_address or is_display_address)
     ):
         raise ValueError("Invalid recipient address")
-    return address
+    return parsed
 
 
 class RecruiterDraftUpdate(BaseModel):

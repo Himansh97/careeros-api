@@ -39,6 +39,7 @@ class RecruiterMessageApiTests(unittest.TestCase):
         message_id: str = "msg_gitlab_handoff",
         application_id: str = "app_gh_gitlab_8616308002",
         received_at: str = "2026-08-11T12:00:00+00:00",
+        to_addresses: list[str] | None = None,
     ) -> str:
         upsert_message(
             {
@@ -52,7 +53,7 @@ class RecruiterMessageApiTests(unittest.TestCase):
                 "synopsis": "Matthew handed the process to Izzy and Gabe.",
                 "gmailUrl": f"https://mail.google.com/mail/u/0/#all/{message_id}",
                 "draft": {
-                    "to": ["izzy@gitlab.com"],
+                    "to": to_addresses or ["izzy@gitlab.com"],
                     "cc": ["gabe@gitlab.com"],
                     "bcc": [],
                     "subject": "Re: Senior Revenue Analytics Analyst",
@@ -151,6 +152,27 @@ class RecruiterMessageApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 422)
         self.assertEqual(get_message(self.message_id)["draft"]["to"], original_to)
+
+    def test_update_round_trips_display_name_recipient_as_bare_address(self) -> None:
+        """Rejecting a display-name recipient returned by GET blocks normal draft edits."""
+        message_id = self.seed_message(
+            message_id="msg_display_name",
+            to_addresses=["Izzy Chu <ICHU@gitlab.com>"],
+        )
+        detail = self.client.get(f"/api/recruiter-messages/{message_id}").json()
+
+        response = self.client.put(
+            f"/api/recruiter-messages/{message_id}/draft",
+            json={
+                "to": detail["draft"]["to"],
+                "subject": "Re: Updated handoff",
+                "body": "Thank you, Izzy.",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["to"], ["ichu@gitlab.com"])
+        self.assertEqual(get_message(message_id)["draft"]["to"], ["ichu@gitlab.com"])
 
 
 if __name__ == "__main__":
