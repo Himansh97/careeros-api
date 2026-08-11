@@ -4,19 +4,27 @@
 
 **Goal:** Create a five-minute Codex heartbeat that detects Gmail replies tied to CareerOS applications, labels confident matches, and notifies the candidate without otherwise changing mail or application state.
 
-**Architecture:** A chat-attached Codex heartbeat uses the Gmail connector for search, message reads, and one allowed mutation: applying `CareerOS/Recruiter Reply`. Each run reads the local CareerOS SQLite application list when available and falls back to recruiting-language classification when it is not. The dedicated label and the heartbeat's retained task context prevent duplicate notifications; no repository daemon or Gmail credential storage is introduced.
+**Architecture:** A chat-attached Codex heartbeat uses the Gmail connector for search, message reads, and one allowed mutation: applying `CareerOS/Recruiter Reply`. Each run reads the local CareerOS SQLite application list when available and falls back to recruiting-language classification when it is not. A monitor-owned SQLite file outside the CareerOS repositories stores the last successful scan checkpoint and monotonic per-message stages (`classified`, `labeled`, `notified`). Every run paginates both an incremental scan and a labeled-message reconciliation pass, so a label never stands in for notification completion. No repository daemon or Gmail credential storage is introduced.
 
 **Tech Stack:** Codex heartbeat automation, Gmail connector, Gmail search syntax, local SQLite (`careeros.db`), existing CareerOS application records.
 
 ## Global Constraints
 
 - Run every five minutes.
-- The first scan covers the preceding seven days.
+- The first successful scan covers the preceding seven days. Later scans start
+  ten minutes before the last successful checkpoint and stop at a run-start
+  upper bound.
+- Follow every Gmail search page token and advance the checkpoint only after all
+  required search pages and message reads succeed.
+- Reconcile durable unfinished message stages and already-labeled messages on
+  every run before scanning new candidates.
 - Never send, draft, reply, forward, archive, delete, mark read, star, or change Gmail importance/category state.
 - Never open attachments.
 - Never change CareerOS application status automatically.
 - Notifications include only sender, subject, matched company, likely role, classification, received time, and a short non-sensitive synopsis.
 - A failed Gmail read or label operation must not be treated as a successful processed message.
+- The dedicated Gmail label proves only that labeling succeeded; it does not
+  prove that notification succeeded.
 - Local CareerOS matching requires the computer on, the desktop app running, and `/Users/himanshusrivastava/careeros-api` available; Gmail-only classification is the fallback.
 
 ---
@@ -25,6 +33,7 @@
 
 - No production source files are created or modified.
 - Managed automation: `CareerOS Recruiter Reply Monitor` — owns scheduling, classification instructions, deduplication, labeling, and notification behavior.
+- Managed operational state: `/Users/himanshusrivastava/.codex/automations/careeros-recruiter-reply-monitor/state.sqlite` — stores only checkpoint and per-message stage metadata; never email bodies or credentials.
 - Existing local data: `/Users/himanshusrivastava/careeros-api/careeros.db` — read-only source of company, role, and application status.
 - Existing design: `docs/superpowers/specs/2026-08-10-gmail-recruiter-reply-monitor-design.md` — behavioral source of truth.
 
@@ -124,30 +133,31 @@ Use the Codex automation manager in heartbeat mode, attached to this task, activ
 FREQ=MINUTELY;INTERVAL=5
 ```
 
-Use this exact automation prompt:
+Replace the automation prompt with this exact prompt:
 
 ```text
 Monitor Gmail for recruiter or application replies connected to CareerOS.
 
-Search messages received in the last seven days using:
-newer_than:7d -in:sent -in:spam -in:trash -category:promotions -label:"CareerOS/Recruiter Reply"
+Use durable operational state at /Users/himanshusrivastava/.codex/automations/careeros-recruiter-reply-monitor/state.sqlite. Create it only when it does not exist. It must contain a singleton last_successful_scan_epoch and one row per Gmail message ID with a monotonic stage of classified, labeled, or notified plus stage timestamps. Store no sender, subject, synopsis, message body, attachment, credential, or other email content. Use SQLite transactions for state changes. If an existing state database cannot be read or updated, fail visibly; never reset it or guess a checkpoint.
 
-When local files are available, read /Users/himanshusrivastava/careeros-api/careeros.db read-only and load company/title/status from applications where status is applied, submitted, or ready. Never modify the database. If it is unavailable, continue with email-only recruiting classification and say that no CareerOS record was matched.
+At the start of the run, capture scan_upper_epoch as the current UTC Unix time. When local files are available, read /Users/himanshusrivastava/careeros-api/careeros.db read-only and load company/title/status from applications where status is applied, submitted, or ready. Never modify that database. If it is unavailable, continue with email-only recruiting classification and say in each resulting alert that no CareerOS record was matched.
 
-Read candidate Gmail messages without opening attachments. A confident match requires (1) a strong application link: company, distinctive role title, application-thread subject, or hiring platform naming a tracked company/role; and either (2a) recruiting intent: interview, scheduling, assessment, information request, recruiter/hiring-manager outreach, decision, offer, rejection, or explicit application-status update; or (2b) an actionable company handoff that names a specific person/address to contact or gives an explicit next step. Include an out-of-office reply when it contains such an actionable handoff; exclude out-of-office replies with no actionable direction.
+Reconcile before scanning new mail. Load every durable message whose stage is classified or labeled. Also search Gmail for label:"CareerOS/Recruiter Reply" -in:spam -in:trash, following every page token until no next page remains. Deduplicate all Gmail message IDs. Read every unfinished or newly discovered labeled message by exact ID without opening attachments. For a labeled ID absent from durable state, reapply the classification rules below; if it is confident, insert it at stage labeled, otherwise leave it unchanged and do not notify. A Gmail label is evidence only that labeling succeeded; it is never evidence that notification succeeded.
 
-Exclude newsletters, marketing, receipts, generic job recommendations, job-board digests, and messages authored by the candidate. Do not label ambiguous messages.
+Run the incremental candidate scan only after reconciliation reads succeed. If last_successful_scan_epoch is absent, set scan_lower_epoch to scan_upper_epoch minus 604800 seconds. Otherwise set it to last_successful_scan_epoch minus 600 seconds. Search Gmail with after:<scan_lower_epoch> before:<scan_upper_epoch> -in:sent -in:spam -in:trash -category:promotions -label:"CareerOS/Recruiter Reply". Follow every page token until no next page remains, deduplicate IDs across pages and the overlap window, and read every candidate message in supported batches without opening attachments.
 
-For every confident unprocessed match, apply only the Gmail label CareerOS/Recruiter Reply, creating it if missing. Do not send, draft, reply, forward, archive, delete, mark read, star, change importance/category, or alter CareerOS status. Never open attachments.
+A confident match requires (1) a strong application link: company, distinctive role title, application-thread subject, or hiring platform naming a tracked company/role; and either (2a) recruiting intent: interview, scheduling, assessment, information request, recruiter/hiring-manager outreach, decision, offer, rejection, or explicit application-status update; or (2b) an actionable company handoff that names a specific person/address to contact or gives an explicit next step. Include an out-of-office reply when it contains such an actionable handoff; exclude out-of-office replies with no actionable direction. Exclude newsletters, marketing, receipts, generic job recommendations, job-board digests, and messages authored by the candidate. Do not label ambiguous messages.
 
-Notify once per newly labeled message with sender, subject, matched company, likely role, classification, received time, and a short non-sensitive synopsis. Never reproduce the full body. Treat the Gmail message ID as the deduplication key and retain processed IDs in task context; the label is the durable second guard. If labeling fails, report failure and do not record the message as processed. If Gmail read/authentication fails, fail the run visibly and retry next cycle.
+For every confident Gmail message ID, first persist stage classified if no later stage exists. If its stage is classified, apply only the Gmail label CareerOS/Recruiter Reply, creating it if missing; only after Gmail reports success persist stage labeled. If its stage is labeled, emit one Codex notification with sender, subject, matched company, likely role, classification, received time, and a short non-sensitive synopsis; never reproduce the full body. Only after the notification operation reports success persist stage notified. Never move a stage backward. Thus a labeled-but-not-notified message remains eligible for notification reconciliation on later runs.
 
-When there are no new confident matches, complete silently.
+After every reconciliation and incremental search page was retrieved, every required message read succeeded, and every confident result was durably inserted, advance last_successful_scan_epoch to scan_upper_epoch in a transaction. A label or notification failure may leave a durable pending stage for retry, but a Gmail search/read failure or state failure must preserve the previous checkpoint. Report read/authentication, state, label, and notification failures visibly and retry pending work next cycle.
+
+Do not send, draft, reply, forward, archive, delete, mark read, star, change importance/category, alter CareerOS status, or open attachments. When there are no notifications or failures, complete silently.
 ```
 
 - [ ] **Step 2: View the saved automation**
 
-Use the automation manager's view mode. Expected: name `CareerOS Recruiter Reply Monitor`, heartbeat kind, active status, current-task target, Gmail-capable prompt, and five-minute recurrence.
+Use the automation manager's view mode. Expected: name `CareerOS Recruiter Reply Monitor`, heartbeat kind, active status, current-task target, the exact replacement prompt above, and five-minute recurrence.
 
 ### Task 4: Verify Deduplication and Failure Boundaries
 
@@ -160,15 +170,15 @@ Use the automation manager's view mode. Expected: name `CareerOS Recruiter Reply
 
 - [ ] **Step 1: Trigger or wait for the first heartbeat run**
 
-Expected: any new confident match is labeled and summarized once; a no-match run is silent.
+Expected: any new confident match is labeled and summarized once; a no-match run is silent. Do not infer this from saved configuration alone.
 
 - [ ] **Step 2: Inspect the automation run result**
 
-Verify that the run searched Gmail, did not open attachments, and either matched a CareerOS row or explicitly used the email-only fallback.
+Verify from run artifacts that the run paginated Gmail, did not open attachments, advanced its checkpoint only after successful reads, and either matched a CareerOS row or explicitly used the email-only fallback.
 
 - [ ] **Step 3: Verify deduplication on the next run**
 
-Allow the same search window to run again. Expected: previously labeled message IDs produce no second notification.
+Allow the overlap window to run again. Expected: previously notified message IDs produce no second notification, while a durable `labeled` row is still reconciled. The label by itself is not the notification guard.
 
 - [ ] **Step 4: Verify preserved Gmail state**
 
@@ -176,7 +186,7 @@ Read one labeled message. Expected: only the dedicated label differs from its pr
 
 - [ ] **Step 5: Record operational limits in the handoff**
 
-Update the manual section of `/Users/himanshusrivastava/careeros/docs/STATE.md` to state that the monitor is active, runs every five minutes, modifies only its dedicated label, and requires the desktop app/computer for local CareerOS matching. Regenerate the snapshot with:
+Update the manual section of `/Users/himanshusrivastava/careeros/docs/STATE.md` to state that the monitor is active and configured for a five-minute cadence (not that executions have been observed), modifies only its dedicated label, and requires the desktop app/computer for local CareerOS matching. Regenerate the snapshot with:
 
 ```bash
 cd /Users/himanshusrivastava/careeros
@@ -190,3 +200,8 @@ cd /Users/himanshusrivastava/careeros
 git add docs/STATE.md
 git commit -m "Document recruiter reply monitor"
 ```
+
+Do not mark Task 4 complete until run artifacts demonstrate the first scheduler
+run, notification behavior, a second-run deduplication result, and failure-path
+checkpoint preservation. Saved configuration and static label state are not
+substitutes for those observations.
