@@ -96,6 +96,18 @@ def pick_contact(contacts: list[dict[str, Any]]) -> dict[str, Any] | None:
     )[0]
 
 
+def _linkedin_handle(url: str) -> str:
+    """Render LinkedIn as a handle, not a URL.
+
+    Gmail rewrites any URL-shaped string in a plain-text body into a
+    `google.com/url?q=...` tracking redirect, so a signature that read
+    `https://www.linkedin.com/in/name/` arrived as a long wrapped link. The
+    handle is unambiguous, survives untouched, and reads better in a signature.
+    """
+    handle = (url or "").rstrip("/").rsplit("/", 1)[-1]
+    return handle or (url or "")
+
+
 def build_outreach(
     job: dict[str, Any],
     score: dict[str, Any],
@@ -127,7 +139,7 @@ def build_outreach(
         f"{_gap_line(score)}"
         f"Resume attached. Happy to jump on a quick call whenever useful.\n\n"
         f"Best,\n{profile.name}\n{profile.phone} | {profile.email}\n"
-        f"{profile.linkedin_url}\n"
+        f"LinkedIn: {_linkedin_handle(profile.linkedin_url)}\n"
     )
 
     linkedin_note = (
