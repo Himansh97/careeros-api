@@ -36,6 +36,7 @@ from app.prefill import (  # noqa: E402
     match_field,
     _is_submit,
 )
+from app.documents import safe_filename  # noqa: E402
 from app.profile import load_profile  # noqa: E402
 
 # The process stays alive while the browser is open, so buffered output
@@ -83,15 +84,16 @@ def resume_for(job_id: str, company: str, title: str) -> Path | None:
     Falls back to downloading it if the packet folder has not been built, so a
     freshly-scored job can still be applied to without a separate step.
     """
-    slug = "".join(c if c.isalnum() else "_" for c in company).strip("_")
-    for folder in sorted(OUT.glob(f"{slug}*")):
-        pdfs = sorted(folder.glob("*.pdf"))
-        if pdfs:
-            return pdfs[0]
+    # Packets are one folder per company AND role. Searching by company alone
+    # attached whichever résumé happened to sort first when several GitLab or
+    # Stripe roles were staged.
+    dest = OUT / safe_filename(company) / safe_filename(title)[:60]
+    pdfs = sorted(dest.glob("*.pdf"))
+    if pdfs:
+        return pdfs[0]
 
-    dest = OUT / slug
     dest.mkdir(parents=True, exist_ok=True)
-    target = dest / f"{slug}_resume.pdf"
+    target = dest / f"{safe_filename(company)}_{safe_filename(title)[:50]}_resume.pdf"
     try:
         urllib.request.urlretrieve(f"{API}/api/jobs/{job_id}/resume.pdf", target)
         return target

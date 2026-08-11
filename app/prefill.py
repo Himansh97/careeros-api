@@ -58,7 +58,6 @@ FIELD_MAP: list[tuple[str, tuple[str, ...]]] = [
     ("first_name", ("first name", "given name", "forename")),
     ("last_name", ("last name", "family name", "surname")),
     ("legal_name", ("full name", "legal name", "your name", "name")),
-    ("address", ("address", "city", "location", "where are you based")),
     # Ahead of sponsorship_requirement, whose bare "sponsor" pattern would
     # otherwise claim the now-or-future phrasing and answer a different
     # question than the one asked.
@@ -66,6 +65,9 @@ FIELD_MAP: list[tuple[str, tuple[str, ...]]] = [
                             "will you now or in the future",
                             "now or in the future")),
     ("sponsorship_requirement", ("sponsor", "visa sponsor", "require sponsorship")),
+    # Keep generic place words below sponsorship: GitLab asks whether a visa is
+    # needed "to remain in your current location", which is not an address field.
+    ("address", ("address", "city", "location", "where are you based")),
     ("work_authorization", ("authorized to work", "work authorization",
                             "legally authorized", "right to work")),
     ("visa_status", ("visa status", "immigration status")),
