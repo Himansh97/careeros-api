@@ -100,6 +100,16 @@ US_STATES = frozenset(
     WY DC PR VI GU AS MP""".split()
 )
 
+# Countries and regions the marker list was missing. The gap was not academic:
+# a Vercel "Remote - India" role reached the top of the daily feed at 88,
+# because only the city "Bengaluru" was listed and never the country. Regional
+# shorthands are included for the same reason — "EMEA" and "APAC" name places
+# the candidate cannot work in as surely as a city does.
+_FOREIGN_EXTRA = (
+    "india", " uk", "u.k.", "pakistan", "bangladesh", "taiwan", "saudi",
+    "qatar", "emirates", "uae", "emea", "apac", "latam", "anz",
+)
+
 _US_MARKERS = (
     "united states", " usa", " u.s.", "remote, us", "remote - us", "us remote",
     "remote (us", "anywhere in the us",
@@ -124,7 +134,7 @@ def _foreign_location(job: dict[str, Any]) -> str | None:
     m = re.search(r",\s*([A-Z]{2})\b", job.get("location") or "")
     if m and m.group(1) in US_STATES:
         return None
-    hit = next((m for m in _FOREIGN_MARKERS if m in location), None)
+    hit = next((m for m in (*_FOREIGN_MARKERS, *_FOREIGN_EXTRA) if m in location), None)
     return hit.title() if hit else None
 
 

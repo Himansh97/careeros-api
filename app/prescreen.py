@@ -26,8 +26,17 @@ from .profile import CandidateProfile
 # one of these is worth the cost of full scoring.
 ROLE_TERMS: tuple[str, ...] = (
     "analyst", "analytics", "data", "business intelligence", "reporting",
-    "insights", "scientist", "consultant", "engineer",
+    "insights", "scientist", "consultant",
     "product manager", "project manager", "program manager",
+    # "engineer" alone is deliberately NOT here. It used to be, because the
+    # candidate's stated targets include "AI Engineer" — and the result was a
+    # daily feed topped by Senior Fullstack Engineer (97), Forward Deployed
+    # Engineer (95) and Staff Software Engineer (92). Those postings genuinely
+    # mention Python, SQL, pipelines and stakeholders, so the scorer was not
+    # wrong about the skills; it was wrong about the job. Only the engineering
+    # titles this candidate actually targets count.
+    "analytics engineer", "data engineer", "ai engineer", "ml engineer",
+    "machine learning engineer", "bi engineer", "business systems",
 )
 
 # Titles that reliably do not fit this candidate regardless of description.
@@ -35,10 +44,30 @@ ROLE_TERMS: tuple[str, ...] = (
 # ("communication", "stakeholders") without being remotely relevant, and were
 # topping the unfiltered list before this existed.
 NEGATIVE_TERMS: tuple[str, ...] = (
-    "account executive", "sales", "recruiter", "nurse", "technician",
+    # "account executive" alone missed "Key Accounts Executive", which reached
+    # the daily feed at 92 — a sales role at the top of an analyst's list.
+    "account executive", "accounts executive", "key account", "sales",
+    # Creative and brand roles score well on generic requirement extraction
+    # ("stakeholders", "reporting") while having nothing to do with analytics.
+    "executive producer", "producer", "creative director", "art director",
+    "brand creative", "content strategist", "social media",
+    "recruiter", "nurse", "technician",
     "serviceman", "driver", "chef", "teacher", "security guard",
     "electrician", "plumber", "welder", "custodian", "warehouse",
     "attorney", "paralegal", "designer", "copywriter",
+)
+
+# Software-engineering titles. Scored down rather than excluded outright: a
+# posting like "Analytics Engineer, Backend" is a real target, and the positive
+# ROLE_TERMS above will out-weigh a single penalty. A pure "Senior Fullstack
+# Engineer" collects no positive term at all and drops out of contention.
+SOFTWARE_TERMS: tuple[str, ...] = (
+    "fullstack", "full stack", "full-stack", "backend", "back-end", "back end",
+    "frontend", "front-end", "front end", "software engineer", "swe",
+    "forward deployed", "infrastructure engineer", "platform engineer",
+    "site reliability", "devops engineer", "security engineer",
+    "mobile engineer", "ios ", "android ", "web engineer", "systems engineer",
+    "solutions architect", "cloud engineer", "network engineer",
 )
 
 # Seniority the candidate cannot hold at 3 years, or is past.
@@ -124,6 +153,11 @@ def prescreen_score(job: dict, terms: ScreenTerms) -> int:
     for term in NEGATIVE_TERMS:
         if term in title:
             score -= 8
+
+    for term in SOFTWARE_TERMS:
+        if term in title:
+            score -= 7
+            break   # one penalty per title, not one per matching word
 
     for term, penalty in SENIORITY_PENALTY:
         if term in title:
