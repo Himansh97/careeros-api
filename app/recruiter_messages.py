@@ -50,9 +50,27 @@ CREATE TABLE IF NOT EXISTS recruiter_reply_drafts (
 _EDITABLE_STATUSES = {"awaiting_approval", "failed"}
 
 
+# Sending is recorded as its own fact rather than another `status` value.
+#
+# Two reasons. The status column carries a CHECK constraint that SQLite cannot
+# alter in place, so extending the enum would mean rebuilding the table. More
+# importantly, sending is not the next step after "created" — the candidate
+# sent the GitLab reply straight from Gmail while the draft still sat at
+# `approved`, with no Gmail draft ever created. A timestamp records what
+# happened without claiming the draft moved through a state it never entered.
+_SENT_COLUMNS = (
+    ("sent_at", "TEXT"),
+    ("gmail_sent_message_id", "TEXT"),
+)
+
+
 def _connect() -> sqlite3.Connection:
     conn = store.connect()
     conn.executescript(RECRUITER_MESSAGE_SCHEMA)
+    existing = {r[1] for r in conn.execute("PRAGMA table_info(recruiter_reply_drafts)")}
+    for name, kind in _SENT_COLUMNS:
+        if name not in existing:
+            conn.execute(f"ALTER TABLE recruiter_reply_drafts ADD COLUMN {name} {kind}")
     return conn
 
 
@@ -141,7 +159,17 @@ def _row_to_draft(row: sqlite3.Row) -> dict[str, Any]:
         "contentFingerprint": row["content_fingerprint"],
         "lastErrorCode": row["last_error_code"],
         "lastErrorMessage": row["last_error_message"],
+        "sentAt": _optional(row, "sent_at"),
+        "gmailSentMessageId": _optional(row, "gmail_sent_message_id"),
     }
+
+
+def _optional(row: sqlite3.Row, key: str) -> Any:
+    """Read a column that may predate this row's schema."""
+    try:
+        return row[key]
+    except (IndexError, KeyError):
+        return None
 
 
 def _message_or_raise(conn: sqlite3.Connection, message_id: str) -> sqlite3.Row:
@@ -390,6 +418,37 @@ def mark_draft_created(message_id: str, gmail_draft_id: str) -> dict:
             (gmail_draft_id, _now(), message_id),
         )
         _timeline(conn, event, "Gmail draft created")
+        return _row_to_message(conn, event)
+
+
+def mark_draft_sent(
+    message_id: str, gmail_sent_message_id: str, sent_at: str | None = None
+) -> dict:
+    """Record that the reply actually went out.
+
+    Deliberately accepted from any state. CareerOS never sends — the candidate
+    does, in Gmail — so this is always news arriving from outside, and it must
+    not be refused because the draft sat at `approved` rather than `created`.
+    The GitLab reply to Izzy Chu was sent that way: straight from Gmail, with
+    no CareerOS-created draft in between.
+
+    Idempotent, because reconciliation re-reads the same Sent folder on every
+    run and must not append a timeline entry each time.
+    """
+    if not gmail_sent_message_id:
+        raise ValueError("Gmail message ID of the sent mail is required")
+    with _connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        event = _message_or_raise(conn, message_id)
+        draft = _draft_or_raise(conn, message_id)
+        if _optional(draft, "sent_at"):
+            return _row_to_message(conn, event)
+        conn.execute(
+            """UPDATE recruiter_reply_drafts SET sent_at=?, gmail_sent_message_id=?,
+               updated_at=? WHERE gmail_message_id=?""",
+            (sent_at or _now(), gmail_sent_message_id, _now(), message_id),
+        )
+        _timeline(conn, event, "Reply sent from Gmail")
         return _row_to_message(conn, event)
 
 

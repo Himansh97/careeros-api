@@ -357,7 +357,7 @@ async def reset_resume_edits(job_id: str, scope: str = "user") -> dict[str, Any]
 
 
 @app.get("/api/jobs/{job_id}/resume.{fmt}")
-async def resume_document(job_id: str, fmt: str):
+async def resume_document(job_id: str, fmt: str, download: bool = False):
     """Download the tailored resume as an ATS-friendly PDF or DOCX."""
     from fastapi.responses import Response
 
@@ -387,10 +387,19 @@ async def resume_document(job_id: str, fmt: str):
         data = build_docx(resume, p)
         media = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
+    # `inline` by default so the in-app preview can render the real document in
+    # an iframe rather than triggering a download. A preview built from
+    # anything other than these exact bytes could disagree with what the
+    # employer receives, which is the one thing it must never do. `?download=1`
+    # restores the attachment behaviour for the export buttons.
+    #
+    # DOCX has no browser renderer, so it always downloads.
+    inline = fmt == "pdf" and not download
+    disposition = "inline" if inline else "attachment"
     return Response(
         content=data,
         media_type=media,
-        headers={"Content-Disposition": f'attachment; filename="{stem}.{fmt}"'},
+        headers={"Content-Disposition": f'{disposition}; filename="{stem}.{fmt}"'},
     )
 
 
@@ -503,10 +512,20 @@ def _recruiter_message_or_404(message_id: str) -> dict[str, Any]:
 
 
 def _review_draft(message: dict[str, Any]) -> dict[str, Any]:
-    """Return candidate-review content, never a claimed outgoing Gmail result."""
+    """Return candidate-review content, never a claimed outgoing Gmail result.
+
+    Send state is stripped here for the same reason the Gmail ids are: approving
+    or editing a draft says nothing about whether mail went out, and a `sentAt`
+    key riding along on that response invites a caller to read one into the
+    other. `GET /api/recruiter-messages` and the detail route return the full
+    record, so the UI still sees it — from a route that is about state rather
+    than about review.
+    """
     draft = dict(message["draft"])
     draft.pop("gmailMessageId", None)
     draft.pop("gmailDraftId", None)
+    draft.pop("sentAt", None)
+    draft.pop("gmailSentMessageId", None)
     return draft
 
 
@@ -538,6 +557,36 @@ async def recruiter_message_approve(message_id: str) -> dict[str, Any]:
     _recruiter_message_or_404(message_id)
     try:
         return _review_draft(approve_draft(message_id))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Recruiter message not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+class SentPayload(BaseModel):
+    gmailSentMessageId: str
+    sentAt: str | None = None
+
+
+@app.post("/api/recruiter-messages/{message_id}/sent")
+async def recruiter_message_sent(message_id: str, req: SentPayload) -> dict[str, Any]:
+    """Record that the candidate sent this reply from Gmail.
+
+    CareerOS does not send, so this is always reported from outside — by the
+    reconcile script reading the Sent folder, or by the candidate saying so.
+    """
+    from .recruiter_messages import mark_draft_sent
+
+    _recruiter_message_or_404(message_id)
+    try:
+        # Not `_review_draft`: recording that mail went out is the one response
+        # whose whole point is the send state it strips.
+        draft = mark_draft_sent(message_id, req.gmailSentMessageId, req.sentAt)["draft"]
+        return {
+            "id": draft["id"],
+            "status": draft["status"],
+            "sentAt": draft["sentAt"],
+        }
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Recruiter message not found") from exc
     except ValueError as exc:

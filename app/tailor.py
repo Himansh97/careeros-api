@@ -465,14 +465,28 @@ def _select_bullets(
         available = [
             (order, b)
             for order, b in rest
-            if id(b) not in keep and taken.get(order, 0) < cap_per_role
+            if id(b) not in keep
+            # The cap has to know about the floor. `cap_per_role=4` on top of a
+            # floor of 3 gave the most recent role 7 bullets — one over the
+            # point where `_readability` deducts, on every resume the system
+            # produced.
+            and taken.get(order, 0)
+            < min(cap_per_role, MAX_BULLETS_PER_ROLE - floor_for(order))
         ]
         if not available:
             break
-        # Highest marginal gain wins; ties fall back to page order so the
-        # choice stays stable and reverse-chronological.
+        # Highest marginal gain wins. Ties are common — once the JD is covered,
+        # most remaining bullets add nothing — and used to fall straight to page
+        # order. Prefer a bullet that states an outcome: same evidence, but the
+        # concrete one earns its place on the page. Page order still breaks the
+        # remaining ties, so selection stays stable and reverse-chronological.
         order, bullet = max(
-            available, key=lambda pair: (marginal_gain(pair[1]), -pair[0])
+            available,
+            key=lambda pair: (
+                marginal_gain(pair[1]),
+                is_quantified(pair[1]["text"]),
+                -pair[0],
+            ),
         )
         taken[order] = taken.get(order, 0) + 1
         keep.add(id(bullet))
@@ -628,12 +642,57 @@ def _join(items: list[str]) -> str:
     return ", ".join(items[:-1]) + f", and {items[-1]}"
 
 
+# A bullet carries a measurable outcome. The audit used
+# `\d+\s*%|\b\d[\d,]{2,}\+?\b|\b\d+\+?\s+(?:markets|accounts|records)`, which
+# demanded three digits unless the noun was one of three hardcoded words — so
+# "processing 1M+ records", "20+ regional markets" and "six failed deployments
+# and four distinct root causes" all read as unquantified. The achievements
+# category came out at 7/10 on every single resume in the pipeline, which is
+# the signature of a broken measure rather than a real weakness.
+#
+# This counts figures the resume already states. It does not add any.
+_QUANTIFIED = re.compile(
+    r"""
+      \d+(?:\.\d+)?\s*%                          # 40%, 12.5 %
+    | \$\s?\d                                    # $2M, $450
+    | \b\d[\d,]*\s*[KMB]\b                       # 1M, 250K, 2 B
+    | \b\d[\d,]{2,}\b                            # 1,200 / 5000
+    | \b\d+\s*\+                                 # 20+, 15+
+    | \b\d+\s*(?:hours?|days?|weeks?|months?|years?|minutes?|seconds?)\b
+    | \b\d+\s*(?:x|times|fold)\b                 # 3x, 4 times
+      # "six failed deployments", "four distinct root causes" — a spelled
+      # number, up to two adjectives, then a plural noun. `(?!of\b)` keeps
+      # "three of the regions" out, which is a reference and not a count.
+    | \b(?:two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+
+      (?!of\b)(?:[a-z-]+\s+){0,2}[a-z-]+s\b
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+# Version strings look like figures and are not achievements. "Encompass
+# Developer Connect V3" and "Python 3" must never count toward Achievements.
+_VERSIONISH = re.compile(r"\b[vV]\d+(?:\.\d+)*\b|\b[A-Za-z]+\s\d(?:\.\d+)?\b")
+
+
+def is_quantified(text: str) -> bool:
+    """Does this bullet state a measurable outcome?"""
+    stripped = _VERSIONISH.sub(" ", text)
+    return bool(_QUANTIFIED.search(stripped))
+
+
+# Above this, a single role reads as a wall rather than a list, and
+# `_readability` starts deducting. Kept as one constant so the selection cap
+# and the penalty threshold cannot drift apart — they did, and every resume
+# shipped one 7-bullet role and a standing -1.
+MAX_BULLETS_PER_ROLE = 6
+
+
 def _readability(sections: list[dict[str, Any]]) -> float:
     """Penalise bullets a recruiter can't skim, not resume length."""
     penalty = 0.0
     for section in sections:
-        if len(section["bullets"]) > 6:
-            penalty += 0.1 * (len(section["bullets"]) - 6)
+        if len(section["bullets"]) > MAX_BULLETS_PER_ROLE:
+            penalty += 0.1 * (len(section["bullets"]) - MAX_BULLETS_PER_ROLE)
     over_long = sum(
         1 for s in sections for b in s["bullets"] if len(b["text"].split()) > 42
     )
@@ -667,8 +726,7 @@ def _audit(
     # nothing. Score what a recruiter actually looks for: bullets carrying a
     # quantified outcome.
     quantified = sum(
-        1 for s in sections for b in s["bullets"]
-        if re.search(r"\d+\s*%|\b\d[\d,]{2,}\+?\b|\b\d+\+?\s+(?:markets|accounts|records)", b["text"])
+        1 for s in sections for b in s["bullets"] if is_quantified(b["text"])
     )
 
     categories = [
@@ -724,4 +782,63 @@ def _audit(
         "categories": scored,
         "whatWorks": works or ["Resume assembled from verified evidence only."],
         "concerns": concerns,
+        "shortfall": _shortfall(total, scored, gaps, missing_required),
+    }
+
+
+# What a strong tailored resume should reach. Below this the resume still ships
+# — a real posting the candidate is a 78 for is worth applying to — but the
+# audit says plainly what is holding it down.
+TARGET_SCORE = 85
+
+
+def _shortfall(
+    total: int,
+    scored: list[dict[str, Any]],
+    gaps: list[dict[str, Any]],
+    missing_required: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Why this resume is under target, and whether tailoring can fix it.
+
+    Selection, ordering and phrasing are ours to improve. Coverage is not: it
+    is a fact about what the candidate has done, and the only honest way to
+    raise it is to record evidence that exists but is not in the file yet.
+    Saying which of the two is responsible is the difference between a number
+    the candidate can act on and one they can only be disappointed by.
+    """
+    if total >= TARGET_SCORE:
+        return None
+
+    lost = {c["key"]: c["max"] - c["score"] for c in scored if c["max"] > c["score"]}
+    # These three all read straight off requirement coverage.
+    evidence_bound = sum(
+        lost.get(k, 0)
+        for k in ("requirement_coverage", "technical_skills", "keyword_alignment")
+    )
+    fixable = sum(v for k, v in lost.items() if k not in
+                  ("requirement_coverage", "technical_skills", "keyword_alignment"))
+
+    missing = [r["label"] for r in missing_required] or [r["label"] for r in gaps]
+    return {
+        "target": TARGET_SCORE,
+        "short": TARGET_SCORE - total,
+        "evidenceBound": evidence_bound,
+        "tailoringBound": fixable,
+        "missing": missing[:8],
+        # evidenceBound and tailoringBound are points lost per category, which
+        # sum to more than the distance to target whenever other categories are
+        # already full. State which dominates rather than implying they add up.
+        "summary": (
+            f"{TARGET_SCORE - total} short of {TARGET_SCORE}. "
+            + (
+                "Almost all of it is requirement coverage — the posting asks for "
+                + ", ".join(missing[:3])
+                + (" and others" if len(missing) > 3 else "")
+                + ", which the evidence file does not support. Re-tailoring cannot "
+                "close this; only recording evidence you can stand behind can."
+                if evidence_bound >= fixable and missing
+                else "Most of it is presentation rather than coverage, so "
+                "re-tailoring can close it."
+            )
+        ),
     }
