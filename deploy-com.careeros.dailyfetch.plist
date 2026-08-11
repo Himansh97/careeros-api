@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Daily CareerOS discovery run.
+
+  Nothing in the pipeline was fetched on a timer before this: fetch_all_jobs()
+  is lazy with a 15-minute cache, so jobs only arrived when the app was opened.
+  A posting expired while staged and nothing noticed.
+
+  RunAtLoad is false on purpose — loading the agent should not kick off a fetch
+  mid-session. StartCalendarInterval fires at 07:00 local; if the machine is
+  asleep launchd runs it at the next wake rather than skipping the day.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.careeros.dailyfetch</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/himanshusrivastava/careeros-api/.venv/bin/python</string>
+        <string>/Users/himanshusrivastava/careeros-api/scripts/daily_fetch.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/himanshusrivastava/careeros-api</string>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>7</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/himanshusrivastava/Library/Logs/careeros-daily.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/himanshusrivastava/Library/Logs/careeros-daily.err.log</string>
+
+    <!-- One run at a time; a slow fetch must not overlap the next day's. -->
+    <key>AbandonProcessGroup</key>
+    <false/>
+</dict>
+</plist>
