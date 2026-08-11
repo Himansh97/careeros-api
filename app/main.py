@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from email.utils import parseaddr
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from .config import ALLOWED_ORIGINS, GREENHOUSE_COMPANIES, SCORE_BUDGET
 from .contacts import (
@@ -36,6 +37,14 @@ from .store import (
     upsert_application,
 )
 from .tailor import tailor_resume
+from .recruiter_messages import (
+    approve_draft,
+    dismiss_draft,
+    get_message,
+    list_messages,
+    retry_draft,
+    update_draft,
+)
 
 app = FastAPI(title="CareerOS API", version="1.0.0")
 app.add_middleware(
@@ -406,6 +415,114 @@ async def outreach(job_id: str) -> dict[str, Any]:
 @app.get("/api/applications")
 async def applications() -> dict[str, Any]:
     return {"applications": list_applications()}
+
+
+def _valid_recipient_address(address: str) -> str:
+    """Accept only a plain, exact email address suitable for a draft recipient."""
+    _, parsed = parseaddr(address)
+    if (
+        not address
+        or any(character.isspace() for character in address)
+        or address.count("@") != 1
+        or parsed != address
+    ):
+        raise ValueError("Invalid recipient address")
+    return address
+
+
+class RecruiterDraftUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    to: list[str] | None = None
+    cc: list[str] | None = None
+    bcc: list[str] | None = None
+    subject: str | None = None
+    body: str | None = None
+
+    @field_validator("to", "cc", "bcc")
+    @classmethod
+    def validate_recipients(cls, addresses: list[str] | None) -> list[str] | None:
+        if addresses is None:
+            return addresses
+        return [_valid_recipient_address(address) for address in addresses]
+
+    @field_validator("subject", "body")
+    @classmethod
+    def validate_nonempty_text(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("Draft text must not be empty")
+        return value
+
+
+def _recruiter_message_or_404(message_id: str) -> dict[str, Any]:
+    message = get_message(message_id)
+    if message is None:
+        raise HTTPException(status_code=404, detail="Recruiter message not found")
+    return message
+
+
+def _review_draft(message: dict[str, Any]) -> dict[str, Any]:
+    """Return candidate-review content, never a claimed outgoing Gmail result."""
+    draft = dict(message["draft"])
+    draft.pop("gmailMessageId", None)
+    draft.pop("gmailDraftId", None)
+    return draft
+
+
+@app.get("/api/recruiter-messages")
+async def recruiter_messages(applicationId: str | None = None) -> dict[str, Any]:
+    return {"messages": list_messages(applicationId)}
+
+
+@app.get("/api/recruiter-messages/{message_id}")
+async def recruiter_message_detail(message_id: str) -> dict[str, Any]:
+    return _recruiter_message_or_404(message_id)
+
+
+@app.put("/api/recruiter-messages/{message_id}/draft")
+async def recruiter_message_draft(
+    message_id: str, update: RecruiterDraftUpdate
+) -> dict[str, Any]:
+    _recruiter_message_or_404(message_id)
+    try:
+        return _review_draft(update_draft(message_id, update.model_dump(exclude_none=True)))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Recruiter message not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/api/recruiter-messages/{message_id}/approve")
+async def recruiter_message_approve(message_id: str) -> dict[str, Any]:
+    _recruiter_message_or_404(message_id)
+    try:
+        return _review_draft(approve_draft(message_id))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Recruiter message not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/api/recruiter-messages/{message_id}/dismiss")
+async def recruiter_message_dismiss(message_id: str) -> dict[str, Any]:
+    _recruiter_message_or_404(message_id)
+    try:
+        return _review_draft(dismiss_draft(message_id))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Recruiter message not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/api/recruiter-messages/{message_id}/retry")
+async def recruiter_message_retry(message_id: str) -> dict[str, Any]:
+    _recruiter_message_or_404(message_id)
+    try:
+        return _review_draft(retry_draft(message_id))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Recruiter message not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.get("/api/applications/{app_id}")
