@@ -93,6 +93,13 @@ _FOREIGN_MARKERS = (
 
 # Signals that a posting is US-based even when a foreign marker also appears —
 # "Remote, Canada; Remote, US" lists both, and a US option makes it viable.
+# Postal abbreviations for the 50 states, DC and inhabited territories.
+US_STATES = frozenset(
+    """AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS
+    MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI
+    WY DC PR VI GU AS MP""".split()
+)
+
 _US_MARKERS = (
     "united states", " usa", " u.s.", "remote, us", "remote - us", "us remote",
     "remote (us", "anywhere in the us",
@@ -110,8 +117,12 @@ def _foreign_location(job: dict[str, Any]) -> str | None:
         return None
     if any(m in location for m in _US_MARKERS):
         return None
-    # A US state abbreviation or "remote" alone means it is reachable.
-    if re.search(r",\s*[A-Z]{2}\b", job.get("location") or ""):
+    # A US state abbreviation or "remote" alone means it is reachable. The
+    # abbreviation is checked against the actual list of states: a bare
+    # two-letter-code pattern also matches ", UK", so "London, UK" was reading
+    # as US-based and passing the gate.
+    m = re.search(r",\s*([A-Z]{2})\b", job.get("location") or "")
+    if m and m.group(1) in US_STATES:
         return None
     hit = next((m for m in _FOREIGN_MARKERS if m in location), None)
     return hit.title() if hit else None

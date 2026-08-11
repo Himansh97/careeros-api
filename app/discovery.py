@@ -157,13 +157,34 @@ def failed_sources() -> list[str]:
     return list(_last_failures)
 
 
+def us_only(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop roles based outside the United States.
+
+    The candidate is on F-1/OPT, which authorises employment in the US only, so
+    a role in Dublin or São Paulo can never be taken however well it scores.
+    The eligibility gate already flagged these, but flagging happens after a
+    role has been surfaced, ranked and — twice now — actually applied to. This
+    removes them from the pool instead.
+
+    `eligibility._foreign_location` is reused rather than reimplemented so
+    there is one definition of "outside the US". It is deliberately
+    conservative: an unrecognised or bare "Remote" location is kept, because
+    losing a real US-remote role is worse than showing one that the
+    eligibility gate will catch anyway.
+    """
+    from .eligibility import _foreign_location
+
+    return [j for j in jobs if _foreign_location(j) is None]
+
+
 def filter_jobs(
     jobs: list[dict[str, Any]],
     query: str | None = None,
     location: str | None = None,
     work_arrangements: list[str] | None = None,
+    united_states_only: bool = True,
 ) -> list[dict[str, Any]]:
-    out = jobs
+    out = us_only(jobs) if united_states_only else jobs
 
     if query:
         terms = [t for t in query.lower().split() if t]
