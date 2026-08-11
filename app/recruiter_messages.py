@@ -93,14 +93,13 @@ def _normalize_addresses(addresses: list[str] | None) -> list[str]:
     return normalized
 
 
-def _draft_values(draft: dict[str, Any]) -> tuple[str, str, str, str, str, str]:
+def _draft_values(draft: dict[str, Any]) -> tuple[str, str, str, str, str]:
     return (
         json.dumps(_normalize_addresses(draft.get("to"))),
         json.dumps(_normalize_addresses(draft.get("cc"))),
         json.dumps(_normalize_addresses(draft.get("bcc"))),
         str(draft.get("subject") or "").strip(),
         str(draft.get("body") or ""),
-        str(draft.get("status") or "awaiting_approval"),
     )
 
 
@@ -203,7 +202,7 @@ def upsert_message(payload: dict) -> dict:
     with _connection() as conn:
         conn.execute("BEGIN IMMEDIATE")
         existing = conn.execute(
-            "SELECT 1 FROM recruiter_messages WHERE gmail_message_id=?",
+            "SELECT application_id FROM recruiter_messages WHERE gmail_message_id=?",
             (payload["gmailMessageId"],),
         ).fetchone()
         conn.execute(
@@ -212,7 +211,10 @@ def upsert_message(payload: dict) -> dict:
                 received_at, classification, synopsis, gmail_url, created_at, updated_at)
                VALUES (?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(gmail_message_id) DO UPDATE SET
-                 application_id=COALESCE(excluded.application_id, recruiter_messages.application_id),
+                 application_id=CASE
+                     WHEN excluded.application_id IS NOT NULL THEN excluded.application_id
+                     ELSE recruiter_messages.application_id
+                 END,
                  synopsis=excluded.synopsis,
                  updated_at=excluded.updated_at""",
             (
@@ -222,17 +224,21 @@ def upsert_message(payload: dict) -> dict:
                 payload["gmailUrl"], ts, ts,
             ),
         )
-        to, cc, bcc, subject, body, status = _draft_values(draft)
+        to, cc, bcc, subject, body = _draft_values(draft)
         conn.execute(
             """INSERT OR IGNORE INTO recruiter_reply_drafts
                (id, gmail_message_id, to_addresses, cc_addresses, bcc_addresses,
                 subject, body, status, created_at, updated_at)
                VALUES (?,?,?,?,?,?,?,?,?,?)""",
             (f"rmd_{payload['gmailMessageId']}", payload["gmailMessageId"], to, cc, bcc,
-             subject, body, status, ts, ts),
+             subject, body, "awaiting_approval", ts, ts),
         )
         event = _message_or_raise(conn, payload["gmailMessageId"])
-        if not existing:
+        first_association = (
+            payload.get("applicationId") is not None
+            and (not existing or existing["application_id"] is None)
+        )
+        if first_association:
             _timeline(conn, event, "Recruiter reply detected")
         return _row_to_message(conn, event)
 
@@ -285,10 +291,13 @@ def update_draft(message_id: str, patch: dict) -> dict:
                 fields.append("content_fingerprint=NULL")
             fields.append("updated_at=?")
             values.extend([_now(), message_id])
-            conn.execute(
-                f"UPDATE recruiter_reply_drafts SET {', '.join(fields)} WHERE gmail_message_id=?",
+            updated = conn.execute(
+                f"UPDATE recruiter_reply_drafts SET {', '.join(fields)} "
+                "WHERE gmail_message_id=? AND status IN ('awaiting_approval', 'failed')",
                 values,
-            )
+            ).rowcount
+            if not updated:
+                raise ValueError("Draft changed state before the edit could be saved")
         return _row_to_message(conn, _message_or_raise(conn, message_id))
 
 

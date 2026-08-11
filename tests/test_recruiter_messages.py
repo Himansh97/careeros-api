@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import sqlite3
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from app import store
+from app import recruiter_messages
 from app.recruiter_messages import (
     approve_draft,
     claim_approved_draft,
@@ -66,6 +68,16 @@ class RecruiterMessageStoreTests(unittest.TestCase):
             columns = {r[1] for r in conn.execute("PRAGMA table_info(recruiter_messages)")}
         self.assertFalse({"body", "raw_headers", "attachments"} & columns)
 
+    def test_upsert_forces_new_drafts_to_awaiting_approval(self) -> None:
+        """A monitor payload must not bypass the candidate approval transition."""
+        payload = self.payload()
+        payload["draft"]["status"] = "approved"
+
+        message = upsert_message(payload)
+
+        self.assertEqual(message["draft"]["status"], "awaiting_approval")
+        self.assertIsNone(message["draft"]["contentFingerprint"])
+
     def test_approval_claim_and_completion_follow_queue_states(self) -> None:
         """Incorrect state mutations or a double claim make this fail."""
         mid = upsert_message(self.payload())["gmailMessageId"]
@@ -104,6 +116,41 @@ class RecruiterMessageStoreTests(unittest.TestCase):
                 dismiss_draft(mid)
             with self.assertRaises(ValueError):
                 update_draft(mid, {"body": "Changed"})
+
+    def test_concurrent_approval_cannot_apply_a_stale_edit(self) -> None:
+        """An edit read before approval must not write after approval commits."""
+        mid = upsert_message(self.payload())["gmailMessageId"]
+        read_by_editor = threading.Event()
+        release_editor = threading.Event()
+        errors: list[Exception] = []
+        original_lookup = recruiter_messages._draft_or_raise
+
+        def paused_lookup(conn, message_id):
+            draft = original_lookup(conn, message_id)
+            if threading.current_thread().name == "draft-editor":
+                read_by_editor.set()
+                self.assertTrue(release_editor.wait(5))
+            return draft
+
+        def edit() -> None:
+            try:
+                update_draft(mid, {"body": "Stale concurrent edit"})
+            except Exception as error:  # expected: approval wins the race
+                errors.append(error)
+
+        with patch.object(recruiter_messages, "_draft_or_raise", side_effect=paused_lookup):
+            editor = threading.Thread(target=edit, name="draft-editor")
+            editor.start()
+            self.assertTrue(read_by_editor.wait(5))
+            approved = approve_draft(mid)
+            release_editor.set()
+            editor.join(5)
+
+        self.assertFalse(editor.is_alive())
+        self.assertEqual(approved["draft"]["status"], "approved")
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], ValueError)
+        self.assertEqual(get_message(mid)["draft"]["body"], self.payload()["draft"]["body"])
 
     def test_retry_only_moves_failed_draft_to_approved(self) -> None:
         """Retrying a nonfailed draft would violate the monotonic queue workflow."""
@@ -192,6 +239,22 @@ class RecruiterMessageStoreTests(unittest.TestCase):
         with sqlite3.connect(self.db_path) as conn:
             labels = [row[0] for row in conn.execute("SELECT label FROM timeline")]
         self.assertEqual(labels, ["Recruiter reply detected"])
+
+    def test_rematch_updates_application_and_records_detection_once(self) -> None:
+        """A later reliable match must replace a bad match and add the missing timeline."""
+        payload = self.payload()
+        payload["applicationId"] = None
+        upsert_message(payload)
+        payload["applicationId"] = "app_wrong"
+        upsert_message(payload)
+        payload["applicationId"] = "app_gh_gitlab_8616308002"
+
+        rematched = upsert_message(payload)
+
+        self.assertEqual(rematched["applicationId"], "app_gh_gitlab_8616308002")
+        with sqlite3.connect(self.db_path) as conn:
+            events = conn.execute("SELECT application_id, label FROM timeline ORDER BY id").fetchall()
+        self.assertEqual(events, [("app_wrong", "Recruiter reply detected")])
 
 
 if __name__ == "__main__":
