@@ -69,22 +69,55 @@ def company_tokens(name: str) -> set[str]:
     return {w for w in re.findall(r"[a-z0-9]{4,}", (name or "").lower())}
 
 
+def _company_of(app: dict) -> str:
+    company = app.get("company")
+    return company.get("name") if isinstance(company, dict) else str(company or "")
+
+
 def find_blockers(inbox: list[dict], applications: list[dict]) -> list[tuple[dict, str, str]]:
-    """Inbox messages that say an application is stuck, matched to the record."""
-    found = []
+    """Inbox messages that say an application is stuck, matched to the record.
+
+    A blocker email often names only the employer — "your application to SoFi"
+    does not say which role, and there are two SoFi applications. Matching on
+    company alone picked whichever came first in the list, so consecutive runs
+    tagged a different one each time and the same alert appeared twice.
+
+    So: prefer the application whose job title actually appears in the message,
+    and when nothing distinguishes them, pick deterministically and only once
+    per (company, problem).
+    """
+    found: list[tuple[dict, str, str]] = []
+    claimed: set[tuple[str, str]] = set()
+
     for message in inbox:
         text = f"{message.get('subject','')} {message.get('snippet','')}".lower()
         hit = next((label for marker, label in BLOCKERS if marker in text), None)
         if not hit:
             continue
         sender = (message.get("sender") or "").lower()
-        for app in applications:
-            company = app.get("company")
-            company = company.get("name") if isinstance(company, dict) else str(company or "")
-            tokens = company_tokens(company)
-            if tokens and (tokens & company_tokens(sender) or tokens & company_tokens(text)):
-                found.append((app, hit, message.get("subject", "")))
-                break
+
+        matches = [
+            app for app in applications
+            if company_tokens(_company_of(app))
+            and (
+                company_tokens(_company_of(app)) & company_tokens(sender)
+                or company_tokens(_company_of(app)) & company_tokens(text)
+            )
+        ]
+        if not matches:
+            continue
+
+        # A title named in the message is decisive. Otherwise fall back to a
+        # stable order so the same email always lands on the same record.
+        titled = [a for a in matches if (a.get("title") or "").lower() in text]
+        chosen = (titled or sorted(matches, key=lambda a: a.get("jobId") or ""))[0]
+
+        key = (_company_of(chosen), hit)
+        if key in claimed:
+            continue
+        claimed.add(key)
+        found.append((chosen, hit, message.get("subject", "")))
+
     return found
 
 

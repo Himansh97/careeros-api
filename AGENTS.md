@@ -47,7 +47,28 @@ reads it through `app/profile.py`.
 ./.venv/bin/python scripts/apply_overrides.py --all --dry-run   # verify tailored bullets
 ./.venv/bin/python scripts/prefill_apply.py <job_id> --dry-run  # plan an application
 ./.venv/bin/python scripts/prefill_apply.py <job_id>            # open it pre-filled
+./.venv/bin/python scripts/check_replies.py --sent s.json --inbox i.json
+./.venv/bin/python scripts/prune_approvals.py --dry-run
 ```
+
+## Refresh the Gmail snapshot when you have the connector
+
+The daily fetch reconciles what was actually sent — but it cannot read the
+mailbox. launchd has no Gmail credentials and this API deliberately holds none,
+so the only thing that can look is an agent session with the Gmail connector.
+
+**If you are such a session, refresh the snapshot before finishing.** It is two
+searches and it keeps the 07:00 run useful:
+
+```text
+search_threads("in:sent newer_than:30d")   -> ~/careeros/gmail-snapshot/sent.json
+search_threads("in:inbox newer_than:30d")  -> ~/careeros/gmail-snapshot/inbox.json
+```
+
+`daily_fetch.py` consumes them, marks recruiter replies that went out, flags
+applications blocked on a step, and skips entirely if the snapshot is over
+36 hours old rather than reconciling against a mailbox that has moved on.
+The directory is gitignored — it is raw mailbox content.
 
 `prefill_apply.py` needs `requirements-dev.txt` plus `playwright install chromium`.
 It is local-only and never runs in CI.
