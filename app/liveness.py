@@ -26,7 +26,7 @@ from typing import Any
 
 import httpx
 
-FIRECRAWL_URL = "https://api.firecrawl.dev/v1/scrape"
+FIRECRAWL_URL = "https://api.firecrawl.dev/v2/scrape"
 
 # Job ids whose source has a live public API. Everything else is stored locally
 # and cannot be verified from the pool.
