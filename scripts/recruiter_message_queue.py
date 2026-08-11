@@ -30,6 +30,12 @@ def _stale_creating() -> list[dict[str, Any]]:
         ]
 
 
+def _gmail_draft_id(value: Any) -> str:
+    if not isinstance(value, str) or not (draft_id := value.strip()):
+        raise ValueError("Missing Gmail draft ID")
+    return draft_id
+
+
 def _result(command: dict[str, Any]) -> Any:
     action = command.get("action")
     if action == "upsert":
@@ -41,7 +47,7 @@ def _result(command: dict[str, Any]) -> Any:
         return recruiter_messages.claim_approved_draft()
     if action == "created":
         return recruiter_messages.mark_draft_created(
-            command.get("gmailMessageId", ""), command.get("gmailDraftId", "")
+            command.get("gmailMessageId", ""), _gmail_draft_id(command.get("gmailDraftId"))
         )
     if action == "failed":
         return recruiter_messages.mark_draft_failed(

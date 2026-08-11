@@ -72,6 +72,37 @@ class RecruiterMessageQueueTests(unittest.TestCase):
         self.assertIsNone(response["result"])
         self.assertEqual(response["error"], "Request could not be processed.")
 
+    def test_created_rejects_a_whitespace_only_gmail_draft_id(self) -> None:
+        """Whitespace must not be recorded as a usable Gmail draft identifier."""
+        handle({"action": "upsert", "payload": self.payload()})
+        approve_draft("msg_queue_handoff")
+        handle({"action": "claim"})
+
+        response = handle({
+            "action": "created",
+            "gmailMessageId": "msg_queue_handoff",
+            "gmailDraftId": "  \t ",
+        })
+
+        self.assertFalse(response["ok"])
+        self.assertIsNone(response["result"])
+        self.assertEqual(response["error"], "Request could not be processed.")
+
+    def test_created_stores_a_stripped_gmail_draft_id(self) -> None:
+        """Whitespace surrounding Gmail's ID must not become part of persisted state."""
+        handle({"action": "upsert", "payload": self.payload()})
+        approve_draft("msg_queue_handoff")
+        handle({"action": "claim"})
+
+        response = handle({
+            "action": "created",
+            "gmailMessageId": "msg_queue_handoff",
+            "gmailDraftId": "  draft_123  ",
+        })
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["result"]["draft"]["gmailDraftId"], "draft_123")
+
     def test_failed_keeps_only_safe_code_and_a_bounded_message(self) -> None:
         """Raw connector errors must not persist secrets or unbounded diagnostic content."""
         handle({"action": "upsert", "payload": self.payload()})
