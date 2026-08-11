@@ -13,3 +13,6 @@ __pycache__/
 # reads it. These patterns stop a one-off from quietly reintroducing the problem.
 scripts/align_*.py
 scripts/import_*.py
+# ...but a source importer embeds no candidate data — it reads a feed and writes
+# jobs. The rule above is about resume text, not the word "import".
+!scripts/import_ziprecruiter.py
