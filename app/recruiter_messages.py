@@ -1,0 +1,401 @@
+"""Durable recruiter-message events and candidate-approved Gmail draft queue."""
+from __future__ import annotations
+
+import hashlib
+import json
+import sqlite3
+from contextlib import contextmanager
+from email.utils import parseaddr
+import re
+from typing import Any
+
+from . import store
+
+
+RECRUITER_MESSAGE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS recruiter_messages (
+    gmail_message_id TEXT PRIMARY KEY,
+    application_id TEXT,
+    sender_name TEXT NOT NULL,
+    sender_email TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    received_at TEXT NOT NULL,
+    classification TEXT NOT NULL,
+    synopsis TEXT NOT NULL,
+    gmail_url TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS recruiter_reply_drafts (
+    id TEXT PRIMARY KEY,
+    gmail_message_id TEXT NOT NULL UNIQUE,
+    to_addresses TEXT NOT NULL,
+    cc_addresses TEXT NOT NULL,
+    bcc_addresses TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    body TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN (
+        'awaiting_approval', 'approved', 'creating', 'created', 'dismissed', 'failed'
+    )),
+    approved_at TEXT,
+    gmail_draft_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    content_fingerprint TEXT,
+    last_error_code TEXT,
+    last_error_message TEXT
+);
+"""
+
+_EDITABLE_STATUSES = {"awaiting_approval", "failed"}
+
+
+def _connect() -> sqlite3.Connection:
+    conn = store.connect()
+    conn.executescript(RECRUITER_MESSAGE_SCHEMA)
+    return conn
+
+
+@contextmanager
+def _connection():
+    conn = _connect()
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _now() -> str:
+    return store.now()
+
+
+def _normalize_addresses(addresses: list[str] | None) -> list[str]:
+    if addresses is None:
+        return []
+    if not isinstance(addresses, (list, tuple)):
+        raise ValueError("Recipients must be a list of email addresses")
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for address in addresses:
+        if not isinstance(address, str):
+            raise ValueError("Recipient addresses must be text")
+        value = address.strip().lower()
+        _, parsed = parseaddr(value)
+        if not value or "\n" in value or "\r" in value or "@" not in parsed:
+            raise ValueError(f"Invalid recipient address: {address}")
+        if value not in seen:
+            normalized.append(value)
+            seen.add(value)
+    return normalized
+
+
+def _draft_values(draft: dict[str, Any]) -> tuple[str, str, str, str, str, str]:
+    return (
+        json.dumps(_normalize_addresses(draft.get("to"))),
+        json.dumps(_normalize_addresses(draft.get("cc"))),
+        json.dumps(_normalize_addresses(draft.get("bcc"))),
+        str(draft.get("subject") or "").strip(),
+        str(draft.get("body") or ""),
+        str(draft.get("status") or "awaiting_approval"),
+    )
+
+
+def _row_to_message(conn: sqlite3.Connection, event: sqlite3.Row) -> dict[str, Any]:
+    draft = conn.execute(
+        "SELECT * FROM recruiter_reply_drafts WHERE gmail_message_id=?",
+        (event["gmail_message_id"],),
+    ).fetchone()
+    return {
+        "gmailMessageId": event["gmail_message_id"],
+        "applicationId": event["application_id"],
+        "senderName": event["sender_name"],
+        "senderEmail": event["sender_email"],
+        "subject": event["subject"],
+        "receivedAt": event["received_at"],
+        "classification": event["classification"],
+        "synopsis": event["synopsis"],
+        "gmailUrl": event["gmail_url"],
+        "createdAt": event["created_at"],
+        "updatedAt": event["updated_at"],
+        "draft": _row_to_draft(draft) if draft else None,
+    }
+
+
+def _row_to_draft(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "gmailMessageId": row["gmail_message_id"],
+        "to": json.loads(row["to_addresses"]),
+        "cc": json.loads(row["cc_addresses"]),
+        "bcc": json.loads(row["bcc_addresses"]),
+        "subject": row["subject"],
+        "body": row["body"],
+        "status": row["status"],
+        "approvedAt": row["approved_at"],
+        "gmailDraftId": row["gmail_draft_id"],
+        "createdAt": row["created_at"],
+        "updatedAt": row["updated_at"],
+        "contentFingerprint": row["content_fingerprint"],
+        "lastErrorCode": row["last_error_code"],
+        "lastErrorMessage": row["last_error_message"],
+    }
+
+
+def _message_or_raise(conn: sqlite3.Connection, message_id: str) -> sqlite3.Row:
+    row = conn.execute(
+        "SELECT * FROM recruiter_messages WHERE gmail_message_id=?", (message_id,)
+    ).fetchone()
+    if not row:
+        raise ValueError(f"Unknown recruiter message: {message_id}")
+    return row
+
+
+def _draft_or_raise(conn: sqlite3.Connection, message_id: str) -> sqlite3.Row:
+    row = conn.execute(
+        "SELECT * FROM recruiter_reply_drafts WHERE gmail_message_id=?", (message_id,)
+    ).fetchone()
+    if not row:
+        raise ValueError(f"Missing reply draft for recruiter message: {message_id}")
+    return row
+
+
+def _fingerprint(draft: sqlite3.Row) -> str:
+    content = {
+        "to": json.loads(draft["to_addresses"]),
+        "cc": json.loads(draft["cc_addresses"]),
+        "bcc": json.loads(draft["bcc_addresses"]),
+        "subject": draft["subject"],
+        "body": draft["body"],
+    }
+    canonical = json.dumps(content, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _validate_complete(draft: sqlite3.Row) -> None:
+    if not json.loads(draft["to_addresses"]):
+        raise ValueError("Draft requires at least one recipient")
+    if not draft["subject"].strip():
+        raise ValueError("Draft requires a subject")
+    if not draft["body"].strip():
+        raise ValueError("Draft requires a body")
+
+
+def _timeline(conn: sqlite3.Connection, event: sqlite3.Row, label: str) -> None:
+    if event["application_id"]:
+        store.add_timeline(conn, event["application_id"], label)
+
+
+def _sanitize_error(code: str, message: str) -> tuple[str, str]:
+    safe_code = str(code).strip().lower()
+    if not re.fullmatch(r"[a-z0-9_.-]{1,64}", safe_code):
+        safe_code = "gmail_draft_error"
+    return safe_code, "Draft creation failed. Please retry after reviewing the draft."
+
+
+def upsert_message(payload: dict) -> dict:
+    """Insert/update event metadata without replacing an existing reply draft."""
+    draft = payload["draft"]
+    ts = _now()
+    with _connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        existing = conn.execute(
+            "SELECT 1 FROM recruiter_messages WHERE gmail_message_id=?",
+            (payload["gmailMessageId"],),
+        ).fetchone()
+        conn.execute(
+            """INSERT INTO recruiter_messages
+               (gmail_message_id, application_id, sender_name, sender_email, subject,
+                received_at, classification, synopsis, gmail_url, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(gmail_message_id) DO UPDATE SET
+                 application_id=COALESCE(excluded.application_id, recruiter_messages.application_id),
+                 synopsis=excluded.synopsis,
+                 updated_at=excluded.updated_at""",
+            (
+                payload["gmailMessageId"], payload.get("applicationId"),
+                payload["senderName"], payload["senderEmail"], payload["subject"],
+                payload["receivedAt"], payload["classification"], payload["synopsis"],
+                payload["gmailUrl"], ts, ts,
+            ),
+        )
+        to, cc, bcc, subject, body, status = _draft_values(draft)
+        conn.execute(
+            """INSERT OR IGNORE INTO recruiter_reply_drafts
+               (id, gmail_message_id, to_addresses, cc_addresses, bcc_addresses,
+                subject, body, status, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (f"rmd_{payload['gmailMessageId']}", payload["gmailMessageId"], to, cc, bcc,
+             subject, body, status, ts, ts),
+        )
+        event = _message_or_raise(conn, payload["gmailMessageId"])
+        if not existing:
+            _timeline(conn, event, "Recruiter reply detected")
+        return _row_to_message(conn, event)
+
+
+def get_message(message_id: str) -> dict | None:
+    with _connection() as conn:
+        event = conn.execute(
+            "SELECT * FROM recruiter_messages WHERE gmail_message_id=?", (message_id,)
+        ).fetchone()
+        return _row_to_message(conn, event) if event else None
+
+
+def list_messages(application_id: str | None = None) -> list[dict]:
+    with _connection() as conn:
+        if application_id is None:
+            rows = conn.execute(
+                "SELECT * FROM recruiter_messages ORDER BY received_at DESC, gmail_message_id DESC"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM recruiter_messages WHERE application_id=? "
+                "ORDER BY received_at DESC, gmail_message_id DESC", (application_id,)
+            ).fetchall()
+        return [_row_to_message(conn, row) for row in rows]
+
+
+def update_draft(message_id: str, patch: dict) -> dict:
+    allowed = {"to", "cc", "bcc", "subject", "body"}
+    unknown = set(patch) - allowed
+    if unknown:
+        raise ValueError(f"Unsupported draft fields: {', '.join(sorted(unknown))}")
+    with _connection() as conn:
+        draft = _draft_or_raise(conn, message_id)
+        if draft["status"] not in _EDITABLE_STATUSES:
+            raise ValueError(f"Draft is not editable while {draft['status']}")
+        fields: list[str] = []
+        values: list[Any] = []
+        for key, column in (("to", "to_addresses"), ("cc", "cc_addresses"), ("bcc", "bcc_addresses")):
+            if key in patch:
+                fields.append(f"{column}=?")
+                values.append(json.dumps(_normalize_addresses(patch[key])))
+        if "subject" in patch:
+            fields.append("subject=?")
+            values.append(str(patch["subject"] or "").strip())
+        if "body" in patch:
+            fields.append("body=?")
+            values.append(str(patch["body"] or ""))
+        if fields:
+            if draft["status"] == "failed":
+                fields.append("content_fingerprint=NULL")
+            fields.append("updated_at=?")
+            values.extend([_now(), message_id])
+            conn.execute(
+                f"UPDATE recruiter_reply_drafts SET {', '.join(fields)} WHERE gmail_message_id=?",
+                values,
+            )
+        return _row_to_message(conn, _message_or_raise(conn, message_id))
+
+
+def approve_draft(message_id: str) -> dict:
+    with _connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        event = _message_or_raise(conn, message_id)
+        draft = _draft_or_raise(conn, message_id)
+        if draft["status"] == "approved":
+            return _row_to_message(conn, event)
+        if draft["status"] != "awaiting_approval":
+            raise ValueError(f"Draft cannot be approved while {draft['status']}")
+        _validate_complete(draft)
+        conn.execute(
+            """UPDATE recruiter_reply_drafts SET status='approved', approved_at=?,
+               content_fingerprint=?, last_error_code=NULL, last_error_message=NULL,
+               updated_at=? WHERE gmail_message_id=?""",
+            (_now(), _fingerprint(draft), _now(), message_id),
+        )
+        _timeline(conn, event, "Recruiter reply draft approved")
+        return _row_to_message(conn, event)
+
+
+def dismiss_draft(message_id: str) -> dict:
+    with _connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        event = _message_or_raise(conn, message_id)
+        draft = _draft_or_raise(conn, message_id)
+        if draft["status"] not in _EDITABLE_STATUSES and draft["status"] != "dismissed":
+            raise ValueError(f"Draft cannot be dismissed while {draft['status']}")
+        if draft["status"] != "dismissed":
+            conn.execute(
+                "UPDATE recruiter_reply_drafts SET status='dismissed', updated_at=? "
+                "WHERE gmail_message_id=?", (_now(), message_id),
+            )
+            _timeline(conn, event, "Recruiter reply draft dismissed")
+        return _row_to_message(conn, event)
+
+
+def retry_draft(message_id: str) -> dict:
+    with _connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        event = _message_or_raise(conn, message_id)
+        draft = _draft_or_raise(conn, message_id)
+        if draft["status"] != "failed":
+            raise ValueError(f"Draft cannot be retried while {draft['status']}")
+        _validate_complete(draft)
+        conn.execute(
+            """UPDATE recruiter_reply_drafts SET status='approved', approved_at=?,
+               content_fingerprint=?, last_error_code=NULL, last_error_message=NULL, updated_at=?
+               WHERE gmail_message_id=?""",
+            (_now(), _fingerprint(draft), _now(), message_id),
+        )
+        _timeline(conn, event, "Recruiter reply draft retry approved")
+        return _row_to_message(conn, event)
+
+
+def claim_approved_draft() -> dict | None:
+    with _connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        draft = conn.execute(
+            "SELECT * FROM recruiter_reply_drafts WHERE status='approved' "
+            "ORDER BY approved_at, id LIMIT 1"
+        ).fetchone()
+        if not draft:
+            return None
+        claimed = conn.execute(
+            "UPDATE recruiter_reply_drafts SET status='creating', updated_at=? "
+            "WHERE gmail_message_id=? AND status='approved'", (_now(), draft["gmail_message_id"]),
+        ).rowcount
+        if not claimed:
+            return None
+        event = _message_or_raise(conn, draft["gmail_message_id"])
+        _timeline(conn, event, "Draft creation started")
+        return _row_to_message(conn, event)
+
+
+def mark_draft_created(message_id: str, gmail_draft_id: str) -> dict:
+    if not gmail_draft_id:
+        raise ValueError("Gmail draft ID is required")
+    with _connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        event = _message_or_raise(conn, message_id)
+        draft = _draft_or_raise(conn, message_id)
+        if draft["status"] != "creating":
+            raise ValueError(f"Draft cannot be completed while {draft['status']}")
+        conn.execute(
+            """UPDATE recruiter_reply_drafts SET status='created', gmail_draft_id=?,
+               updated_at=? WHERE gmail_message_id=?""",
+            (gmail_draft_id, _now(), message_id),
+        )
+        _timeline(conn, event, "Gmail draft created")
+        return _row_to_message(conn, event)
+
+
+def mark_draft_failed(message_id: str, code: str, message: str) -> dict:
+    with _connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        event = _message_or_raise(conn, message_id)
+        draft = _draft_or_raise(conn, message_id)
+        if draft["status"] != "creating":
+            raise ValueError(f"Draft cannot fail while {draft['status']}")
+        safe_code, safe_message = _sanitize_error(code, message)
+        conn.execute(
+            """UPDATE recruiter_reply_drafts SET status='failed', last_error_code=?,
+               last_error_message=?, updated_at=? WHERE gmail_message_id=?""",
+            (safe_code, safe_message, _now(), message_id),
+        )
+        _timeline(conn, event, "Gmail draft creation failed")
+        return _row_to_message(conn, event)
