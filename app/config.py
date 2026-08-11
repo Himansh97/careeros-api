@@ -33,21 +33,16 @@ ALLOWED_ORIGINS = [
 # but it only covers companies that use Greenhouse and that we list here.
 # Expanding this list is the main lever on discovery coverage.
 GREENHOUSE_COMPANIES: list[str] = [
-    "databricks",
-    "stripe",
-    "airtable",
-    "gitlab",
-    "cloudflare",
-    "affirm",
-    "instacart",
-    "doordash",
-    "dropbox",
-    "flexport",
-    "reddit",
-    "robinhood",
-    "sofi",
-    "twilio",
-    "wealthsimple",
+    # Verified live against boards-api.greenhouse.io rather than assumed.
+    # doordash and wealthsimple were removed: both had been returning HTTP
+    # errors, which reads downstream as "no openings" rather than "board gone".
+    "spacex", "databricks", "stripe", "datadog", "mongodb", "cloudflare", "brex",
+    "verkada", "samsara", "elastic", "fivetran", "affirm", "gitlab", "lyft",
+    "coinbase", "figma", "twilio", "reddit", "flexport", "asana", "robinhood",
+    "instacart", "postman", "nuro", "gusto", "vercel", "sigmacomputing", "faire",
+    "duolingo", "carta", "sofi", "mercury", "chime", "discord", "dropbox",
+    "collibra", "betterment", "amplitude", "webflow", "airtable", "starburst",
+    "calendly", "dremio",
 ]
 
 HTTP_TIMEOUT_SECONDS = 20.0

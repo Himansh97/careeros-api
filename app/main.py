@@ -78,7 +78,7 @@ async def _job_or_404(job_id: str) -> dict[str, Any]:
 async def health() -> dict[str, Any]:
     return {
         "status": "ok",
-        "sources": ["Greenhouse", "Ashby", "The Muse", "Arbeitnow", "RemoteOK"],
+        "sources": ["Greenhouse", "Ashby", "Lever", "The Muse", "Arbeitnow", "RemoteOK"],
         "greenhouseCompanies": GREENHOUSE_COMPANIES,
         "lastFetchCounts": source_counts(),
         # Named so a degraded search is visible. A failed source returns no

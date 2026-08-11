@@ -11,6 +11,7 @@ terms, so they are not implemented — the gap is reported, not papered over.
 from __future__ import annotations
 
 import asyncio
+import datetime as _dt
 import html
 import re
 from itertools import zip_longest
@@ -20,7 +21,19 @@ import httpx
 
 from .config import GREENHOUSE_COMPANIES, HTTP_TIMEOUT_SECONDS
 
-ASHBY_COMPANIES = ["ramp", "linear", "vanta", "clipboardhealth", "runwayml"]
+# Slugs are verified against each board's live API rather than guessed — a dead
+# slug returns nothing, which is indistinguishable from an employer with no
+# openings. clipboardhealth and runwayml were dropped here for exactly that:
+# both had been erroring silently.
+ASHBY_COMPANIES = [
+    "openai", "anthropic", "harvey", "elevenlabs", "sierra", "ramp", "decagon",
+    "cursor", "perplexity", "vanta", "replit", "linear", "modal", "browserbase",
+]
+
+# Lever exposes the same kind of documented public API as Greenhouse and Ashby.
+# leverdemo is deliberately excluded: it is Lever's own sample board, and its
+# postings are not real jobs.
+LEVER_COMPANIES = ["spotify", "palantir", "matchgroup"]
 
 # Brands whose own capitalisation .title() destroys. The company name goes into
 # the resume, the filename and the outreach greeting, so writing to "Sofi" or
@@ -176,6 +189,34 @@ async def ashby(client: httpx.AsyncClient, slug: str) -> list[dict[str, Any]]:
     return out
 
 
+async def lever(client: httpx.AsyncClient, slug: str) -> list[dict[str, Any]]:
+    r = await client.get(f"https://api.lever.co/v0/postings/{slug}?mode=json")
+    r.raise_for_status()
+    out = []
+    for j in r.json():
+        cats = j.get("categories") or {}
+        posted = j.get("createdAt")
+        if isinstance(posted, (int, float)):
+            # Lever stamps in epoch milliseconds; everything downstream expects
+            # an ISO string like the other sources produce.
+            posted = _dt.datetime.fromtimestamp(posted / 1000, _dt.timezone.utc).isoformat()
+        out.append(
+            _job(
+                jid=f"lever_{slug}_{j.get('id')}",
+                title=j.get("text", ""),
+                company=slug.replace("-", " ").title(),
+                location=cats.get("location", ""),
+                description=j.get("descriptionPlain")
+                or strip_html(j.get("description", "")),
+                apply_url=j.get("applyUrl") or j.get("hostedUrl", ""),
+                source="Lever",
+                ats="Lever",
+                posted=posted if isinstance(posted, str) else None,
+            )
+        )
+    return out
+
+
 async def muse(client: httpx.AsyncClient, category: str, pages: int = 6) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for page in range(1, pages + 1):
@@ -267,6 +308,8 @@ async def fetch_every_source() -> tuple[list[dict[str, Any]], dict[str, int], li
                   for s in GREENHOUSE_COMPANIES]
         tasks += [_safe(ashby(client, s), f"ashby/{s}", failures)
                   for s in ASHBY_COMPANIES]
+        tasks += [_safe(lever(client, s), f"lever/{s}", failures)
+                  for s in LEVER_COMPANIES]
         tasks += [_safe(muse(client, c), f"muse/{c}", failures)
                   for c in MUSE_CATEGORIES]
         tasks.append(_safe(arbeitnow(client), "arbeitnow", failures))
