@@ -1,6 +1,9 @@
 """Protocol tests for the heartbeat recruiter-draft queue bridge."""
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,6 +12,9 @@ from unittest.mock import patch
 from app import store
 from app.recruiter_messages import approve_draft
 from scripts.recruiter_message_queue import handle
+
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 class RecruiterMessageQueueTests(unittest.TestCase):
@@ -50,6 +56,24 @@ class RecruiterMessageQueueTests(unittest.TestCase):
         self.assertIsNone(response["error"])
         self.assertEqual(response["result"]["gmailMessageId"], "msg_queue_handoff")
         self.assertEqual(response["result"]["draft"]["status"], "awaiting_approval")
+
+    def test_script_entrypoint_starts_from_repo_root_and_sanitizes_invalid_json(self) -> None:
+        """Running the automation command must not fail before reading stdin."""
+        completed = subprocess.run(
+            [sys.executable, "scripts/recruiter_message_queue.py"],
+            cwd=REPO_ROOT,
+            input="not valid json\n",
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 0)
+        self.assertEqual(completed.stderr, "")
+        self.assertEqual(
+            json.loads(completed.stdout),
+            {"ok": False, "result": None, "error": "Request could not be processed."},
+        )
 
     def test_claim_returns_one_approved_record_then_none(self) -> None:
         """A non-atomic or repeated claim could create duplicate Gmail drafts."""
