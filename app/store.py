@@ -38,6 +38,12 @@ CREATE TABLE IF NOT EXISTS approvals (
     status TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS job_flags (
+    job_id TEXT PRIMARY KEY,
+    saved INTEGER NOT NULL DEFAULT 0,
+    dismissed INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -214,3 +220,51 @@ def resolve_approval(approval_id: str, status: str) -> None:
         conn.execute(
             "UPDATE approvals SET status=? WHERE id=?", (status, approval_id)
         )
+
+
+def job_flags() -> dict[str, dict[str, bool]]:
+    """Every saved/dismissed flag, keyed by job id.
+
+    One query for the whole search rather than a lookup per job, matching how
+    `list_applications` is already used in the search handler.
+    """
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT job_id, saved, dismissed FROM job_flags"
+        ).fetchall()
+    return {
+        r["job_id"]: {"saved": bool(r["saved"]), "dismissed": bool(r["dismissed"])}
+        for r in rows
+    }
+
+
+def set_job_flag(
+    job_id: str, *, saved: bool | None = None, dismissed: bool | None = None
+) -> dict[str, bool]:
+    """Set one or both flags for a job and return the resulting state.
+
+    Jobs are not stored locally — most come from a source API and exist only in
+    the fetch cache — so this keys on the job id alone rather than a foreign
+    key. A flag for a posting that has since vanished from its board is simply
+    never read.
+    """
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT saved, dismissed FROM job_flags WHERE job_id=?", (job_id,)
+        ).fetchone()
+        current = {
+            "saved": bool(row["saved"]) if row else False,
+            "dismissed": bool(row["dismissed"]) if row else False,
+        }
+        if saved is not None:
+            current["saved"] = saved
+        if dismissed is not None:
+            current["dismissed"] = dismissed
+        conn.execute(
+            "INSERT INTO job_flags (job_id, saved, dismissed, updated_at) "
+            "VALUES (?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET "
+            "saved=excluded.saved, dismissed=excluded.dismissed, "
+            "updated_at=excluded.updated_at",
+            (job_id, int(current["saved"]), int(current["dismissed"]), now()),
+        )
+    return current

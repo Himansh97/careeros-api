@@ -153,9 +153,15 @@ async def search(req: SearchRequest) -> dict[str, Any]:
     stamped = datetime.now(timezone.utc).isoformat()
     # One query for the whole pipeline rather than a lookup per job — search
     # scores dozens of jobs and each would otherwise open its own connection.
-    from .store import list_applications
+    from .store import job_flags, list_applications
 
     by_job = {a["jobId"]: a for a in list_applications()}
+    flags = job_flags()
+
+    # Dismissed jobs are dropped before prescreening, not after. The scoring
+    # budget is the scarce resource here — leaving them in would let rejected
+    # postings keep consuming slots that a real candidate could have used.
+    matched = [j for j in matched if not flags.get(j["id"], {}).get("dismissed")]
 
     # Full scoring parses whole descriptions, so it can't run on every job the
     # sources return. It used to run on the first 120 in FETCH order, which
@@ -179,6 +185,8 @@ async def search(req: SearchRequest) -> dict[str, Any]:
                 "discoveredAt": stamped,
                 "applicationStatus": record["status"] if record else "discovered",
                 "resumeScore": record.get("resumeScore") if record else None,
+                "saved": flags.get(job["id"], {}).get("saved", False),
+                "dismissed": False,
             }
         )
 
@@ -196,6 +204,27 @@ async def search(req: SearchRequest) -> dict[str, Any]:
     }
 
 
+class JobFlagRequest(BaseModel):
+    # The desired state, not a toggle. The UI updates optimistically, so two
+    # fast clicks would race a toggle into the wrong value; sending the state
+    # the user asked for makes the call idempotent and replayable.
+    value: bool = True
+
+
+@app.post("/api/jobs/{job_id}/save")
+async def job_save(job_id: str, req: JobFlagRequest) -> dict[str, Any]:
+    from .store import set_job_flag
+
+    return {"jobId": job_id, **set_job_flag(job_id, saved=req.value)}
+
+
+@app.post("/api/jobs/{job_id}/dismiss")
+async def job_dismiss(job_id: str, req: JobFlagRequest) -> dict[str, Any]:
+    from .store import set_job_flag
+
+    return {"jobId": job_id, **set_job_flag(job_id, dismissed=req.value)}
+
+
 @app.get("/api/jobs/{job_id}")
 async def job_detail(job_id: str) -> dict[str, Any]:
     p = _profile()
@@ -205,15 +234,18 @@ async def job_detail(job_id: str) -> dict[str, Any]:
     # these were fixed values, so a job that had already been tailored still
     # came back with no resumeScore and status "discovered" — which made the
     # UI offer "Tailor Resume" forever and silently re-run it on every click.
-    from .store import get_application
+    from .store import get_application, job_flags
 
     record = get_application(f"app_{job_id}")
+    flag = job_flags().get(job_id, {})
     return {
         **job,
         **s,
         "discoveredAt": datetime.now(timezone.utc).isoformat(),
         "applicationStatus": record["status"] if record else "discovered",
         "resumeScore": record.get("resumeScore") if record else None,
+        "saved": flag.get("saved", False),
+        "dismissed": flag.get("dismissed", False),
     }
 
 
