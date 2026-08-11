@@ -60,6 +60,14 @@ WORKDAY_BOARDS: list[tuple[str, str]] = [
 WORKDAY_SEARCHES = ("data analyst", "business analyst", "business intelligence", "analytics")
 WORKDAY_DETAIL_CAP = 25   # per board, per run
 
+# SmartRecruiters, same pattern: a documented public API whose listing carries
+# no description, so each posting costs a second request. Its API takes both a
+# keyword and a country filter, so the narrowing happens server-side before we
+# spend anything. Verified live; slugs that returned nothing are left out.
+SMARTRECRUITERS_COMPANIES = ["BoschGroup", "Wabtec", "WesternDigital", "Visa"]
+SMARTRECRUITERS_SEARCHES = ("data analyst", "business analyst", "business intelligence")
+SMARTRECRUITERS_DETAIL_CAP = 20   # per company, per run
+
 # Brands whose own capitalisation .title() destroys. The company name goes into
 # the resume, the filename and the outreach greeting, so writing to "Sofi" or
 # "Gitlab" is a small but real credibility cost with the people reading it.
@@ -82,6 +90,8 @@ BRAND_CASING = {
     "postgresql": "PostgreSQL",
     "runwayml": "Runway ML",
     "clipboardhealth": "Clipboard Health",
+    "boschgroup": "Bosch",
+    "westerndigital": "Western Digital",
 }
 
 
@@ -287,6 +297,60 @@ async def workday(client: httpx.AsyncClient, label: str, base: str) -> list[dict
     return [j for j in results if j]
 
 
+async def smartrecruiters(client: httpx.AsyncClient, slug: str) -> list[dict[str, Any]]:
+    """Search one SmartRecruiters board, then fetch the matching descriptions."""
+    base = f"https://api.smartrecruiters.com/v1/companies/{slug}/postings"
+    seen: dict[str, dict[str, Any]] = {}
+    for term in SMARTRECRUITERS_SEARCHES:
+        # country=us is applied at the source: this candidate cannot take a role
+        # abroad, and filtering here means we never pay to fetch one.
+        r = await client.get(base, params={"q": term, "limit": 20, "country": "us"})
+        if r.status_code != 200:
+            continue
+        for post in r.json().get("content", []):
+            pid = post.get("id")
+            if pid and pid not in seen:
+                seen[pid] = post
+
+    async def detail(post: dict[str, Any]) -> dict[str, Any] | None:
+        try:
+            d = await client.get(post.get("ref", ""))
+            info = d.json() if d.status_code == 200 else {}
+        except (httpx.HTTPError, ValueError):
+            info = {}
+
+        sections = ((info.get("jobAd") or {}).get("sections") or {})
+        description = strip_html(
+            " ".join(
+                (v or {}).get("text", "")
+                for v in sections.values()
+                if isinstance(v, dict)
+            )
+        )
+        if not description:
+            # A posting the scorer cannot read cannot be assessed, so it is
+            # dropped rather than published with a meaningless score.
+            return None
+
+        loc = post.get("location") or {}
+        city = ", ".join(p for p in (loc.get("city"), loc.get("region")) if p)
+        return _job(
+            jid=f"sr_{slug.lower()}_{post.get('id')}",
+            title=post.get("name", ""),
+            company=_company_from_slug(slug),
+            location=city or (loc.get("country") or "").upper(),
+            description=description,
+            apply_url=info.get("applyUrl") or post.get("ref", ""),
+            source="SmartRecruiters",
+            ats="SmartRecruiters",
+            posted=post.get("releasedDate"),
+        )
+
+    picked = list(seen.values())[:SMARTRECRUITERS_DETAIL_CAP]
+    results = await asyncio.gather(*(detail(p) for p in picked))
+    return [j for j in results if j]
+
+
 async def muse(client: httpx.AsyncClient, category: str, pages: int = 6) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for page in range(1, pages + 1):
@@ -382,6 +446,8 @@ async def fetch_every_source() -> tuple[list[dict[str, Any]], dict[str, int], li
                   for s in LEVER_COMPANIES]
         tasks += [_safe(workday(client, label, base), f"workday/{label}", failures)
                   for label, base in WORKDAY_BOARDS]
+        tasks += [_safe(smartrecruiters(client, s), f"smartrecruiters/{s}", failures)
+                  for s in SMARTRECRUITERS_COMPANIES]
         tasks += [_safe(muse(client, c), f"muse/{c}", failures)
                   for c in MUSE_CATEGORIES]
         tasks.append(_safe(arbeitnow(client), "arbeitnow", failures))
