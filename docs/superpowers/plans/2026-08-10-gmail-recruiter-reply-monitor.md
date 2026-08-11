@@ -64,7 +64,7 @@ Read candidate messages in batches with `gmail_batch_read_email`. Do not open at
 
 - [ ] **Step 4: Classify without labeling**
 
-Require at least one strong application link (company, distinctive role, application-thread subject, or hiring platform naming a tracked application) and one recruiting-intent signal (interview, scheduling, assessment, information request, recruiter outreach, decision, offer, rejection, or explicit status update).
+Require at least one strong application link (company, distinctive role, application-thread subject, or hiring platform naming a tracked application) and either (a) a recruiting-intent signal (interview, scheduling, assessment, information request, recruiter outreach, decision, offer, rejection, or explicit status update), or (b) an actionable company handoff that names a specific person/address to contact or gives an explicit next step. Include out-of-office replies only when they contain such an actionable handoff.
 
 Exclude newsletters, job recommendations, job-board digests, marketing, receipts, and messages authored by the candidate. Record only a transient review summary; do not write email content to disk.
 
@@ -134,7 +134,7 @@ newer_than:7d -in:sent -in:spam -in:trash -category:promotions -label:"CareerOS/
 
 When local files are available, read /Users/himanshusrivastava/careeros-api/careeros.db read-only and load company/title/status from applications where status is applied, submitted, or ready. Never modify the database. If it is unavailable, continue with email-only recruiting classification and say that no CareerOS record was matched.
 
-Read candidate Gmail messages without opening attachments. A confident match requires both (1) a strong application link: company, distinctive role title, application-thread subject, or hiring platform naming a tracked company/role; and (2) recruiting intent: interview, scheduling, assessment, information request, recruiter/hiring-manager outreach, decision, offer, rejection, or explicit application-status update.
+Read candidate Gmail messages without opening attachments. A confident match requires (1) a strong application link: company, distinctive role title, application-thread subject, or hiring platform naming a tracked company/role; and either (2a) recruiting intent: interview, scheduling, assessment, information request, recruiter/hiring-manager outreach, decision, offer, rejection, or explicit application-status update; or (2b) an actionable company handoff that names a specific person/address to contact or gives an explicit next step. Include an out-of-office reply when it contains such an actionable handoff; exclude out-of-office replies with no actionable direction.
 
 Exclude newsletters, marketing, receipts, generic job recommendations, job-board digests, and messages authored by the candidate. Do not label ambiguous messages.
 

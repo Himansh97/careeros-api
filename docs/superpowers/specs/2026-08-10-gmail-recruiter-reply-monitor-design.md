@@ -38,7 +38,8 @@ signals, but the alert must state that no CareerOS application was matched.
 ## Classification
 
 A message is a confident recruiter/application reply when it has at least one
-strong application link and one recruiting-intent signal.
+strong application link and either a recruiting-intent signal or an actionable
+handoff from a person at the tracked company.
 
 Strong application links include:
 
@@ -51,6 +52,11 @@ Recruiting-intent signals include interview or scheduling requests,
 assessments, requests for information, recruiter or hiring-manager outreach,
 application decisions, offers, rejections, and explicit application-status
 updates.
+
+An actionable handoff names a specific person or address to contact, or gives
+an explicit next step connected to the tracked company or application. This
+includes an out-of-office response when it supplies named alternate contacts;
+an out-of-office response with no actionable direction remains excluded.
 
 Newsletters, job recommendations, marketing mail, receipts, generic job-board
 digests, and candidate-authored messages are excluded. Ambiguous messages are
