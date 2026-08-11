@@ -60,6 +60,29 @@ async def main() -> int:
         # day on that board. Say so rather than let it read as no news.
         log(f"WARNING sources failed: {', '.join(failures)}")
 
+    # Check staged postings before tailoring more: a role that closed overnight
+    # should be flagged rather than quietly kept at the top of the queue.
+    try:
+        from app.liveness import check_all, firecrawl_key
+        from app.store import add_timeline, connect, list_applications, now as _now
+
+        apps = list_applications()
+        checks = await check_all(apps, {j["id"] for j in jobs}, firecrawl_key())
+        closed = [c for c in checks if c["verdict"] == "closed"]
+        for c in closed:
+            with connect() as conn:
+                conn.execute(
+                    "UPDATE applications SET next_action=?, updated_at=? WHERE id=?",
+                    ("Posting closed — no longer accepting", _now(), f"app_{c['jobId']}"),
+                )
+                add_timeline(conn, f"app_{c['jobId']}",
+                             f"Posting no longer live: {c['why']}")
+        unverified = sum(1 for c in checks if c["verdict"] == "unverified")
+        log(f"liveness: {len(closed)} closed, {unverified} unverifiable"
+            + (f" — {', '.join(c['company'] for c in closed)}" if closed else ""))
+    except Exception as exc:  # noqa: BLE001 - never let this stop the run
+        log(f"liveness check failed: {type(exc).__name__}: {exc}")
+
     result = await run_autopilot()
     if result.get("error"):
         log(f"autopilot did not run: {result['error']}")
