@@ -35,6 +35,31 @@ ASHBY_COMPANIES = [
 # postings are not real jobs.
 LEVER_COMPANIES = ["spotify", "palantir", "matchgroup"]
 
+# Workday powers the careers page of most large employers, and exposes the same
+# JSON its own front-end consumes. Each entry is (label, cxs base) verified
+# against the live endpoint; capitalone, intuit, humana, elevance and nike were
+# probed and rejected (401/404/422) rather than left in to fail silently.
+WORKDAY_BOARDS: list[tuple[str, str]] = [
+    ("Leidos", "https://leidos.wd5.myworkdayjobs.com/wday/cxs/leidos/External"),
+    ("NVIDIA", "https://nvidia.wd5.myworkdayjobs.com/wday/cxs/nvidia/NVIDIAExternalCareerSite"),
+    ("Salesforce", "https://salesforce.wd12.myworkdayjobs.com/wday/cxs/salesforce/External_Career_Site"),
+    ("Adobe", "https://adobe.wd5.myworkdayjobs.com/wday/cxs/adobe/external_experienced"),
+    ("CVS Health", "https://cvshealth.wd1.myworkdayjobs.com/wday/cxs/cvshealth/CVS_Health_Careers"),
+    ("Mastercard", "https://mastercard.wd1.myworkdayjobs.com/wday/cxs/mastercard/CorporateCareers"),
+    ("PayPal", "https://paypal.wd1.myworkdayjobs.com/wday/cxs/paypal/jobs"),
+    ("Fidelity", "https://wd1.myworkdaysite.com/wday/cxs/fmr/FidelityCareers"),
+    ("Truist", "https://truist.wd1.myworkdayjobs.com/wday/cxs/truist/Careers"),
+    ("Target", "https://target.wd5.myworkdayjobs.com/wday/cxs/target/targetcareers"),
+]
+
+# The listing endpoint returns no description, and scoring cannot read a job
+# without one — so each posting costs a second request. Searching server-side
+# first keeps that bounded: these terms are what the candidate is actually
+# looking for, so the detail fetches are spent on plausible roles instead of on
+# a whole 700-role board.
+WORKDAY_SEARCHES = ("data analyst", "business analyst", "business intelligence", "analytics")
+WORKDAY_DETAIL_CAP = 25   # per board, per run
+
 # Brands whose own capitalisation .title() destroys. The company name goes into
 # the resume, the filename and the outreach greeting, so writing to "Sofi" or
 # "Gitlab" is a small but real credibility cost with the people reading it.
@@ -217,6 +242,51 @@ async def lever(client: httpx.AsyncClient, slug: str) -> list[dict[str, Any]]:
     return out
 
 
+async def workday(client: httpx.AsyncClient, label: str, base: str) -> list[dict[str, Any]]:
+    """Search one Workday board, then fetch descriptions for the best matches."""
+    seen: dict[str, dict[str, Any]] = {}
+    for term in WORKDAY_SEARCHES:
+        r = await client.post(
+            f"{base}/jobs",
+            json={"appliedFacets": {}, "limit": 20, "offset": 0, "searchText": term},
+            headers={"Accept": "application/json"},
+        )
+        if r.status_code != 200:
+            continue
+        for post in r.json().get("jobPostings", []):
+            path = post.get("externalPath")
+            if path and path not in seen:
+                seen[path] = post
+
+    async def detail(path: str, post: dict[str, Any]) -> dict[str, Any] | None:
+        try:
+            d = await client.get(f"{base}{path}", headers={"Accept": "application/json"})
+            info = d.json().get("jobPostingInfo", {}) if d.status_code == 200 else {}
+        except (httpx.HTTPError, ValueError):
+            info = {}
+        description = strip_html(info.get("jobDescription", ""))
+        if not description:
+            # Without a description the scorer has nothing to read, and the role
+            # would land with no requirements and a meaningless score. Drop it
+            # rather than publish a job that cannot be assessed.
+            return None
+        return _job(
+            jid=f"workday_{label.lower().replace(' ', '')}_{info.get('jobReqId') or path.rsplit('_', 1)[-1]}",
+            title=info.get("title") or post.get("title", ""),
+            company=label,
+            location=info.get("location") or post.get("locationsText", ""),
+            description=description,
+            apply_url=info.get("externalUrl", "") or f"{base.split('/wday/')[0]}{path}",
+            source="Workday",
+            ats="Workday",
+            posted=info.get("startDate") or info.get("posted"),
+        )
+
+    picked = list(seen.items())[:WORKDAY_DETAIL_CAP]
+    results = await asyncio.gather(*(detail(p, j) for p, j in picked))
+    return [j for j in results if j]
+
+
 async def muse(client: httpx.AsyncClient, category: str, pages: int = 6) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for page in range(1, pages + 1):
@@ -310,6 +380,8 @@ async def fetch_every_source() -> tuple[list[dict[str, Any]], dict[str, int], li
                   for s in ASHBY_COMPANIES]
         tasks += [_safe(lever(client, s), f"lever/{s}", failures)
                   for s in LEVER_COMPANIES]
+        tasks += [_safe(workday(client, label, base), f"workday/{label}", failures)
+                  for label, base in WORKDAY_BOARDS]
         tasks += [_safe(muse(client, c), f"muse/{c}", failures)
                   for c in MUSE_CATEGORIES]
         tasks.append(_safe(arbeitnow(client), "arbeitnow", failures))
