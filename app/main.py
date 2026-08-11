@@ -851,6 +851,23 @@ async def outreach_status(outreach_id: str, req: OutreachAction) -> dict[str, An
     raise HTTPException(status_code=400, detail="action must be sent|replied")
 
 
+@app.get("/api/alerts")
+async def alerts() -> dict[str, Any]:
+    """What is outstanding — things written, approved or received and not acted on.
+
+    The inverse of /api/follow-ups, which only knows about things that already
+    happened. Reads stored state only; facts that live in Gmail are written in
+    by scripts/check_replies.py.
+    """
+    from .alerts import build_alerts
+
+    items = build_alerts()
+    return {
+        "alerts": items,
+        "high": sum(1 for a in items if a["severity"] == "high"),
+    }
+
+
 @app.get("/api/follow-ups")
 async def followups() -> dict[str, Any]:
     from .outreach_store import list_followups
