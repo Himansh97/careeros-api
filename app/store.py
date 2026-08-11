@@ -164,6 +164,11 @@ def _row_to_app(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
         "resumeScore": row["resume_score"],
         "applyUrl": row["apply_url"],
         "nextAction": row["next_action"],
+        # When this application last changed. Already stored on every write;
+        # it simply was not returned, so the resume list had no recency signal
+        # and "where is the one I was working on" had no answer.
+        "createdAt": row["created_at"],
+        "updatedAt": row["updated_at"],
         "submittedAt": None,
         "timeline": [
             {"id": f"t{i}", "label": e["label"], "timestamp": e["at"]}

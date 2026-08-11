@@ -113,15 +113,26 @@ async def fetch_all_jobs(force: bool = False) -> list[dict[str, Any]]:
             for j in recovered:
                 counts[j["source"]] = counts.get(j["source"], 0) + 1
 
+    # Everything polled from a source API is something the system found.
+    for j in jobs:
+        j["origin"] = "fetched"
+
     # Imported postings (Indeed etc.) sit alongside live ones. They're flagged
     # so the UI can say they weren't fetched live.
+    #
+    # `origin` is a different question from `importedNotLive`, and the two were
+    # being conflated. A Greenhouse link the candidate pasted is resolved
+    # through the board's real API, so it is perfectly live — but it is still
+    # there because the candidate put it there, not because discovery found it.
+    # Anything in the imported store is theirs; that is what they want to
+    # separate from the daily haul.
     existing = {(j["company"]["name"].lower(), j["title"].lower()) for j in jobs}
     for j in list_imported():
         key = (j["company"]["name"].lower(), j["title"].lower())
         if key in existing:
             continue
         existing.add(key)
-        jobs.append(j)
+        jobs.append({**j, "origin": "pasted"})
         counts[j["source"]] = counts.get(j["source"], 0) + 1
 
     _source_counts.clear()

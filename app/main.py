@@ -187,6 +187,11 @@ async def search(req: SearchRequest) -> dict[str, Any]:
                 "resumeScore": record.get("resumeScore") if record else None,
                 "saved": flags.get(job["id"], {}).get("saved", False),
                 "dismissed": False,
+                # "pasted" (the candidate added it) vs "fetched" (discovery
+                # found it). Defaulted rather than assumed: a job served from a
+                # cache written before this field existed has no origin, and
+                # calling it "pasted" would misattribute the whole daily haul.
+                "origin": job.get("origin", "fetched"),
             }
         )
 
@@ -849,6 +854,33 @@ async def outreach_status(outreach_id: str, req: OutreachAction) -> dict[str, An
     if req.action == "replied":
         return mark_replied(outreach_id) or {}
     raise HTTPException(status_code=400, detail="action must be sent|replied")
+
+
+@app.post("/api/jobs/refresh")
+async def refresh_jobs() -> dict[str, Any]:
+    """Re-poll every source now, instead of waiting for the cache to expire.
+
+    Discovery is lazy and cached for 15 minutes, so the pool only moved when
+    someone opened the app or the 07:00 job ran. There was no way to say
+    "look again" — which is the natural thing to want after pasting a link or
+    hearing about a role.
+
+    This fetches only. It scores nothing, tailors nothing, and queues nothing;
+    `POST /api/automation/run` is the one that does that.
+    """
+    from .discovery import failed_sources, fetch_all_jobs, filter_jobs, source_counts
+
+    jobs = await fetch_all_jobs(force=True)
+    us = filter_jobs(jobs)
+    return {
+        "total": len(jobs),
+        "unitedStates": len(us),
+        "pasted": sum(1 for j in jobs if j.get("origin") == "pasted"),
+        "sources": source_counts(),
+        # A source that errors returns nothing, which looks exactly like a
+        # quiet day on that board. Say so rather than let it read as no news.
+        "failed": failed_sources(),
+    }
 
 
 @app.get("/api/alerts")
