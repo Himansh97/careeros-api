@@ -250,11 +250,18 @@ class RecruiterMessageStoreTests(unittest.TestCase):
         payload["applicationId"] = "app_gh_gitlab_8616308002"
 
         rematched = upsert_message(payload)
+        upsert_message(payload)
 
         self.assertEqual(rematched["applicationId"], "app_gh_gitlab_8616308002")
         with sqlite3.connect(self.db_path) as conn:
             events = conn.execute("SELECT application_id, label FROM timeline ORDER BY id").fetchall()
-        self.assertEqual(events, [("app_wrong", "Recruiter reply detected")])
+        self.assertEqual(
+            events,
+            [
+                ("app_wrong", "Recruiter reply detected"),
+                ("app_gh_gitlab_8616308002", "Recruiter reply detected"),
+            ],
+        )
 
 
 if __name__ == "__main__":

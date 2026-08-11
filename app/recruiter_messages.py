@@ -234,11 +234,11 @@ def upsert_message(payload: dict) -> dict:
              subject, body, "awaiting_approval", ts, ts),
         )
         event = _message_or_raise(conn, payload["gmailMessageId"])
-        first_association = (
+        association_changed = (
             payload.get("applicationId") is not None
-            and (not existing or existing["application_id"] is None)
+            and (not existing or existing["application_id"] != payload["applicationId"])
         )
-        if first_association:
+        if association_changed:
             _timeline(conn, event, "Recruiter reply detected")
         return _row_to_message(conn, event)
 
