@@ -51,11 +51,35 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# When each stage was reached. `submitted_at` was returned as a hardcoded None
+# for the whole life of this table, so nothing ever recorded when an application
+# actually went out — which makes every timing and conversion question
+# unanswerable in principle, not merely unanswered.
+#
+# `*_inferred` marks a timestamp reconstructed from the timeline or from
+# outreach rather than observed at the moment it happened. A backfilled date
+# that cannot be told apart from a real one would quietly become training data
+# for the learning features this exists to enable.
+_APPLICATION_COLUMNS = (
+    ("submitted_at", "TEXT"),
+    ("first_response_at", "TEXT"),
+    ("outcome", "TEXT"),
+    ("outcome_at", "TEXT"),
+    ("timestamps_inferred", "INTEGER NOT NULL DEFAULT 0"),
+)
+
+
 def connect() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    # SQLite cannot add a column to an existing table from CREATE TABLE, so the
+    # additive columns are applied here. Same guard pattern `job_flags` uses.
+    existing = {r[1] for r in conn.execute("PRAGMA table_info(applications)")}
+    for name, kind in _APPLICATION_COLUMNS:
+        if name not in existing:
+            conn.execute(f"ALTER TABLE applications ADD COLUMN {name} {kind}")
     return conn
 
 
@@ -139,13 +163,50 @@ def set_resume_score(app_id: str, resume_score: int) -> None:
         add_timeline(conn, app_id, f"Resume tailored — score {resume_score}")
 
 
+# Statuses that mean the employer has responded — the moment worth timing an
+# application against. `rejected` counts: a rejection is a response, and
+# excluding it would make the response rate flatter than reality.
+_RESPONSE_STATUSES = ("recruiter_contacted", "screening", "interview", "offer", "rejected")
+
+# Terminal outcomes. Recorded separately from status so a later status change
+# cannot silently erase how an application actually ended.
+_TERMINAL = {"offer": "offer", "rejected": "rejected", "withdrawn": "withdrawn"}
+
+
 def advance(app_id: str, status: str, note: str) -> None:
+    """Move an application on, stamping the timestamps that transition implies.
+
+    Each stamp is written only if empty, so re-entering a stage keeps the date
+    it was first reached — the first response is the one that matters for
+    timing, not the most recent.
+    """
+    ts = now()
     with connect() as conn:
-        conn.execute(
-            "UPDATE applications SET status=?, updated_at=? WHERE id=?",
-            (status, now(), app_id),
-        )
+        sets = ["status=?", "updated_at=?"]
+        args: list[Any] = [status, ts]
+
+        if status == "submitted":
+            sets.append("submitted_at=COALESCE(submitted_at, ?)")
+            args.append(ts)
+        if status in _RESPONSE_STATUSES:
+            sets.append("first_response_at=COALESCE(first_response_at, ?)")
+            args.append(ts)
+        if status in _TERMINAL:
+            sets.append("outcome=?")
+            sets.append("outcome_at=COALESCE(outcome_at, ?)")
+            args.extend([_TERMINAL[status], ts])
+
+        args.append(app_id)
+        conn.execute(f"UPDATE applications SET {', '.join(sets)} WHERE id=?", args)
         add_timeline(conn, app_id, note)
+
+
+def _optional(row: sqlite3.Row, key: str) -> Any:
+    """Read a column that may predate this row's schema."""
+    try:
+        return row[key]
+    except (IndexError, KeyError):
+        return None
 
 
 def _row_to_app(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
@@ -169,7 +230,13 @@ def _row_to_app(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
         # and "where is the one I was working on" had no answer.
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
-        "submittedAt": None,
+        # Was a hardcoded None. Real now — and honest about which dates were
+        # reconstructed rather than observed.
+        "submittedAt": _optional(row, "submitted_at"),
+        "firstResponseAt": _optional(row, "first_response_at"),
+        "outcome": _optional(row, "outcome"),
+        "outcomeAt": _optional(row, "outcome_at"),
+        "timestampsInferred": bool(_optional(row, "timestamps_inferred") or 0),
         "timeline": [
             {"id": f"t{i}", "label": e["label"], "timestamp": e["at"]}
             for i, e in enumerate(events)

@@ -897,12 +897,15 @@ async def alerts() -> dict[str, Any]:
     happened. Reads stored state only; facts that live in Gmail are written in
     by scripts/check_replies.py.
     """
-    from .alerts import build_alerts
+    from .alerts import build_alerts, funnel
 
     items = build_alerts()
     return {
         "alerts": items,
         "high": sum(1 for a in items if a["severity"] == "high"),
+        # Counts, not rates. Everything downstream of outcome data needs these
+        # to grow first, and an unexplained absence reads as a missing feature.
+        "funnel": funnel(),
     }
 
 

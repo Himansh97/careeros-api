@@ -175,6 +175,52 @@ def blocked_applications() -> list[Alert]:
     return alerts
 
 
+# Below this many submitted applications, a conversion rate is noise dressed as
+# a statistic. One reply out of four is 25%, and means nothing whatsoever.
+MIN_FOR_RATES = 30
+
+
+def funnel() -> dict[str, Any]:
+    """Raw counts through the pipeline, and whether they support a rate yet.
+
+    Deliberately returns counts and not percentages until there is enough to
+    divide. The whole learning layer — interview probability, expected value,
+    funnel diagnosis — is downstream of this, and every one of them is worthless
+    until these numbers grow. Showing the counts makes the wait visible rather
+    than leaving it as an unexplained absence.
+    """
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT status, submitted_at, first_response_at, outcome, "
+            "timestamps_inferred FROM applications"
+        ).fetchall()
+
+    submitted = [r for r in rows if r["submitted_at"]]
+    responded = [r for r in rows if r["first_response_at"]]
+    interviews = sum(1 for r in rows if r["status"] in ("interview", "offer"))
+    offers = sum(1 for r in rows if r["outcome"] == "offer")
+    rejections = sum(1 for r in rows if r["outcome"] == "rejected")
+
+    return {
+        "tracked": len(rows),
+        "submitted": len(submitted),
+        "responded": len(responded),
+        "interviews": interviews,
+        "offers": offers,
+        "rejections": rejections,
+        # How many submit dates were reconstructed rather than observed.
+        "inferredTimestamps": sum(1 for r in submitted if r["timestamps_inferred"]),
+        "ratesAvailable": len(submitted) >= MIN_FOR_RATES,
+        "needForRates": max(0, MIN_FOR_RATES - len(submitted)),
+        "note": (
+            f"{MIN_FOR_RATES - len(submitted)} more submitted applications before "
+            "conversion rates mean anything. Counts only until then."
+            if len(submitted) < MIN_FOR_RATES
+            else "Enough history to compute conversion rates."
+        ),
+    }
+
+
 def build_alerts() -> list[dict[str, Any]]:
     """Everything outstanding, most urgent first."""
     alerts = unsent_recruiter_replies() + blocked_applications() + unsent_outreach()
