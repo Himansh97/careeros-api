@@ -109,6 +109,40 @@ def mark_sent(oid: str, followup_business_days: int = 6) -> dict[str, Any] | Non
     return get_outreach(oid)
 
 
+def unmark_replied(oid: str, followup_business_days: int = 6) -> dict[str, Any] | None:
+    """Undo "they replied" — the one status change that silently loses work.
+
+    Marking a thread replied cancels its follow-up by clearing
+    `followup_due_at`. A mis-click therefore does not just set a wrong label:
+    it removes the reminder to chase an employer who never actually answered,
+    and nothing surfaces that omission afterwards.
+
+    The restored due date is computed from `sent_at`, not from now. The clock
+    started when the email went out, and restarting it here would quietly grant
+    the thread another six business days of silence.
+    """
+    record = get_outreach(oid)
+    if not record:
+        return None
+
+    sent_at = record.get("sentAt")
+    due = None
+    if sent_at:
+        try:
+            start = datetime.fromisoformat(sent_at.replace("Z", "+00:00"))
+        except ValueError:
+            start = datetime.now(timezone.utc)
+        due = _business_days_from(start, followup_business_days).isoformat()
+
+    with connect() as conn:
+        _ensure(conn)
+        conn.execute(
+            "UPDATE outreach SET status=?, replied_at=NULL, followup_due_at=? WHERE id=?",
+            ("sent" if sent_at else "drafted", due, oid),
+        )
+    return get_outreach(oid)
+
+
 def mark_replied(oid: str) -> dict[str, Any] | None:
     with connect() as conn:
         _ensure(conn)

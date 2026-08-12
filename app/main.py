@@ -839,13 +839,13 @@ async def outreach_list() -> dict[str, Any]:
 
 
 class OutreachAction(BaseModel):
-    action: str  # "sent" | "replied"
+    action: str  # "sent" | "replied" | "unreplied"
 
 
 @app.post("/api/outreach/{outreach_id}/status")
 async def outreach_status(outreach_id: str, req: OutreachAction) -> dict[str, Any]:
     from .automation import get_rules
-    from .outreach_store import get_outreach, mark_replied, mark_sent
+    from .outreach_store import get_outreach, mark_replied, mark_sent, unmark_replied
 
     if not get_outreach(outreach_id):
         raise HTTPException(status_code=404, detail="Outreach not found")
@@ -853,7 +853,13 @@ async def outreach_status(outreach_id: str, req: OutreachAction) -> dict[str, An
         return mark_sent(outreach_id, get_rules()["followUpDelayBusinessDays"]) or {}
     if req.action == "replied":
         return mark_replied(outreach_id) or {}
-    raise HTTPException(status_code=400, detail="action must be sent|replied")
+    if req.action == "unreplied":
+        # Undo. Marking a thread replied cancels its follow-up, so a mis-click
+        # silently drops the reminder to chase someone who never answered.
+        return unmark_replied(outreach_id, get_rules()["followUpDelayBusinessDays"]) or {}
+    raise HTTPException(
+        status_code=400, detail="action must be sent|replied|unreplied"
+    )
 
 
 @app.post("/api/jobs/refresh")
