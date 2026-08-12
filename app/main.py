@@ -36,6 +36,7 @@ from .store import (
     set_resume_score,
     upsert_application,
 )
+from .priority import priority
 from .skills import classify_posting
 from .tailor import tailor_resume
 from .recruiter_messages import (
@@ -193,6 +194,10 @@ async def search(req: SearchRequest) -> dict[str, Any]:
                 # cache written before this field existed has no origin, and
                 # calling it "pasted" would misattribute the whole daily haul.
                 "origin": job.get("origin", "fetched"),
+                # What is worth doing next, which is not the same question as
+                # where the candidate is strongest. Contains no probability —
+                # see priority.py for why.
+                "priority": priority(job, s["rawFitScore"], True),
             }
         )
 
@@ -256,6 +261,7 @@ async def job_detail(job_id: str) -> dict[str, Any]:
         # who reads "5+ years" and "fast-paced environment" as hard bars
         # withdraws from roles they can do.
         "posting": classify_posting(job.get("description", ""), job.get("title", "")),
+        "priority": priority(job, s["rawFitScore"], True),
     }
 
 
@@ -966,6 +972,38 @@ async def refresh_jobs() -> dict[str, Any]:
         # A source that errors returns nothing, which looks exactly like a
         # quiet day on that board. Say so rather than let it read as no news.
         "failed": failed_sources(),
+    }
+
+
+@app.get("/api/skill-gaps")
+async def skill_gap_report(minimumFit: int = 70) -> dict[str, Any]:
+    """Which missing requirement costs the most across the roles worth applying to.
+
+    Aggregated rather than per-job: one resume's gap list says what one employer
+    wanted; across the whole target set it says what to go and learn.
+    """
+    from .prescreen import rank_for_scoring
+    from .priority import skill_gaps
+
+    p = _profile()
+    jobs = filter_jobs(await fetch_all_jobs())
+    candidates, _ = rank_for_scoring(jobs, p, SCORE_BUDGET)
+
+    scored = []
+    for job in candidates:
+        s = score_job(job, p)
+        if s["rawFitScore"] >= minimumFit:
+            scored.append((job, s))
+
+    return {
+        "gaps": skill_gaps(scored),
+        "consideredJobs": len(scored),
+        "minimumFit": minimumFit,
+        "note": (
+            "Ranked by how many target roles ask for it, weighted by how well you "
+            "otherwise fit those roles. No time-to-learn estimate is given — that "
+            "number would be invented."
+        ),
     }
 
 

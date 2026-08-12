@@ -782,7 +782,7 @@ def _audit(
         "categories": scored,
         "whatWorks": works or ["Resume assembled from verified evidence only."],
         "concerns": concerns,
-        "shortfall": _shortfall(total, scored, gaps, missing_required),
+        "shortfall": _shortfall(total, scored, gaps, missing_required, reqs, sections),
     }
 
 
@@ -792,11 +792,75 @@ def _audit(
 TARGET_SCORE = 85
 
 
+def _fixes(
+    reqs: list[dict[str, Any]], sections: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Concrete actions, derived from what selection already worked out.
+
+    "You are 5 short" is a number to be disappointed by. What turns it into
+    work is naming the bullet to change and what to change about it.
+
+    Partial matches are the whole opportunity here, and they split into two
+    cases that need opposite responses:
+
+    * **A claim backs it** (`evidence` is set) — the accomplishment is on the
+      page but does not use the posting's word for it. Rewriting the bullet to
+      name the requirement makes it an exact match. Tailoring can fix this.
+    * **Nothing backs it** (`evidence` is None) — the skill is in the
+      inventory, or implied by a tool, with no accomplishment behind it.
+      Rewording cannot help; only recording real evidence can.
+
+    Requirements already matched exactly are not mentioned. There is nothing to
+    do about them, and listing them as "fixes" would pad the panel with noise —
+    which is how a list stops being read.
+    """
+    on_page: dict[str, int] = {}
+    for index, section in enumerate(sections):
+        for bullet in section["bullets"]:
+            for hit in bullet.get("hits", []):
+                on_page.setdefault(hit, index)
+
+    fixes: list[dict[str, Any]] = []
+    for req in reqs:
+        if req["match"] != "partial":
+            continue
+        label = req["label"]
+        weight = 2 if req["importance"] == "required" else 1
+
+        if req.get("evidence"):
+            fixes.append({
+                "requirement": label,
+                "kind": "reword",
+                "fixable": True,
+                "action": f"Name “{label}” explicitly in the bullet that already covers it.",
+                "detail": req["evidence"][:160],
+                "weight": weight,
+            })
+        else:
+            fixes.append({
+                "requirement": label,
+                "kind": "evidence",
+                "fixable": False,
+                "action": (
+                    f"“{label}” is in your skills inventory but no accomplishment "
+                    "demonstrates it. Rewording cannot close this one."
+                ),
+                "detail": None,
+                "weight": weight,
+            })
+
+    # Required before preferred, so the panel leads with what is screened on.
+    fixes.sort(key=lambda f: (-f["weight"], f["kind"] != "reword"))
+    return fixes[:6]
+
+
 def _shortfall(
     total: int,
     scored: list[dict[str, Any]],
     gaps: list[dict[str, Any]],
     missing_required: list[dict[str, Any]],
+    reqs: list[dict[str, Any]] | None = None,
+    sections: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     """Why this resume is under target, and whether tailoring can fix it.
 
@@ -822,6 +886,9 @@ def _shortfall(
     return {
         "target": TARGET_SCORE,
         "short": TARGET_SCORE - total,
+        # Named actions, not just a number. Empty when there is genuinely
+        # nothing to do but record new evidence.
+        "fixes": _fixes(reqs or [], sections or []),
         "evidenceBound": evidence_bound,
         "tailoringBound": fixable,
         "missing": missing[:8],

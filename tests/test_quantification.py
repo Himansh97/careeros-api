@@ -128,6 +128,30 @@ def main() -> int:
     if TARGET_SCORE != 85:
         failures.append(f"TARGET_SCORE drifted to {TARGET_SCORE}")
 
+    # A partial match backed by a claim is rewordable; one backed by nothing
+    # but an inventory entry is not, and saying otherwise would send the
+    # candidate to rewrite a bullet that cannot exist.
+    from app.tailor import _fixes
+
+    reqs = [
+        {"label": "Dashboarding", "match": "partial", "importance": "required",
+         "evidence": None},
+        {"label": "Financial services", "match": "partial", "importance": "preferred",
+         "evidence": "Built reporting for a mortgage lender."},
+        {"label": "SQL", "match": "exact", "importance": "required",
+         "evidence": "Wrote the pipeline."},
+    ]
+    fixes = _fixes(reqs, [])
+    kinds = {f["requirement"]: (f["kind"], f["fixable"]) for f in fixes}
+    if kinds.get("Dashboarding") != ("evidence", False):
+        failures.append(f"inventory-only partial should not be rewordable: {kinds}")
+    elif kinds.get("Financial services") != ("reword", True):
+        failures.append(f"claim-backed partial should be rewordable: {kinds}")
+    elif "SQL" in kinds:
+        failures.append("an exact match should not appear as a fix")
+    else:
+        print("PASS fixes distinguish rewordable from evidence-bound")
+
     for f in failures:
         print(f"FAIL {f}")
     print(f"\n{len(failures)} failure(s)")
