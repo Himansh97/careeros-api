@@ -848,16 +848,33 @@ async def job_contacts(job_id: str) -> dict[str, Any]:
     job = await _job_or_404(job_id)
     domain = company_domain(job["company"]["name"], job.get("applyUrl", ""))
     if not domain:
+        # The outreach path has always fallen back to Hunter's company→domain
+        # lookup here, and this endpoint gave up instead — so the same employer
+        # resolved fine in one place and reported "no domain" in another. A
+        # Figma posting on job-boards.greenhouse.io was unreachable from the
+        # contacts screen while Hunter answers figma.com on request.
+        domain = await resolve_domain_by_company(job["company"]["name"])
+    if not domain:
         return {
             "available": False,
             "reason": "no_domain",
             "detail": (
-                "This posting is hosted on an ATS domain, so the employer's own "
-                "mail domain can't be derived from it. Add a contact manually."
+                "This posting is hosted on an ATS domain and the employer's own "
+                "mail domain could not be resolved from the company name either. "
+                "Add a contact manually."
             ),
             "contacts": [],
         }
     result = await lookup_contacts(domain)
+
+    # Persist what the lookup found against this job. Without this the referral
+    # strategy had nothing to rank — looking contacts up and then being told
+    # "no contacts saved for this job" is the same flow contradicting itself.
+    # Only on an explicit lookup, which the candidate initiates; nothing is
+    # stored for the thousands of jobs nobody has asked about.
+    for person in result.get("contacts") or []:
+        save_contact({**person, "jobId": job_id, "company": job["company"]["name"]})
+
     result["jobId"] = job_id
     result["company"] = job["company"]["name"]
     return result
@@ -1241,6 +1258,55 @@ async def approvals() -> dict[str, Any]:
         out.append({**item, "criteria": criteria, "commit": commit_call(criteria)})
 
     return {"approvals": out}
+
+
+@app.post("/api/approvals/clear-held")
+async def clear_held_approvals() -> dict[str, Any]:
+    """Resolve every approval a commit criterion is holding.
+
+    The board already says which cannot proceed; without this the candidate
+    still dismisses six cards one at a time, which is the kind of busywork that
+    makes a queue stop being read.
+
+    Only NO-GO items are touched. A caution is a fact worth stating, not a
+    reason to clear something on the candidate's behalf — and nothing here
+    decides that a role is unwanted, only that it cannot proceed as it stands.
+    Rejected rather than deleted, so the decision stays on the record.
+    """
+    from .commit_criteria import commit_call, criteria_for
+
+    items = list_approvals()
+    if not items:
+        return {"cleared": 0, "items": []}
+
+    p = _profile()
+    pool = {j["id"]: j for j in await fetch_all_jobs()}
+    apps = {a["jobId"]: a for a in list_applications()}
+
+    cleared = []
+    for item in items:
+        job = pool.get(item.get("jobId"))
+        record = apps.get(item.get("jobId")) or {}
+        closed = "closed" in (record.get("nextAction") or "").lower()
+        criteria = criteria_for(
+            job,
+            score_job(job, p) if job else None,
+            item.get("resumeScore") or record.get("resumeScore"),
+            check_eligibility(job, p) if job else None,
+            posting_closed=closed,
+        )
+        call = commit_call(criteria)
+        if call["verdict"] != "nogo":
+            continue
+        resolve_approval(item["id"], "rejected")
+        cleared.append({
+            "company": item.get("companyName"),
+            "title": item.get("jobTitle"),
+            "heldBy": call["heldBy"],
+            "why": call["summary"],
+        })
+
+    return {"cleared": len(cleared), "items": cleared}
 
 
 class ApprovalAction(BaseModel):
