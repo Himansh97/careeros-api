@@ -149,6 +149,7 @@ def build_pack(
     messages: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Assemble the interview brief for one application."""
+    from .interview_intel import get_intel
     from .skills import classify_posting
 
     requirements = score.get("requirements", [])
@@ -172,6 +173,10 @@ def build_pack(
 
     return {
         "jobId": job["id"],
+        # What people report about this employer's actual process. Absent
+        # entirely when nobody has researched it — see interview_intel.py for
+        # why nothing is generated to fill the space.
+        "intel": get_intel(job["company"]["name"], job["title"]),
         "role": {
             "title": job["title"],
             "company": job["company"]["name"],
@@ -206,9 +211,9 @@ def build_pack(
             for m in (messages or [])
         ],
         "notIncluded": (
-            "No company research or news — CareerOS has no source for it, and "
-            "inventing company facts before an interview is worse than none. "
-            "Everything here comes from the posting, your evidence file, and "
-            "what you actually sent."
+            "No company news or financials — there is no source for those here, "
+            "and inventing them before an interview is worse than omitting them. "
+            "Process intel appears only where it has actually been researched, "
+            "and carries the URLs it came from."
         ),
     }
