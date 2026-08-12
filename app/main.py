@@ -22,6 +22,7 @@ from .contacts import (
     set_contact_status,
 )
 from .providers import configured_providers
+from .eligibility import check_eligibility
 from .discovery import add_to_cache, failed_sources, fetch_all_jobs, filter_jobs, source_counts
 from .outreach import build_outreach
 from .profile import ProfileNotFound, load_profile
@@ -1200,7 +1201,46 @@ async def automation_rules(payload: RulesPayload) -> dict[str, Any]:
 
 @app.get("/api/approvals")
 async def approvals() -> dict[str, Any]:
-    return {"approvals": list_approvals()}
+    """Pending approvals, each with the criteria that decide it.
+
+    The queue has always run on launch-commit logic — one disqualifying fact
+    stops an application regardless of a good score elsewhere — and never
+    showed it. A card said "Ready to apply" with a fit number while the system
+    separately knew the eligibility verdict, whether the posting had closed,
+    and whether required skills had evidence. Those are gathered here, at the
+    point the decision is actually made.
+
+    Computed at read time rather than stored, because a posting closing after
+    the approval was raised has to change the call.
+    """
+    from .commit_criteria import commit_call, criteria_for
+
+    items = list_approvals()
+    if not items:
+        return {"approvals": items}
+
+    p = _profile()
+    pool = {j["id"]: j for j in await fetch_all_jobs()}
+    apps = {a["jobId"]: a for a in list_applications()}
+
+    out = []
+    for item in items:
+        job = pool.get(item.get("jobId"))
+        record = apps.get(item.get("jobId")) or {}
+        closed = "closed" in (record.get("nextAction") or "").lower()
+
+        score = score_job(job, p) if job else None
+        eligibility = check_eligibility(job, p) if job else None
+        criteria = criteria_for(
+            job,
+            score,
+            item.get("resumeScore") or record.get("resumeScore"),
+            eligibility,
+            posting_closed=closed,
+        )
+        out.append({**item, "criteria": criteria, "commit": commit_call(criteria)})
+
+    return {"approvals": out}
 
 
 class ApprovalAction(BaseModel):
