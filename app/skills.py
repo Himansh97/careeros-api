@@ -22,6 +22,7 @@ reason to assume the candidate meets it.
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 
 SKILL_ALIASES: dict[str, list[str]] = {
     # Languages
@@ -116,8 +117,9 @@ SKILL_ALIASES: dict[str, list[str]] = {
     # Domain
     "Financial services": ["financial services", "fintech", "banking"],
     "Mortgage": ["mortgage", "home loans"],
-    # Aliases are matched as plain substrings, so a bare "los" would fire on
-    # "close", "closing" and "Los Angeles". Every form here is unambiguous.
+    # Matching is word-boundary now, which kills "close" — but not "Los
+    # Angeles", where "los" is a whole word. Every form here stays deliberately
+    # unambiguous rather than relying on the matcher to save a bare acronym.
     "Loan origination system (LOS)": [
         "loan origination system",
         "loan origination",
@@ -157,6 +159,105 @@ def _in_title(alias: str, title_text: str) -> bool:
     return re.search(rf"(?<!\w){re.escape(alias)}(?!\w)", title_text) is not None
 
 
+# Phrases that describe a mood rather than a capability. Every posting carries
+# some, and a candidate reading "5+ years" or "fast-paced environment" as a
+# hard bar rejects themselves from roles they can do — which is the failure
+# this bucket exists to name.
+#
+# Kept as whole phrases, not tokens: "communication" alone is a real skill in a
+# stakeholder-facing analyst role, while "excellent communication skills" in a
+# list of adjectives is not a requirement anyone screens on.
+FILLER_PHRASES: tuple[str, ...] = (
+    "fast-paced environment", "fast paced environment", "wear many hats",
+    "self-starter", "self starter", "go-getter", "hit the ground running",
+    "think outside the box", "passion for", "passionate about",
+    "excellent communication skills", "strong communication skills",
+    "strong communicator", "team player", "detail-oriented", "detail oriented",
+    "results-driven", "results driven", "dynamic environment", "rock star",
+    "rockstar", "ninja", "guru", "work hard play hard", "family atmosphere",
+    "other duties as assigned", "ability to multitask", "can-do attitude",
+    "thrives in ambiguity", "comfortable with ambiguity", "growth mindset",
+)
+
+# Years-of-experience demands. Real information, but routinely padded — and the
+# single most common reason a qualified candidate does not apply.
+_YEARS = re.compile(
+    r"\b(\d{1,2})\s*\+?\s*(?:-\s*\d{1,2}\s*)?(?:years?|yrs?)\b[^.]{0,40}?"
+    r"(?:experience|exp\b)",
+    re.IGNORECASE,
+)
+
+
+def classify_posting(description: str, title: str = "") -> dict[str, Any]:
+    """Split a posting into what is screened on, what is padding, and what is noise.
+
+    `extract_requirements` already separates required from preferred. This adds
+    the third category a job description actually contains: language that
+    carries no requirement at all. Presenting all three is the difference
+    between "you meet 5 of 11 things this posting says" and "you meet 5 of 6
+    things it screens on".
+    """
+    body = _requirement_text(description)
+    lowered = body.lower()
+
+    reqs = extract_requirements(description, title)
+    required = [s for s, is_req in reqs if is_req]
+    preferred = [s for s, is_req in reqs if not is_req]
+
+    filler = [p for p in FILLER_PHRASES if p in lowered]
+
+    years = []
+    for match in _YEARS.finditer(body):
+        n = int(match.group(1))
+        if 0 < n <= 30:
+            years.append(n)
+
+    return {
+        "required": required,
+        "preferred": preferred,
+        # Years is reported, never used to disqualify. The candidate decides
+        # whether a stated minimum is worth testing; the system's job is to
+        # stop it reading as a wall.
+        "yearsRequested": max(years) if years else None,
+        "filler": filler,
+        "screenedOn": len(required) + len(preferred),
+        "note": (
+            "Filler and years-of-experience are shown separately because they are "
+            "the most common reasons a qualified candidate does not apply."
+        ),
+    }
+
+
+# Endings a real occurrence may carry. "dashboards", "forecasting" and
+# "auditing" are the same skill; "excellent" is not the skill "Excel".
+_INFLECTIONS = ("", "s", "es", "ed", "ing", "er", "ers")
+
+
+@lru_cache(maxsize=4096)
+def _alias_pattern(alias: str) -> re.Pattern[str]:
+    """Match an alias as a word, allowing ordinary inflection.
+
+    `extract_requirements` counted aliases with `str.count`, so matching was
+    plain substring — the exact failure `scoring._contains` was written to fix,
+    left in place on the extraction side. Across 800 live postings that pulled
+    "Excel" out of "excellent communication skills", "Hive" out of "archive"
+    and "AWS" out of "laws", then scored the candidate against requirements the
+    employer never stated.
+
+    A strict `\\b` boundary would over-correct and drop "dashboards" and
+    "forecasting", which are genuine mentions. Hence: no letter or digit
+    immediately before, and only a known ending after.
+    """
+    endings = "|".join(e for e in _INFLECTIONS if e)
+    return re.compile(
+        r"(?<![a-z0-9])" + re.escape(alias) + r"(?:" + endings + r")?(?![a-z0-9])"
+    )
+
+
+def _count_alias(text: str, alias: str) -> int:
+    return len(_alias_pattern(alias).findall(text))
+
+
 def extract_requirements(
     description: str, title: str = ""
 ) -> list[tuple[str, bool]]:
@@ -181,7 +282,7 @@ def extract_requirements(
         occurrences = 0
         matched = False
         for alias in aliases:
-            count = text.count(alias)
+            count = _count_alias(text, alias)
             if count:
                 matched = True
                 occurrences += count
@@ -195,9 +296,10 @@ def extract_requirements(
         # Look for explicit requirement language near the first mention.
         if not required:
             for alias in aliases:
-                idx = text.find(alias)
-                if idx == -1:
+                hit = _alias_pattern(alias).search(text)
+                if hit is None:
                     continue
+                idx = hit.start()
                 window = text[max(0, idx - 220) : idx + 220]
                 if any(
                     phrase in window

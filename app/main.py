@@ -36,6 +36,7 @@ from .store import (
     set_resume_score,
     upsert_application,
 )
+from .skills import classify_posting
 from .tailor import tailor_resume
 from .recruiter_messages import (
     approve_draft,
@@ -251,6 +252,10 @@ async def job_detail(job_id: str) -> dict[str, Any]:
         "resumeScore": record.get("resumeScore") if record else None,
         "saved": flag.get("saved", False),
         "dismissed": flag.get("dismissed", False),
+        # What the posting screens on, versus what it merely says. A candidate
+        # who reads "5+ years" and "fast-paced environment" as hard bars
+        # withdraws from roles they can do.
+        "posting": classify_posting(job.get("description", ""), job.get("title", "")),
     }
 
 
