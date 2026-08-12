@@ -639,6 +639,32 @@ async def application_detail(app_id: str) -> dict[str, Any]:
     return record
 
 
+class OutcomeRequest(BaseModel):
+    outcome: str  # "rejected" | "offer" | "withdrawn"
+    reason: str = ""
+    stage: str = ""
+
+
+@app.post("/api/applications/{app_id}/outcome")
+async def application_outcome(app_id: str, req: OutcomeRequest) -> dict[str, Any]:
+    """Record how an application ended, and how far it got.
+
+    Captured now so the analysis has real data when there is enough of it.
+    Nothing here infers a reason — the employer rarely gives one, and a guess
+    stored beside a stated reason becomes indistinguishable from it.
+    """
+    from .store import record_outcome
+
+    if req.outcome not in ("rejected", "offer", "withdrawn"):
+        raise HTTPException(
+            status_code=400, detail="outcome must be rejected|offer|withdrawn"
+        )
+    if not get_application(app_id):
+        raise HTTPException(status_code=404, detail="Application not found")
+    record_outcome(app_id, req.outcome, req.reason, req.stage)
+    return get_application(app_id) or {}
+
+
 class AdvanceRequest(BaseModel):
     status: str
     note: str | None = None
@@ -973,6 +999,28 @@ async def refresh_jobs() -> dict[str, Any]:
         # quiet day on that board. Say so rather than let it read as no news.
         "failed": failed_sources(),
     }
+
+
+@app.get("/api/jobs/{job_id}/interview-pack")
+async def interview_pack(job_id: str) -> dict[str, Any]:
+    """Everything known about this application, assembled for the interview.
+
+    Contains no company research and no generic question bank — see
+    interview.py for why inventing either would be worse than omitting it.
+    """
+    from .interview import build_pack
+    from .recruiter_messages import list_messages
+
+    p = _profile()
+    job = await _job_or_404(job_id)
+    s = score_job(job, p)
+    resume = tailor_resume(job, s, p)
+    record = get_application(f"app_{job_id}")
+    messages = [
+        m for m in list_messages()
+        if (m.get("applicationId") or "").endswith(job_id)
+    ]
+    return build_pack(job, s, resume, p, record, messages)
 
 
 @app.get("/api/skill-gaps")

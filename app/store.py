@@ -66,6 +66,12 @@ _APPLICATION_COLUMNS = (
     ("outcome", "TEXT"),
     ("outcome_at", "TEXT"),
     ("timestamps_inferred", "INTEGER NOT NULL DEFAULT 0"),
+    # How an application ended, in the candidate's or employer's own words.
+    # Captured now so that when there are enough outcomes to analyse, the
+    # analysis has something real to read. Reconstructing "why did that one
+    # fail" six months later produces a story, not data.
+    ("outcome_reason", "TEXT"),
+    ("outcome_stage", "TEXT"),
 )
 
 
@@ -173,6 +179,40 @@ _RESPONSE_STATUSES = ("recruiter_contacted", "screening", "interview", "offer", 
 _TERMINAL = {"offer": "offer", "rejected": "rejected", "withdrawn": "withdrawn"}
 
 
+def record_outcome(
+    app_id: str, outcome: str, reason: str = "", stage: str = ""
+) -> None:
+    """Record how an application ended, and how far it got.
+
+    Separate from `advance` because an outcome is not a pipeline step: it can
+    arrive at any stage, often from an email rather than a click, and it must
+    not be overwritten by a later status change.
+
+    Nothing here infers *why*. The employer rarely says, and a guess stored in
+    the same field as a stated reason would be indistinguishable from one later.
+    """
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT status FROM applications WHERE id=?", (app_id,)
+        ).fetchone()
+        conn.execute(
+            "UPDATE applications SET outcome=?, outcome_at=COALESCE(outcome_at, ?), "
+            "outcome_reason=?, outcome_stage=?, updated_at=? WHERE id=?",
+            (
+                outcome,
+                now(),
+                reason.strip() or None,
+                stage or (row["status"] if row else None),
+                now(),
+                app_id,
+            ),
+        )
+        label = f"Outcome: {outcome}"
+        if reason.strip():
+            label += f" — {reason.strip()[:120]}"
+        add_timeline(conn, app_id, label)
+
+
 def advance(app_id: str, status: str, note: str) -> None:
     """Move an application on, stamping the timestamps that transition implies.
 
@@ -236,6 +276,11 @@ def _row_to_app(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
         "firstResponseAt": _optional(row, "first_response_at"),
         "outcome": _optional(row, "outcome"),
         "outcomeAt": _optional(row, "outcome_at"),
+        "outcomeReason": _optional(row, "outcome_reason"),
+        # The furthest stage reached before it ended — the single most useful
+        # field for a later autopsy, because "rejected after interview" and
+        # "rejected without a reply" are different failures with different fixes.
+        "outcomeStage": _optional(row, "outcome_stage"),
         "timestampsInferred": bool(_optional(row, "timestamps_inferred") or 0),
         "timeline": [
             {"id": f"t{i}", "label": e["label"], "timestamp": e["at"]}

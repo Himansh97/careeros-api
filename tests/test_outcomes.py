@@ -102,6 +102,29 @@ def main() -> int:
         else:
             print("PASS funnel() returns counts, never a rate, below threshold")
 
+        # An outcome is not a pipeline step: it arrives at any stage and must
+        # survive a later status change.
+        store.record_outcome(app_id, "rejected", "Position filled internally", "interview")
+        apps = {a["id"]: a for a in store.list_applications()}
+        check("outcome reason is stored verbatim",
+              apps[app_id]["outcomeReason"], "Position filled internally")
+        check("furthest stage reached is stored",
+              apps[app_id]["outcomeStage"], "interview")
+        outcome_at = apps[app_id]["outcomeAt"]
+
+        store.advance(app_id, "screening", "Reopened by mistake")
+        apps = {a["id"]: a for a in store.list_applications()}
+        check("a later status change does not erase the outcome",
+              apps[app_id]["outcome"], "rejected")
+        check("the outcome timestamp is not moved",
+              apps[app_id]["outcomeAt"], outcome_at)
+
+        # A blank reason must stay blank rather than becoming an empty string
+        # that later reads as "they told us nothing" versus "we never asked".
+        store.record_outcome(app_id, "withdrawn", "", "")
+        apps = {a["id"]: a for a in store.list_applications()}
+        check("an unstated reason stays null", apps[app_id]["outcomeReason"], None)
+
         # An inferred timestamp must stay distinguishable from a measured one.
         with sqlite3.connect(tmp) as conn:
             conn.execute(
