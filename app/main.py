@@ -867,6 +867,30 @@ async def job_contacts(job_id: str) -> dict[str, Any]:
         }
     result = await lookup_contacts(domain)
 
+    # Rank before returning. A provider hands back everyone it can find — ten
+    # people at Figma, eight of them recruiters — and an unranked list of ten
+    # is the same problem as no list: the candidate still has to work out who
+    # to write to. `referral.rank_paths` already scores by title against the
+    # role, seniority and genuinely shared background, so use it here rather
+    # than making every screen re-derive an order.
+    from .referral import rank_paths
+
+    found = result.get("contacts") or []
+    if found:
+        ranked = rank_paths(found, job, _profile())
+        by_email = {c.get("email"): c for c in found}
+        result["contacts"] = [
+            {**(by_email.get(r["email"]) or {}), "rank": i + 1,
+             "rankScore": r["score"], "rankWhy": r["why"]}
+            for i, r in enumerate(ranked)
+            if by_email.get(r["email"])
+        ]
+        # Say plainly how many are worth writing to. Everything a provider
+        # returns is not a lead.
+        result["worthContacting"] = sum(
+            1 for c in result["contacts"] if c.get("rankScore", 0) >= 70
+        )
+
     # Persist what the lookup found against this job. Without this the referral
     # strategy had nothing to rank — looking contacts up and then being told
     # "no contacts saved for this job" is the same flow contradicting itself.
