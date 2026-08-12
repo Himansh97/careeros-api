@@ -809,6 +809,31 @@ async def job_from_url(req: FromUrlRequest) -> dict[str, Any]:
     }
 
 
+@app.get("/api/jobs/{job_id}/referral-strategy")
+async def referral_strategy_for_job(job_id: str) -> dict[str, Any]:
+    """Who to approach at this employer, and in what order.
+
+    Finding an address is the easy half. This ranks the people already found
+    by how much reason they have to reply, and sequences the approach so a
+    referral is never the opening request.
+    """
+    from .referral import referral_strategy
+
+    p = _profile()
+    job = await _job_or_404(job_id)
+    saved = [c for c in list_contacts() if c.get("jobId") == job_id]
+    if not saved:
+        return {
+            "available": False,
+            "reason": "no_contacts",
+            "detail": (
+                "No contacts saved for this job yet. Look them up first, or add "
+                "one manually — the strategy ranks people, it does not find them."
+            ),
+        }
+    return {"available": True, **referral_strategy(saved, job, p)}
+
+
 @app.get("/api/jobs/{job_id}/contacts")
 async def job_contacts(job_id: str) -> dict[str, Any]:
     """Look up real recruiter contacts at the employer behind this posting."""
