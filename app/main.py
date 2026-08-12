@@ -862,6 +862,81 @@ async def outreach_status(outreach_id: str, req: OutreachAction) -> dict[str, An
     )
 
 
+class ClaimPayload(BaseModel):
+    claim: str
+    employer_or_project: str
+    classification: str
+    skills: list[str] = []
+    industry: str = ""
+    date_range: str = ""
+    evidence_source: str = ""
+    project: str = ""
+    approved_for_resume: bool = False
+
+
+class ClaimPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    claim: str | None = None
+    employer_or_project: str | None = None
+    classification: str | None = None
+    skills: list[str] | None = None
+    industry: str | None = None
+    date_range: str | None = None
+    evidence_source: str | None = None
+    project: str | None = None
+    approved_for_resume: bool | None = None
+    # Required to move designed work to delivered. Not a formality: it changes
+    # what every future resume is allowed to assert.
+    confirmDelivered: bool = False
+
+
+@app.get("/api/evidence")
+async def evidence_list() -> dict[str, Any]:
+    from .evidence import CLASSIFICATIONS, list_claims
+
+    claims = list_claims()
+    return {
+        "claims": claims,
+        "classifications": list(CLASSIFICATIONS),
+        "approvedForResume": sum(1 for c in claims if c.get("approved_for_resume")),
+    }
+
+
+@app.post("/api/evidence")
+async def evidence_add(payload: ClaimPayload) -> dict[str, Any]:
+    from .evidence import EvidenceError, add_claim
+
+    try:
+        return add_claim(payload.model_dump())
+    except EvidenceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.patch("/api/evidence/{claim_id}")
+async def evidence_update(claim_id: str, patch: ClaimPatch) -> dict[str, Any]:
+    from .evidence import EvidenceError, update_claim
+
+    try:
+        return update_claim(claim_id, patch.model_dump(exclude_none=True))
+    except EvidenceError as exc:
+        # 409 for the promotion guard: the request is well-formed, it just
+        # asserts something the candidate has not confirmed.
+        code = 409 if "delivered" in str(exc) else 400
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+
+
+@app.delete("/api/evidence/{claim_id}")
+async def evidence_retire(claim_id: str) -> dict[str, Any]:
+    """Retire, never delete — the record of real work is not ours to destroy."""
+    from .evidence import EvidenceError, retire_claim
+
+    try:
+        return retire_claim(claim_id)
+    except EvidenceError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @app.post("/api/jobs/refresh")
 async def refresh_jobs() -> dict[str, Any]:
     """Re-poll every source now, instead of waiting for the cache to expire.
