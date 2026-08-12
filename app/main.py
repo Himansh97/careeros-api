@@ -278,8 +278,15 @@ async def tailor(job_id: str) -> dict[str, Any]:
     resume["qaFindings"] = check_resume(resume, p)
 
     record = upsert_application(job, s)
+    # Re-tailoring a job the candidate has already acted on must not put it
+    # back in the approval queue. Opening a resume to re-read it is not a
+    # request to apply again, and this endpoint is hit by ordinary browsing.
+    from .automation import _COMMITTED_STATUSES
+
+    already_acted = (record or {}).get("status") in _COMMITTED_STATUSES
     if record:
         set_resume_score(record["id"], resume["resumeScore"])
+    if record and not already_acted:
         add_approval(
             "application",
             job_id,

@@ -304,8 +304,30 @@ def get_application(app_id: str) -> dict[str, Any] | None:
 
 
 def add_approval(kind: str, job_id: str, payload: dict[str, Any]) -> str:
+    """Raise an approval, without undoing a decision the candidate already made.
+
+    This was `INSERT OR REPLACE`, which resets `status` to 'pending' on every
+    call. Approval ids are deterministic, so any later write for the same job
+    resurrected an approval the candidate had already resolved — and
+    `POST /api/jobs/{id}/tailor` calls this unconditionally, so merely opening
+    a resume for a job already applied to put it back in the queue. Ten stale
+    items came back that way after being cleared.
+
+    The payload is still refreshed, because a re-tailored resume genuinely has
+    a new score worth showing. Only the resolution is protected: deciding is
+    the candidate's act, and nothing automatic should quietly reverse it.
+    """
     approval_id = f"appr_{kind}_{job_id}"
     with connect() as conn:
+        existing = conn.execute(
+            "SELECT status FROM approvals WHERE id=?", (approval_id,)
+        ).fetchone()
+        if existing and existing["status"] != "pending":
+            conn.execute(
+                "UPDATE approvals SET payload=? WHERE id=?",
+                (json.dumps(payload), approval_id),
+            )
+            return approval_id
         conn.execute(
             """INSERT OR REPLACE INTO approvals
                (id, kind, job_id, payload, status, created_at) VALUES (?,?,?,?,?,?)""",

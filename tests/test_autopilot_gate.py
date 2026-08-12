@@ -14,6 +14,7 @@ which is worse than not having it.
 """
 from __future__ import annotations
 
+import json
 import pathlib
 import sys
 
@@ -113,6 +114,40 @@ def main() -> int:
         "1 already applied, 2 posting closed, 3 not eligible",
     )
     check("total sums every reason", _SkipCounts(1, 2, 3).total, 6)
+
+    # A resolved approval must survive a later write. Approval ids are
+    # deterministic and `add_approval` was INSERT OR REPLACE, so any later
+    # call for the same job reset it to pending — and the tailor endpoint
+    # calls it on every resume view. Ten cleared items came back that way.
+    import pathlib as _pl
+    import tempfile as _tf
+    from unittest.mock import patch as _patch
+
+    _db = _pl.Path(_tf.mkdtemp()) / "approvals.db"
+    with _patch("app.config.DB_PATH", _db), _patch("app.store.DB_PATH", _db):
+        from app import store as _store
+
+        aid = _store.add_approval("application", "gh_x_1", {"resumeScore": 80})
+        check("a new approval is pending",
+              [a for a in _store.list_approvals() if a["id"] == aid][0]["status"],
+              "pending")
+
+        _store.resolve_approval(aid, "rejected")
+        check("a resolved approval leaves the pending queue",
+              [a for a in _store.list_approvals() if a["id"] == aid], [])
+
+        # Re-tailoring the same job — the exact path that resurrected them.
+        _store.add_approval("application", "gh_x_1", {"resumeScore": 91})
+        check("re-raising does not resurrect a resolved approval",
+              [a for a in _store.list_approvals() if a["id"] == aid], [])
+
+        with _store.connect() as _c:
+            row = _c.execute(
+                "SELECT payload, status FROM approvals WHERE id=?", (aid,)
+            ).fetchone()
+        check("the resolution is preserved", row["status"], "rejected")
+        check("but the payload still refreshes",
+              json.loads(row["payload"])["resumeScore"], 91)
 
     for f in failures:
         print(f"FAIL {f}")
