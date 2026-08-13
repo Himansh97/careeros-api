@@ -8,6 +8,15 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+import pathlib
+import sys
+
+# The other eight test files do this; these three did not, so running them the
+# way AGENTS.md documents — `./.venv/bin/python tests/<file>.py` — died on
+# `No module named 'app'` and looked like a broken suite rather than a broken
+# path. They pass either way now.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+
 from app import store
 from app.main import app
 from app.recruiter_messages import (

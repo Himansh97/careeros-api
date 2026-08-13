@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import logging
 import re
 import time
 from typing import Any
@@ -21,7 +22,13 @@ from .config import (
     HTTP_TIMEOUT_SECONDS,
 )
 
+logger = logging.getLogger(__name__)
+
 _cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+
+# The in-flight background refresh, if any. Guarded so a burst of requests
+# arriving after the TTL expires starts one crawl rather than one each.
+_refresh_task: "asyncio.Task[list[dict[str, Any]]] | None" = None
 
 _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"[ \t\r\f\v]+")
@@ -88,13 +95,71 @@ _last_failures: list[str] = []
 
 
 async def fetch_all_jobs(force: bool = False) -> list[dict[str, Any]]:
-    """Fetch (and cache) every job across all configured sources."""
-    from .sources import fetch_every_source
+    """Every job across all configured sources, cached, refreshed behind you.
 
+    An expired cache used to mean the *next* request paid for the refresh —
+    five job boards and ~3,000 postings, thirty to forty seconds. That cost
+    landed wherever it happened to fall, and where it fell most was
+    `/api/approvals`, which needs the pool only to look up jobs it already has
+    approvals for. Every fifteen minutes, whoever opened the approvals queue
+    first sat on a grey skeleton for forty seconds.
+
+    So a stale snapshot is served immediately and the refresh runs behind the
+    response. Nothing here needs a pool fresher than its TTL — the postings
+    barely move in fifteen minutes, and the criterion that actually decides
+    whether a req has closed reads the stored application record, not this.
+    Callers that genuinely need current data pass `force=True` and still block,
+    which is what the explicit refresh button wants.
+    """
     ts = time.time()
     cached = _cache.get("all")
     if cached and not force and ts - cached[0] < CACHE_TTL_SECONDS:
         return cached[1]
+
+    # Expired but present. Hand back what we have and refresh out of band.
+    if cached and not force:
+        _schedule_refresh()
+        return cached[1]
+
+    return await _refresh()
+
+
+def _schedule_refresh() -> None:
+    """Start a background refresh unless one is already running.
+
+    The guard matters: without it, ten requests arriving after the TTL expires
+    would each start their own full crawl of every board.
+    """
+    global _refresh_task
+
+    if _refresh_task is not None and not _refresh_task.done():
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    _refresh_task = loop.create_task(_refresh_quietly())
+
+
+async def _refresh_quietly() -> None:
+    """Refresh in the background, where nothing is waiting to catch an error.
+
+    A failure here must not surface: the caller already has its answer and the
+    stale snapshot stays valid. `_last_failures` still records what broke, so
+    the degraded state remains visible in the places that report it.
+    """
+    try:
+        await _refresh()
+    except Exception:  # noqa: BLE001 - nothing is awaiting this to raise into
+        logger.exception("background job refresh failed; serving stale snapshot")
+
+
+async def _refresh() -> list[dict[str, Any]]:
+    """Actually crawl every source and replace the snapshot."""
+    from .sources import fetch_every_source
+
+    ts = time.time()
+    cached = _cache.get("all")
 
     from .imported import list_imported
 
