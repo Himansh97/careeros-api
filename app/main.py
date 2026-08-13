@@ -477,6 +477,75 @@ async def outreach(job_id: str) -> dict[str, Any]:
     return {**draft, "outreachId": record.get("id"), "status": record.get("status")}
 
 
+
+async def _draft_outreach_once(job_id: str) -> dict[str, Any]:
+    """Draft outreach for a job, unless there is already something there.
+
+    Called when a resume is approved: approval is a deliberate act on one job,
+    which makes spending a provider credit proportionate in a way an autopilot
+    sweep over thousands of postings never was. That is why autopilot still
+    refuses to do this and approval is allowed to.
+
+    Guarded, because `upsert_outreach` overwrites. Re-approving a job whose
+    draft has been edited — or already sent — would destroy that work and spend
+    a second credit for the privilege. Existing outreach is left alone and
+    reported as such.
+    """
+    from .outreach_store import get_outreach
+
+    existing = get_outreach(f"o_{job_id}")
+    if existing:
+        return {
+            "drafted": False,
+            "reason": "already_exists",
+            "status": existing.get("status"),
+            "detail": (
+                f"Outreach for this job already exists ({existing.get('status')}) "
+                "and was left untouched."
+            ),
+        }
+    try:
+        record = await outreach(job_id)
+    except HTTPException as exc:
+        # A failed lookup must never fail the approval. The candidate approved a
+        # resume; that decision stands whether or not an address could be found.
+        return {"drafted": False, "reason": "lookup_failed", "detail": str(exc.detail)[:160]}
+    return {
+        "drafted": True,
+        "outreachId": record.get("outreachId"),
+        "detail": "Email and LinkedIn message drafted. Nothing was sent.",
+    }
+
+
+@app.post("/api/jobs/{job_id}/resume/approve")
+async def approve_resume(job_id: str) -> dict[str, Any]:
+    """Approve the tailored resume, and start the recruiter research.
+
+    The Approve button on the resume page was pure local state — it flipped a
+    boolean and showed a toast saying the feature was not connected. So both
+    approval paths now land here: the queue and the resume page mean the same
+    thing and do the same thing.
+
+    Approving does not submit anything. It records the decision and drafts the
+    outreach, which still waits for the candidate to send it.
+    """
+    from .store import get_application
+
+    await _job_or_404(job_id)
+    approval_id = f"appr_application_{job_id}"
+    resolve_approval(approval_id, "approved")
+
+    record = get_application(f"app_{job_id}")
+    if record:
+        advance(f"app_{job_id}", "ready", "Resume approved by candidate")
+
+    return {
+        "jobId": job_id,
+        "approved": True,
+        "outreach": await _draft_outreach_once(job_id),
+    }
+
+
 @app.get("/api/applications")
 async def applications() -> dict[str, Any]:
     return {"applications": list_applications()}
@@ -1342,4 +1411,14 @@ async def approval_action(approval_id: str, req: ApprovalAction) -> dict[str, An
     if req.action not in {"approved", "rejected"}:
         raise HTTPException(status_code=400, detail="action must be approved|rejected")
     resolve_approval(approval_id, req.action)
-    return {"id": approval_id, "status": req.action}
+
+    # Approving is the signal that this job is worth real effort, so the
+    # recruiter research runs here rather than on every job the autopilot
+    # touches. Rejecting triggers nothing.
+    outreach_result = None
+    if req.action == "approved":
+        job_id = approval_id.replace("appr_application_", "", 1)
+        if job_id != approval_id:
+            outreach_result = await _draft_outreach_once(job_id)
+
+    return {"id": approval_id, "status": req.action, "outreach": outreach_result}
