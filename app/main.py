@@ -853,6 +853,114 @@ async def import_external(req: ImportRequest) -> dict[str, Any]:
     return {"imported": stored, "source": req.source}
 
 
+def _is_blocking(note: str | None) -> bool:
+    """Whether a `next_action` needs the candidate, or is just the pipeline
+    narrating itself. Shares its markers with alerts._BLOCKING_NOTES."""
+    from .alerts import _BLOCKING_NOTES
+
+    low = (note or "").lower()
+    return any(marker in low for marker in _BLOCKING_NOTES)
+
+
+@app.get("/api/apply-queue")
+async def apply_queue() -> dict[str, Any]:
+    """What to work through next, in the order worth doing it.
+
+    The pieces of this already existed and never met: applications sit in
+    `ready`, `priority()` knows what is worth doing next, `aging_applications`
+    knows what is going stale, and `prefill_apply.py --all` can open a batch —
+    but the only way to act on any of it was one job at a time through eight
+    steps and two context switches.
+
+    Ordering is aging first, then priority. That is deliberate: a prepared
+    application that has sat a week is losing value every day it waits, while a
+    fresh high-priority one is not. Within each group `priority()` decides,
+    which already blends fit, freshness, effort and source trust.
+
+    Nothing here submits. Every row still ends at the employer's own form with
+    the candidate pressing the button.
+    """
+    from .alerts import STALE_AFTER_DAYS
+    from .priority import priority
+    from .store import list_applications
+
+    profile = _profile()
+    pool = {j["id"]: j for j in await fetch_all_jobs()}
+    now_ts = datetime.now(timezone.utc)
+
+    rows: list[dict[str, Any]] = []
+    for record in list_applications():
+        if record.get("status") not in ("ready", "qualified", "tailoring"):
+            continue
+        job_id = record.get("jobId")
+        job = pool.get(job_id)
+
+        # A posting that has left its board cannot be applied to, so it is not
+        # work — it is an alert, and it already has one.
+        note = (record.get("nextAction") or "").lower()
+        if "closed" in note or "no longer accepting" in note:
+            continue
+
+        age_days = None
+        stamp = record.get("createdAt") or record.get("updatedAt")
+        if stamp:
+            try:
+                started = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+                if started.tzinfo is None:
+                    started = started.replace(tzinfo=timezone.utc)
+                age_days = round((now_ts - started).total_seconds() / 86400, 1)
+            except ValueError:
+                age_days = None
+
+        fit = record.get("rawFitScore") or 0
+        pr = priority(job, fit, True) if job else {}
+
+        rows.append({
+            "jobId": job_id,
+            # `company` on an application record is an object, not a string.
+            "company": (record.get("company") or {}).get("name", ""),
+            "title": record.get("title"),
+            "applyUrl": record.get("applyUrl") or (job or {}).get("applyUrl"),
+            "fitScore": fit,
+            "resumeScore": record.get("resumeScore"),
+            "daysWaiting": age_days,
+            "aging": age_days is not None and age_days >= STALE_AFTER_DAYS,
+            "platform": (job or {}).get("atsPlatform"),
+            "estimatedMinutes": (pr.get("friction") or {}).get("minutes"),
+            "priorityScore": pr.get("score"),
+            # `next_action` carries routine pipeline prompts as well as real
+            # blockers. "Review and approve" sits on every ready application,
+            # so treating any note as a warning painted all 23 rows amber and
+            # taught the colour to mean nothing. Same distinction alerts.py
+            # already makes.
+            "blocked": _is_blocking(record.get("nextAction")),
+            "note": record.get("nextAction") or "",
+            "frictionNote": (pr.get("friction") or {}).get("note", ""),
+            # Whether the posting is still in the fetched pool at all.
+            "live": job is not None,
+        })
+
+    rows.sort(key=lambda r: (
+        0 if r["aging"] else 1,
+        -(r["priorityScore"] or 0),
+        -(r["fitScore"] or 0),
+    ))
+
+    total_minutes = sum(r["estimatedMinutes"] or 10 for r in rows)
+    return {
+        "queue": rows,
+        "total": len(rows),
+        "aging": sum(1 for r in rows if r["aging"]),
+        "estimatedMinutes": total_minutes,
+        "staleAfterDays": STALE_AFTER_DAYS,
+        "note": (
+            "Ordered by what is going stale first, then by what is worth doing "
+            "next. Every row opens the employer's own form pre-filled — "
+            "CareerOS does not submit."
+        ),
+    }
+
+
 @app.post("/api/jobs/{job_id}/prefill")
 async def prefill_application(job_id: str) -> dict[str, Any]:
     """Open the employer's form in a visible browser with the answers filled in.
