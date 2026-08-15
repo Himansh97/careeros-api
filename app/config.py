@@ -23,12 +23,19 @@ CAREEROS_DIR = Path(
 # generated sentence still has to pass `verify_override` before it can reach a
 # document. See app/rewrite.py.
 #
-# Opus rather than a cheaper model because the whole point is register — whether
-# a bullet reads as someone who has done the work or someone describing it from
-# outside — and that is exactly where model quality shows. Volume is low (the
-# autopilot default is 10 resumes a day), so the bill stays in dollars. Override
-# with ANTHROPIC_MODEL if that trade stops making sense.
-ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-5")
+# Sonnet by default. The argument for Opus was register — whether a bullet reads
+# as someone who has done the work or as someone describing it from outside —
+# but that is a claim to test rather than assume, and it is cheap to test: the
+# containment gate is identical either way, so the only difference is how the
+# prose reads. Start on the cheaper model, keep the calibration corpus, and
+# switch if the output does not hold up.
+#
+# Whichever model runs, it is never trusted. Every generated sentence passes
+# `verify_override`, and a model that fails or is absent falls back to the
+# deterministic pipeline.
+#
+#     ANTHROPIC_MODEL=claude-opus-5   # to compare
+ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5")
 
 
 def anthropic_key() -> str | None:
