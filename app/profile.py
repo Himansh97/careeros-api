@@ -36,6 +36,37 @@ class EvidenceClaim:
     # into a list of duties. Empty means it stays an employment bullet.
     project: str = ""
 
+    # ── structure the resume writer needs, added for the rewriting work ──
+    #
+    # A claim was a 200-character sentence, a handful of skill tags and one
+    # industry string. That is enough to *select* a bullet and not enough to
+    # *rewrite* one: nothing recorded which number measured what, how big the
+    # work was, or what authority the candidate actually held. Every field
+    # here exists to make a specific fabrication detectable.
+
+    # Each figure bound to what it measured, so moving a number onto a
+    # different noun is visible. `of` is the thing measured, not a label.
+    #   [{"value": "40%", "unit": "percent", "of": "reporting cycle time"}]
+    metrics: list[dict[str, str]] = field(default_factory=list)
+
+    # Size, as facts rather than adjectives. "Senior" is a claim; "4 analysts,
+    # 20 markets, 1M records" is a measurement.
+    scope: dict[str, Any] = field(default_factory=dict)
+
+    # The true authority level, from the ladder the containment check uses:
+    # contributed < supported < built < led < owned. This is the ceiling a
+    # rewrite may not exceed, which is the only defence against a model
+    # turning "supported" into "drove" using words already in the sentence.
+    seniority_verb: str = ""
+
+    # Which role families this claim is evidence for. Lets a rewrite know
+    # whether it is writing for an analytics engineer or a business analyst.
+    role_family: list[str] = field(default_factory=list)
+
+    # One line: what a hiring manager learns from this. The thing the bullet
+    # is *for*, which is what a rewrite must preserve even as the words change.
+    proves: str = ""
+
     @property
     def skill_tokens(self) -> set[str]:
         """Lowercased skill tokens, plus tokens mined from the claim text.
@@ -114,6 +145,16 @@ def load_profile() -> CandidateProfile:
             approved_for_resume=bool(c.get("approved_for_resume", False)),
             source=c.get("evidence_source", "career_evidence.json"),
             project=c.get("project", ""),
+            # Absent on every claim until the backfill runs, and absent
+            # forever on any claim the candidate has not confirmed. A default
+            # of empty is load-bearing: a rewrite that finds no recorded
+            # seniority_verb must refuse to raise the verb rather than assume
+            # a ceiling.
+            metrics=c.get("metrics", []),
+            scope=c.get("scope", {}),
+            seniority_verb=c.get("seniority_verb", ""),
+            role_family=c.get("role_family", []),
+            proves=c.get("proves", ""),
         )
         for c in evidence_raw.get("claims", [])
     ]
