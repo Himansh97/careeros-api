@@ -14,3 +14,8 @@ python-docx==1.2.0
 pypdf==6.15.0
 
 PyYAML==6.0.3
+
+# Resume wording only — scoring stays deterministic and model-free, by design.
+# Everything degrades to the rule-based output when ANTHROPIC_API_KEY is absent,
+# so this is never load-bearing for producing a resume, only a better one.
+anthropic==0.122.0

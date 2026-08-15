@@ -18,6 +18,28 @@ CAREEROS_DIR = Path(
     os.environ.get("CAREEROS_DIR", Path.home() / "careeros")
 ).expanduser()
 
+# Resume wording only. Scoring and bullet selection stay deterministic and
+# model-free — that is a stated design position, not an omission — and every
+# generated sentence still has to pass `verify_override` before it can reach a
+# document. See app/rewrite.py.
+#
+# Opus rather than a cheaper model because the whole point is register — whether
+# a bullet reads as someone who has done the work or someone describing it from
+# outside — and that is exactly where model quality shows. Volume is low (the
+# autopilot default is 10 resumes a day), so the bill stays in dollars. Override
+# with ANTHROPIC_MODEL if that trade stops making sense.
+ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-5")
+
+
+def anthropic_key() -> str | None:
+    """The API key, or None when the resume writer should stay rule-based.
+
+    Returning None rather than raising is the whole contract: a missing key
+    means today's deterministic resume, not a broken one. Nothing in the
+    pipeline may treat the model as required.
+    """
+    return os.getenv("ANTHROPIC_API_KEY") or None
+
 DB_PATH = Path(
     os.environ.get("CAREEROS_DB", Path.home() / "careeros-api" / "careeros.db")
 ).expanduser()
