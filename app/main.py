@@ -233,6 +233,7 @@ async def search(req: SearchRequest) -> dict[str, Any]:
                 # cache written before this field existed has no origin, and
                 # calling it "pasted" would misattribute the whole daily haul.
                 "origin": job.get("origin", "fetched"),
+                "matchScope": job.get("matchScope", "title"),
                 # What is worth doing next, which is not the same question as
                 # where the candidate is strongest. Contains no probability —
                 # see priority.py for why.
@@ -257,15 +258,25 @@ async def search(req: SearchRequest) -> dict[str, Any]:
         days = (job.get("priority") or {}).get("freshness", {}).get("days")
         return 1e9 if days is None else float(days)
 
+    # A title match beats a description match regardless of the sort mode: the
+    # words the candidate typed meant the role, not "mentioned somewhere".
+    scope_rank = {"title": 0, "company": 1, "description": 2}
+
+    def _scope_of(job: dict[str, Any]) -> int:
+        return scope_rank.get(job.get("matchScope", "title"), 0)
+
     if req.sort == "newest":
-        scored.sort(key=lambda j: (_age(j), -j["rawFitScore"]))
+        scored.sort(key=lambda j: (_scope_of(j), _age(j), -j["rawFitScore"]))
     elif req.sort == "fit":
-        scored.sort(key=lambda j: -j["rawFitScore"])
+        scored.sort(key=lambda j: (_scope_of(j), -j["rawFitScore"]))
     else:
         scored.sort(
-            key=lambda j: -(
-                j["rawFitScore"]
-                * (j.get("priority") or {}).get("freshness", {}).get("factor", 0.85)
+            key=lambda j: (
+                _scope_of(j),
+                -(
+                    j["rawFitScore"]
+                    * (j.get("priority") or {}).get("freshness", {}).get("factor", 0.85)
+                ),
             )
         )
     return {

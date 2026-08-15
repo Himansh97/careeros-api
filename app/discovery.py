@@ -264,10 +264,49 @@ def filter_jobs(
 
     if query:
         terms = [t for t in query.lower().split() if t]
-        # Match against the job title only. Including the company name here
-        # produced false positives — every Databricks posting "matched" the
-        # term "data" purely because of the company's name.
-        out = [j for j in out if all(t in j["title"].lower() for t in terms)]
+        # Title, company and description — with word boundaries.
+        #
+        # This searched the title alone, because including the company name
+        # made every Databricks posting "match" the term "data". That was a
+        # substring problem, not a reason to ignore two thirds of the posting:
+        # the cost was that searching for a skill found almost nothing.
+        # "python" returned 3 jobs — the ones with Python in their *title* —
+        # while hundreds of postings requiring Python were unreachable, and
+        # "stripe" found 1 of that employer's 540 openings.
+        #
+        # Word boundaries fix the original complaint properly: "data" no
+        # longer matches "Databricks", and "go" no longer matches "goals",
+        # which is the same rule scoring._contains has always used.
+        patterns = [
+            re.compile(rf"(?<![a-z0-9]){re.escape(t)}(?![a-z0-9])") for t in terms
+        ]
+
+        # Where a term matched decides how good the match is, so the scope is
+        # recorded rather than thrown away. Searching "data engineer" against
+        # descriptions alone returned 2,043 postings led by a Support Engineer
+        # role, because both words appear somewhere in almost any tech posting.
+        # Title matches are what the words meant; description matches are the
+        # long tail worth having for a skill like "airflow" that rarely appears
+        # in a title.
+        def _scope(job: dict[str, Any]) -> str | None:
+            title = job.get("title", "").lower()
+            company = (job.get("company") or {}).get("name", "").lower()
+            if all(p.search(title) for p in patterns):
+                return "title"
+            if all(p.search(f"{title} {company}") for p in patterns):
+                return "company"
+            body = (job.get("description", "") or "").lower()
+            if all(p.search(f"{title} {company} {body}") for p in patterns):
+                return "description"
+            return None
+
+        matched: list[dict[str, Any]] = []
+        for job in out:
+            scope = _scope(job)
+            if scope:
+                job["matchScope"] = scope
+                matched.append(job)
+        out = matched
 
     if location:
         loc = location.lower()

@@ -511,36 +511,57 @@ def _select_bullets(
 # be evidenced before the candidate may be positioned as one. The third element
 # is the part that was missing: the docstring below has always promised it, and
 # without it a posting's title alone decided how the candidate was described.
-_FAMILIES: list[tuple[tuple[str, ...], str, tuple[str, ...]]] = [
+#
+# Matching is by regex rather than exact phrase. The first version listed
+# literal needles — "data engineer", "business analyst" — and real postings do
+# not use them: "Sr Data Solution Engineer", "Senior Revenue Analytics
+# Analyst", "FP&A Analyst - Data Insights" and "Senior Analyst - Business
+# Analytics" all fell through to the generic fallback. Measured across the 38
+# tracked applications, 13 of them were positioned as "Business Analytics
+# Consultant" while carrying eight to twelve strong matches for the role.
+#
+# Order matters: the first pattern that matches wins, so the more specific
+# families are listed before the general ones.
+_FAMILIES: list[tuple[str, str, tuple[str, ...]]] = [
     (
-        ("business intelligence", "bi developer", "bi analyst"),
+        r"machine learning|\bml\b|\bai\b|data scien",
+        "AI/ML Analyst",
+        ("machine learning", "statistical modeling", "python"),
+    ),
+    (
+        r"business intelligence|\bbi\b(?!\w)",
         "Business Intelligence Analyst",
         ("power bi", "dashboarding"),
     ),
     (
-        ("data engineer", "analytics engineer", "etl"),
+        # Any engineering title in a data or analytics context, which is where
+        # "Sr Data Solution Engineer" and "Analytics Engineer" both live.
+        r"(data|analytics|etl|pipeline|platform|backend).{0,24}engineer"
+        r"|engineer.{0,24}(data|analytics)",
         "Analytics Engineer",
         ("etl", "data pipelines"),
     ),
     (
-        ("business analyst", "operations analyst"),
-        "Business Analyst",
-        ("requirements gathering", "stakeholder management"),
-    ),
-    (
-        ("data analyst", "reporting analyst"),
-        "Data Analyst",
-        ("sql", "data analysis"),
-    ),
-    (
-        ("project manager", "program manager", "delivery"),
+        r"project manager|program manager|delivery manager|scrum",
         "Analytics Delivery Manager",
         ("project management", "stakeholder management"),
     ),
     (
-        ("machine learning", "ai engineer", "ml engineer"),
-        "AI/ML Analyst",
-        ("machine learning", "python"),
+        # Finance-flavoured analyst titles: FP&A, revenue, financial, risk.
+        r"fp&a|financial analyst|revenue analyst|risk.{0,20}analyst",
+        "Financial Analyst",
+        ("sql", "data analysis"),
+    ),
+    (
+        r"business analyst|operations analyst|product analyst|business analytics",
+        "Business Analyst",
+        ("requirements gathering", "stakeholder management"),
+    ),
+    (
+        # The catch-all for anything still calling itself an analyst.
+        r"data analyst|reporting analyst|analytics analyst|\banalyst\b",
+        "Data Analyst",
+        ("sql", "data analysis"),
     ),
 ]
 
@@ -569,8 +590,8 @@ def _headline(job: dict[str, Any], profile: CandidateProfile) -> str:
     from .scoring import _find_evidence
 
     title = (job.get("title") or "").lower()
-    for needles, label, defining in _FAMILIES:
-        if not any(n in title for n in needles):
+    for pattern, label, defining in _FAMILIES:
+        if not re.search(pattern, title):
             continue
         # One defining skill with real evidence is enough to position; demanding
         # all of them would refuse families the candidate genuinely works in.
