@@ -3,8 +3,8 @@
 The audit's quantification test was
 `\\d+\\s*%|\\b\\d[\\d,]{2,}\\+?\\b|\\b\\d+\\+?\\s+(?:markets|accounts|records)`.
 It demanded three digits unless the noun happened to be one of three hardcoded
-words, so "processing 1M+ records", "20+ regional markets" and "six failed
-deployments and four distinct root causes" all read as unquantified.
+words, so "processing 1M+ records", "20+ depots" and "six failed deployments
+and four distinct root causes" all read as unquantified.
 
 The signature was unmistakable: Achievements scored exactly 7/10 on every
 resume in the pipeline, and Readability exactly 9/10 — a fixed deduction on
@@ -16,6 +16,12 @@ achievement, and counting one would inflate a score against no evidence —
 which is the failure this whole system exists to avoid.
 
     ./.venv/bin/python tests/test_quantification.py
+
+Fixtures here are synthetic. They previously reproduced verbatim clauses from
+the gitignored `career_evidence.json` — including one naming a specific tool at
+the candidate's employer — inside a tracked, pushed file. What the regex is
+being tested on is shape: digits, spelled numerals, currency, version strings.
+None of that requires anyone's real work history.
 """
 from __future__ import annotations
 
@@ -34,13 +40,13 @@ from app.tailor import (  # noqa: E402
 
 QUANTIFIED = [
     "Reduced turnaround by 40%",
-    "Cut reconciliation time by 12.5 %",
+    "Cut matching time by 12.5 %",
     "Ran ETL pipelines processing 1M+ records with data-quality checks",
-    "Consolidated fragmented data across 20+ regional markets",
-    "Processed 1,200 loan files a month",
-    "Recovered $2M in mis-posted loan volume",
-    "Saved 12 hours per week of manual reconciliation",
-    "Delivered 3x faster reconciliation for the servicing team",
+    "Consolidated fragmented records across 20+ distribution depots",
+    "Processed 1,200 shipment files a month",
+    "Recovered $2M in mis-posted freight volume",
+    "Saved 12 hours per week of manual matching",
+    "Delivered 3x faster matching for the planning team",
     "Diagnosed a production issue spanning six failed deployments",
     "Traced four distinct root causes across the pipeline",
 ]
@@ -48,13 +54,13 @@ QUANTIFIED = [
 NOT_QUANTIFIED = [
     # Version strings — the dangerous case. These carry digits and mean nothing
     # about outcomes.
-    "Integrated Encompass Developer Connect V3 REST APIs for loan data",
+    "Integrated Depot Connect V3 REST APIs for shipment data",
     "Built the service on Python 3 and Airflow",
     "Migrated to Spark 4 for the nightly load",
     # Ordinary unquantified work.
-    "Gathered requirements from accounting stakeholders",
-    "Presented technical findings to client-facing business stakeholders",
-    "Mentored junior analysts on data-quality best practices",
+    "Gathered requirements from finance stakeholders",
+    "Presented technical findings to client-facing stakeholders",
+    "Coached junior analysts on data-quality practices",
     "Partnered with cross-functional teams on delivery planning",
     # A count reference rather than a count.
     "Reviewed three of the regional dashboards",
