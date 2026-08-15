@@ -90,6 +90,15 @@ def _ensure(conn: sqlite3.Connection) -> None:
     for column, ddl in (
         ("author", "ALTER TABLE bullet_overrides ADD COLUMN author TEXT NOT NULL DEFAULT 'system'"),
         ("warnings", "ALTER TABLE bullet_overrides ADD COLUMN warnings TEXT"),
+        # active | pending_review | dismissed. Filtered on read, so a queued
+        # rewrite is unreachable rather than merely unshown.
+        ("status", "ALTER TABLE bullet_overrides ADD COLUMN status TEXT NOT NULL DEFAULT 'active'"),
+        ("verdict", "ALTER TABLE bullet_overrides ADD COLUMN verdict TEXT"),
+        # The claim text this rewrite was verified against. Without it,
+        # "verified" means "verified against something, once, possibly no
+        # longer true" — editing a claim silently orphans its overrides, which
+        # happened for real when omnicals-02 was reworded.
+        ("original_text", "ALTER TABLE bullet_overrides ADD COLUMN original_text TEXT"),
     ):
         if column not in existing:
             conn.execute(ddl)
@@ -177,8 +186,45 @@ def verify_override(original: str, rewritten: str) -> list[str]:
     return problems
 
 
+# Where each author's rewrites land, per verdict. Explicit rather than the old
+# `author != "user"` negation, because a negation silently hands any new author
+# the strictest policy — which for `llm` would hard-reject exactly the
+# borderline rewrites the review queue exists to catch.
+_POLICY: dict[str, tuple[str, str, str]] = {
+    #            pass       review            reject
+    "system":  ("active",  "rejected",       "rejected"),
+    "llm":     ("active",  "pending_review", "rejected"),
+    "user":    ("active",  "active",         "active"),
+}
+
+# Layer precedence. This used to ride on `ORDER BY author` sorting 'system'
+# before 'user' alphabetically — which breaks silently the moment a third
+# author exists, because 'llm' < 'system'. The system layer would have
+# overwritten the LLM layer with no error and no failing test.
+_LAYER_PRECEDENCE = {"system": 0, "llm": 1, "user": 2}
+
+
+def verdict_for(findings: list[Any]) -> str:
+    """pass / review / reject, from the combined findings.
+
+    Two composition rules. Any single reject beats any number of reviews — a
+    hard containment failure is not negotiable. And three reviews escalate to
+    a reject, mirroring the padding check's existing logic: a rewrite that is
+    one tier more senior *and* loosely anchored *and* a third longer is not
+    three small doubts, it is one large one.
+    """
+    tiers = [getattr(f, "tier", "reject") for f in findings]
+    if "reject" in tiers:
+        return "reject"
+    reviews = tiers.count("review")
+    if reviews >= 3:
+        return "reject"
+    return "review" if reviews else "pass"
+
+
 def save_override(job_id: str, claim_id: str, text: str, original: str,
-                  rationale: str = "", author: str = "system") -> dict[str, Any]:
+                  rationale: str = "", author: str = "system",
+                  seniority_ceiling: str = "") -> dict[str, Any]:
     """Store a rewritten bullet.
 
     Containment is enforced differently depending on who wrote it, and the
@@ -195,41 +241,69 @@ def save_override(job_id: str, claim_id: str, text: str, original: str,
     Refusing the candidate's own edits would be the wrong call — it is their
     history. Recording that the claim is unbacked is the honest middle.
     """
-    problems = verify_override(original, text)
+    from .containment import Finding, semantic_findings
 
-    if problems and author != "user":
-        return {"ok": False, "problems": problems}
+    # Lexical checks stay exactly as they were; the semantic ones catch what
+    # set-comparison structurally cannot see.
+    lexical = verify_override(original, text)
+    findings: list[Finding] = [
+        Finding("lexical", "reject", detail) for detail in lexical
+    ]
+    findings += semantic_findings(original, text, seniority_ceiling=seniority_ceiling)
+
+    verdict = verdict_for(findings)
+    outcome = _POLICY.get(author, _POLICY["system"])[
+        {"pass": 0, "review": 1, "reject": 2}[verdict]
+    ]
+    problems = [f.detail for f in findings]
+
+    if outcome == "rejected":
+        # Not stored. A row whose only purpose is to be ignored is a row a
+        # future `status` bug can ship.
+        return {"ok": False, "verdict": verdict, "queued": False,
+                "problems": problems,
+                "findings": [f.__dict__ for f in findings]}
 
     with connect() as conn:
         _ensure(conn)
         conn.execute(
             """INSERT OR REPLACE INTO bullet_overrides
-               (job_id, claim_id, text, rationale, created_at, author, warnings)
-               VALUES (?,?,?,?,?,?,?)""",
+               (job_id, claim_id, text, rationale, created_at, author, warnings,
+                status, verdict, original_text)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
             (job_id, claim_id, text, rationale, now(), author,
-             json.dumps(problems) if problems else None),
+             json.dumps(problems) if problems else None,
+             outcome, verdict, original),
         )
-    return {"ok": True, "jobId": job_id, "claimId": claim_id, "warnings": problems}
+    return {"ok": True, "verdict": verdict, "queued": outcome == "pending_review",
+            "jobId": job_id, "claimId": claim_id, "warnings": problems,
+            "findings": [f.__dict__ for f in findings]}
 
 
 def get_overrides(job_id: str) -> dict[str, dict[str, Any]]:
     """Merge the layers for each bullet — a user edit sits on top of a system one."""
     with connect() as conn:
         _ensure(conn)
-        # ORDER BY puts 'system' before 'user' alphabetically, so the user row
-        # overwrites it in the dict below. That is the intended precedence.
+        # Only active rows. This is the containment guarantee at the *read*
+        # path, independent of the save-time gate: a queued rewrite cannot
+        # reach a resume even if some future code path stores one carelessly.
         rows = conn.execute(
-            """SELECT claim_id, text, rationale, author, warnings
-               FROM bullet_overrides WHERE job_id=? ORDER BY author""",
+            """SELECT claim_id, text, rationale, author, warnings, original_text
+               FROM bullet_overrides
+               WHERE job_id=? AND COALESCE(status,'active')='active'""",
             (job_id,),
         ).fetchall()
+
+    # Precedence applied explicitly rather than by alphabetical accident.
+    ordered = sorted(rows, key=lambda r: _LAYER_PRECEDENCE.get(r["author"] or "system", -1))
     merged: dict[str, dict[str, Any]] = {}
-    for r in rows:
+    for r in ordered:
         merged[r["claim_id"]] = {
             "text": r["text"],
             "rationale": r["rationale"] or "",
             "author": r["author"] or "system",
             "warnings": json.loads(r["warnings"]) if r["warnings"] else [],
+            "originalText": r["original_text"] or "",
         }
     return merged
 
