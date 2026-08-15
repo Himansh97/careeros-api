@@ -167,6 +167,9 @@ def freshness(job: dict[str, Any]) -> dict[str, Any]:
     age = _age_days(job.get("postedAt"))
     if age is None:
         return {"days": None, "factor": 0.85, "note": "posting date unknown"}
+    # One decimal. The raw value carries sub-second precision that renders as
+    # "3.114156778298611d" in the API and means nothing about a posting date.
+    age = round(age, 1)
     if age <= 1:
         return {"days": age, "factor": 1.0, "note": "posted in the last day"}
     if age <= 7:

@@ -221,9 +221,64 @@ def funnel() -> dict[str, Any]:
     }
 
 
+
+# A tailored application that sits unsent goes stale in two ways at once: the
+# posting ages toward closing, and the queue in front of it grows. Seven days
+# is the candidate's own threshold.
+STALE_AFTER_DAYS = 7
+
+
+def aging_applications() -> list[Alert]:
+    """Applications prepared but never sent, past the staleness threshold.
+
+    Deliberately counts from when the application record was created rather
+    than from the posting date: the clock that matters is how long *this* has
+    been sitting ready, not how old the req is. A posting from three weeks ago
+    that was tailored this morning is not stale work.
+
+    High severity past double the threshold, because at that point the usual
+    outcome is the posting closing before anything is sent — which is exactly
+    what nine of the tracked applications did.
+    """
+    from .store import connect
+
+    alerts: list[Alert] = []
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT job_id, company, title, status, updated_at, created_at, apply_url"
+            " FROM applications WHERE status IN ('ready','qualified','tailoring')"
+        ).fetchall()
+
+    for row in rows:
+        stamp = row["created_at"] or row["updated_at"]
+        hours = _age_hours(stamp)
+        if hours is None:
+            continue
+        days = hours / 24.0
+        if days < STALE_AFTER_DAYS:
+            continue
+        # A closed posting is already reported by its own alert; saying it is
+        # also stale is noise on something that cannot be acted on.
+        alerts.append(
+            Alert(
+                kind="application_aging",
+                severity="high" if days >= STALE_AFTER_DAYS * 2 else "medium",
+                title=f"{row['company']} — ready for {int(days)} days, not sent",
+                detail=(
+                    f"{row['title']} has been prepared and unsent since "
+                    f"{str(stamp)[:10]}. Postings close while applications wait."
+                ),
+                action="Open the application and submit it, or dismiss it",
+                ref=row["job_id"],
+            )
+        )
+    return alerts
+
+
 def build_alerts() -> list[dict[str, Any]]:
     """Everything outstanding, most urgent first."""
-    alerts = unsent_recruiter_replies() + blocked_applications() + unsent_outreach()
+    alerts = (unsent_recruiter_replies() + blocked_applications()
+              + unsent_outreach() + aging_applications())
     order = {"high": 0, "medium": 1}
     alerts.sort(key=lambda a: (order.get(a.severity, 9), a.kind))
     return [a.as_dict() for a in alerts]

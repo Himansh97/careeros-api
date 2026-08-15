@@ -180,6 +180,9 @@ class SearchRequest(BaseModel):
     workArrangements: list[str] | None = None
     minimumFit: int | None = None
     limit: int = 40
+    # "fresh" | "fit" | "newest". See the sort in `search` for why fresh is
+    # the default rather than newest.
+    sort: str = "fresh"
 
 
 @app.post("/api/jobs/search")
@@ -237,7 +240,34 @@ async def search(req: SearchRequest) -> dict[str, Any]:
             }
         )
 
-    scored.sort(key=lambda j: -j["rawFitScore"])
+    # Ordering.
+    #
+    # This used to sort on fit alone, so a strong match from five weeks ago sat
+    # above an equally strong one posted this morning — and the older req has
+    # already accumulated a stack of applications the newer one has not. That
+    # is a real difference in queue position, not a prediction about outcome.
+    #
+    # `newest` is available and is deliberately not the default: sorting purely
+    # by date puts a 42-fit posting from today above a 96-fit posting from last
+    # week, which is a worse list. `fresh` multiplies fit by the freshness
+    # factor from priority.py, so recency decides between comparable matches
+    # and never rescues a weak one — a 96 at three weeks old (0.78) still
+    # outranks a 70 posted today.
+    def _age(job: dict[str, Any]) -> float:
+        days = (job.get("priority") or {}).get("freshness", {}).get("days")
+        return 1e9 if days is None else float(days)
+
+    if req.sort == "newest":
+        scored.sort(key=lambda j: (_age(j), -j["rawFitScore"]))
+    elif req.sort == "fit":
+        scored.sort(key=lambda j: -j["rawFitScore"])
+    else:
+        scored.sort(
+            key=lambda j: -(
+                j["rawFitScore"]
+                * (j.get("priority") or {}).get("freshness", {}).get("factor", 0.85)
+            )
+        )
     return {
         "jobs": scored[: req.limit],
         "total": len(matched),
@@ -248,6 +278,7 @@ async def search(req: SearchRequest) -> dict[str, Any]:
         # able to tell the difference.
         "setAside": set_aside,
         "sources": sorted({j["source"] for j in matched}) or ["Greenhouse"],
+        "sort": req.sort,
     }
 
 
