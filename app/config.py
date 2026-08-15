@@ -83,3 +83,15 @@ HTTP_TIMEOUT_SECONDS = 20.0
 # whichever jobs happened to be fetched first.
 SCORE_BUDGET = 600
 CACHE_TTL_SECONDS = 900  # 15 minutes
+
+# The resume score at or above which an application is genuinely ready to send.
+#
+# It lives here because two places decide readiness and they disagreed:
+# `tailor_resume` returned "ready" if the score cleared 80, while
+# `store.set_resume_score` wrote status="ready" for every un-sent application
+# regardless of the number it had just been handed. That was invisible while
+# the audit was mostly constants and every score landed in the 80s and 90s.
+# The moment the scoring started discriminating, resumes scoring 50 appeared in
+# the list marked "Ready" — the score's one job is to say which documents are
+# worth sending, and the status was contradicting it.
+READY_SCORE = 80

@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .config import READY_SCORE
 from .profile import CandidateProfile, EvidenceClaim
 from .scoring import _contains
 from .skills import SKILL_ALIASES
@@ -259,7 +260,7 @@ def tailor_resume(
         # old scale is about 80 on this one. Leaving it at 90 would have marked
         # almost every resume in the pipeline "draft" overnight without a single
         # document getting worse.
-        "status": "ready" if resume_score >= 80 else "draft",
+        "status": "ready" if resume_score >= READY_SCORE else "draft",
         "rawFitScore": score["rawFitScore"],
         "resumeScore": resume_score,
         "scoreHistory": [resume_score],

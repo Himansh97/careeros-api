@@ -6,7 +6,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
-from .config import DB_PATH
+from .config import DB_PATH, READY_SCORE
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS applications (
@@ -142,13 +142,23 @@ _COMMITTED_STATUSES = ("applied", "interviewing", "offer", "rejected", "withdraw
 
 
 def set_resume_score(app_id: str, resume_score: int) -> None:
-    """Record a resume score, without rewinding an application already sent.
+    """Record a resume score, and let it decide whether the application is ready.
 
-    This unconditionally forced status back to "ready", so re-running /tailor
-    on a job the candidate had already applied to silently erased that fact —
-    the one piece of state in the pipeline they cannot reconstruct. A score
-    refresh is not evidence that an application was un-sent.
+    Two guards, for two different ways this went wrong.
+
+    It unconditionally forced status back to "ready", so re-running /tailor on a
+    job the candidate had already applied to silently erased that fact — the one
+    piece of state in the pipeline they cannot reconstruct. A score refresh is
+    not evidence that an application was un-sent.
+
+    It also wrote "ready" whatever the score was, while `tailor_resume` gated the
+    same word on `READY_SCORE`. Nothing caught the disagreement because the audit
+    was mostly constants and every score landed in the 80s and 90s. Once the
+    scoring started discriminating, resumes scoring 50 sat in the list marked
+    "Ready" with "Review and approve" beside them — the number saying the
+    document is not worth sending and the label saying it is.
     """
+    ready = resume_score >= READY_SCORE
     with connect() as conn:
         row = conn.execute(
             "SELECT status FROM applications WHERE id=?", (app_id,)
@@ -164,7 +174,15 @@ def set_resume_score(app_id: str, resume_score: int) -> None:
             conn.execute(
                 "UPDATE applications SET resume_score=?, status=?, next_action=?, "
                 "updated_at=? WHERE id=?",
-                (resume_score, "ready", "Review and approve", now(), app_id),
+                (
+                    resume_score,
+                    "ready" if ready else "draft",
+                    "Review and approve"
+                    if ready
+                    else f"Strengthen the resume — {READY_SCORE - resume_score} short of {READY_SCORE}",
+                    now(),
+                    app_id,
+                ),
             )
         add_timeline(conn, app_id, f"Resume tailored — score {resume_score}")
 

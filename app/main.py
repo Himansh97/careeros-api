@@ -22,7 +22,7 @@ from .contacts import (
     set_contact_status,
 )
 from .providers import configured_providers
-from .eligibility import check_eligibility
+from .eligibility import _foreign_location, check_eligibility
 from .discovery import add_to_cache, failed_sources, fetch_all_jobs, filter_jobs, source_counts
 from .outreach import build_outreach
 from .profile import ProfileNotFound, load_profile
@@ -914,6 +914,24 @@ async def apply_queue() -> dict[str, Any]:
         # work — it is an alert, and it already has one.
         note = (record.get("nextAction") or "").lower()
         if "closed" in note or "no longer accepting" in note:
+            continue
+
+        # A role the candidate is not authorised to take is not work either.
+        #
+        # `us_only` keeps these out of discovery, but the queue is built from
+        # stored applications and so bypassed it entirely — four tracked
+        # applications are based outside the US and two were actually applied
+        # to. A Canada-based role scoring 92 was kept out of this list only
+        # because its posting happened to close; had it still been open it
+        # would have led the queue.
+        #
+        # The stored location is checked as well as the live posting, because
+        # the check has to hold for a record whose job has left the pool —
+        # which is exactly the case where `job` is None and a live check
+        # silently passes.
+        if _foreign_location({"location": record.get("location") or ""}):
+            continue
+        if job and check_eligibility(job, profile).get("verdict") == "INELIGIBLE":
             continue
 
         age_days = None
