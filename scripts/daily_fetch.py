@@ -115,17 +115,13 @@ async def main() -> int:
 
         apps = list_applications()
         checks = await check_all(apps, {j["id"] for j in jobs}, firecrawl_key())
+        from app.liveness_sync import apply_verdicts
+
         closed = [c for c in checks if c["verdict"] == "closed"]
-        for c in closed:
-            with connect() as conn:
-                conn.execute(
-                    "UPDATE applications SET next_action=?, updated_at=? WHERE id=?",
-                    ("Posting closed — no longer accepting", _now(), f"app_{c['jobId']}"),
-                )
-                add_timeline(conn, f"app_{c['jobId']}",
-                             f"Posting no longer live: {c['why']}")
+        changed = apply_verdicts(checks, apps)
         unverified = sum(1 for c in checks if c["verdict"] == "unverified")
-        log(f"liveness: {len(closed)} closed, {unverified} unverifiable"
+        log(f"liveness: {len(closed)} closed ({changed['marked']} newly), "
+            f"{changed['cleared']} stale flags cleared, {unverified} unverifiable"
             + (f" — {', '.join(c['company'] for c in closed)}" if closed else ""))
     except Exception as exc:  # noqa: BLE001 - never let this stop the run
         log(f"liveness check failed: {type(exc).__name__}: {exc}")

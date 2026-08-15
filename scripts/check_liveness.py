@@ -49,18 +49,16 @@ async def main() -> int:
     closed = [r for r in results if r["verdict"] == "closed"]
     unchecked = [r for r in results if r["verdict"] == "unverified"]
 
-    if closed and not args.dry_run:
-        # Recorded on the application rather than acted on. A closed posting is
-        # information for the candidate, not grounds for the system to change
-        # an application's state by itself.
-        with connect() as conn:
-            for r in closed:
-                app_id = f"app_{r['jobId']}"
-                conn.execute(
-                    "UPDATE applications SET next_action=?, updated_at=? WHERE id=?",
-                    ("Posting closed — no longer accepting", now(), app_id),
-                )
-                add_timeline(conn, app_id, f"Posting no longer live: {r['why']}")
+    if not args.dry_run:
+        # Symmetric: closures recorded, and stale closures retracted. Applying
+        # only the `closed` half is what let one bad fetch mark an application
+        # dead forever.
+        from app.liveness_sync import apply_verdicts
+
+        changed = apply_verdicts(results, apps)
+        if changed["cleared"]:
+            print(f"\n  cleared {changed['cleared']} stale closed flag(s) — "
+                  "those postings are live again")
 
     print(f"\n  {len(results)} checked — {len(closed)} closed, "
           f"{sum(1 for r in results if r['verdict'] == 'live')} live, "
