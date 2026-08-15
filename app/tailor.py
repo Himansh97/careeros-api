@@ -236,7 +236,10 @@ def tailor_resume(
 
     overridden = apply_overrides(job["id"], sections)
 
-    resume_score, audit = _audit(job, score, sections)
+    # The summary is needed by the keyword measure, and is generated here rather
+    # than below so the audit sees the text that will actually ship.
+    generated_summary = _summary(job, score, profile)
+    resume_score, audit = _audit(job, score, sections, profile, generated_summary)
 
     # An edited summary or headline replaces the generated one. Edits are
     # applied last so nothing downstream can regenerate over them.
@@ -244,14 +247,19 @@ def tailor_resume(
 
     return {
         "jobId": job["id"],
-        "summary": edits.get("summary") or _summary(job, score, profile),
+        "summary": edits.get("summary") or generated_summary,
         "headline": edits.get("headline") or _headline(job, profile),
         "editedFields": sorted(edits.keys()),
         "matchedSkills": score["strongMatches"] + score["partialMatches"],
         "jobTitle": job["title"],
         "companyName": job["company"]["name"],
         "version": 1,
-        "status": "ready" if resume_score >= 90 else "draft",
+        # Rebased with the scale. See TARGET_SCORE for the arithmetic: the
+        # audit used to hand out roughly ten points nobody earned, so 90 on the
+        # old scale is about 80 on this one. Leaving it at 90 would have marked
+        # almost every resume in the pipeline "draft" overnight without a single
+        # document getting worse.
+        "status": "ready" if resume_score >= 80 else "draft",
         "rawFitScore": score["rawFitScore"],
         "resumeScore": resume_score,
         "scoreHistory": [resume_score],
@@ -752,8 +760,124 @@ def _readability(sections: list[dict[str, Any]]) -> float:
     return max(0.0, 1.0 - penalty)
 
 
+def _ats_structure(
+    sections: list[dict[str, Any]], profile: CandidateProfile
+) -> float:
+    """Whether this document has the parts an ATS parser needs to find.
+
+    Was a literal `1.0`. Ten points handed to every resume regardless of what
+    it contained is not a measurement, and it meant a resume missing an entire
+    section still scored full marks for structure — including resumes whose
+    rendered bytes fail `resume_qa.check_pdf`'s real checks, which run later
+    and only print.
+
+    These are the content-level preconditions for the checks `check_pdf` makes
+    on the rendered PDF: a section it cannot find is a section that was never
+    written. Everything here is cheap and available at audit time.
+    """
+    checks = [
+        bool(profile.email),
+        bool(profile.phone),
+        bool(profile.education),
+        bool(profile.skills_inventory),
+        bool(sections),
+        # An employment section whose roles carry no bullets parses as a bare
+        # list of company names.
+        all(s.get("bullets") for s in sections) if sections else False,
+        # A role without dates is the single most common parse failure: the
+        # employment block collapses into one undated run. The range lives in
+        # `subheading` (built in tailor_resume) — an earlier version of this
+        # checked a `dates` key that sections have never had, so it scored a
+        # permanent 9/10 and looked like a measurement while being a constant.
+        all(s.get("subheading") for s in sections) if sections else False,
+    ]
+    return sum(1 for c in checks if c) / len(checks)
+
+
+def _education_fit(job: dict[str, Any], profile: CandidateProfile) -> float:
+    """Whether the candidate's education meets what this posting asks for.
+
+    Was a literal `1.0`. Education is not a constant — a posting can ask for a
+    doctorate, or ask for nothing at all, and those are different situations
+    that were scored identically.
+
+    A posting that states no requirement scores full: there is nothing to fail.
+    A stated requirement is met by holding that level or higher.
+    """
+    if not profile.education:
+        return 0.0
+
+    text = (job.get("description") or "").lower()
+    levels = {"phd": 3, "doctorate": 3, "master": 2, "mba": 2, "bachelor": 1, "associate": 0}
+
+    wanted = 0
+    for term, rank in levels.items():
+        if term in text:
+            wanted = max(wanted, rank)
+
+    if not wanted:
+        return 1.0  # nothing asked, nothing to miss
+
+    held = 0
+    for entry in profile.education:
+        degree = str(entry.get("degree", "")).lower()
+        for term, rank in levels.items():
+            if term in degree:
+                held = max(held, rank)
+
+    if held >= wanted:
+        return 1.0
+    # One level short is a stretch, not a disqualification — and the candidate
+    # may still be the right person. Two or more short is a real gap.
+    return 0.5 if wanted - held == 1 else 0.0
+
+
+def _keyword_alignment(
+    score: dict[str, Any], sections: list[dict[str, Any]], summary: str
+) -> float:
+    """How much of the posting's own language the document actually uses.
+
+    Was a duplicate of `requirement_coverage` — the identical expression, so
+    five of the hundred points carried no independent information at all.
+
+    This measures a genuinely different thing. `requirement_coverage` asks
+    whether the candidate *has evidence* for a requirement. This asks whether
+    the resume *says the word*. Those come apart constantly: a bullet about
+    "consolidating fragmented records" is real evidence for "data integration"
+    and never contains the phrase, so a keyword-ranking ATS scores it as absent
+    and a human skimming for the term does not see it.
+
+    Only requirements with real evidence behind them count here. Rewarding a
+    document for naming something it cannot support would be rewarding keyword
+    stuffing, which is the opposite of the intent — and is actively detected by
+    modern screeners.
+    """
+    backed = [r for r in score.get("requirements", []) if r.get("match") in ("exact", "partial")]
+    if not backed:
+        return 1.0
+
+    haystack = " ".join(
+        [summary] + [b["text"] for s in sections for b in s.get("bullets", [])]
+    ).lower()
+
+    named = 0
+    for req in backed:
+        label = str(req.get("label", "")).lower()
+        if not label:
+            continue
+        # Word-boundary, consistent with scoring._contains — substring matching
+        # here would credit "R" against "reporting".
+        if re.search(rf"(?<![a-z0-9]){re.escape(label)}(?![a-z0-9])", haystack):
+            named += 1
+    return named / len(backed)
+
+
 def _audit(
-    job: dict[str, Any], score: dict[str, Any], sections: list[dict[str, Any]]
+    job: dict[str, Any],
+    score: dict[str, Any],
+    sections: list[dict[str, Any]],
+    profile: CandidateProfile,
+    summary: str = "",
 ) -> tuple[int, dict[str, Any]]:
     reqs = score["requirements"]
     required = [r for r in reqs if r["importance"] == "required"]
@@ -781,18 +905,38 @@ def _audit(
         1 for s in sections for b in s["bullets"] if is_quantified(b["text"])
     )
 
+    # Bullets that support at least one requirement this posting actually asks
+    # for. A bullet with no hits is not wrong — it may be strong general
+    # evidence — but it is not doing work for *this* application.
+    earning = sum(
+        1 for s in sections for b in s["bullets"] if b.get("hits")
+    )
+
     categories = [
         ("requirement_coverage", "Requirement coverage", 25, pct(covered(reqs), max(len(reqs), 1))),
-        ("relevant_experience", "Relevant experience", 20, pct(bullets, 6)),
+        # Was pct(bullets, 6). The selection budget is 16 and the floors
+        # guarantee at least 12, so this clamped to 1.0 on every resume ever
+        # generated — twenty points that never moved. What matters is not how
+        # many bullets are present but how many of them earn their place, so
+        # measure the share that actually support a requirement this posting
+        # asks for.
+        ("relevant_experience", "Relevant experience", 20, pct(earning, max(bullets, 1))),
         ("technical_skills", "Technical skills", 15, pct(covered(required), max(len(required), 1))),
-        ("achievements", "Achievements", 10, pct(quantified, max(bullets * 0.5, 1))),
+        # Was pct(quantified, bullets * 0.5) — satisfied whenever half the
+        # bullets carried a figure, which every resume managed. A recruiter
+        # reading the page does not grade on a curve against half of it.
+        ("achievements", "Achievements", 10, pct(quantified, max(bullets, 1))),
         # Total bullet count doesn't hurt readability — 13 bullets across four
         # roles reads fine. What hurts is a wall of bullets under one role, or
         # bullets too long to skim. Measure those instead of the total.
         ("readability", "Readability", 10, _readability(sections)),
-        ("ats_structure", "ATS structure", 10, 1.0),
-        ("keyword_alignment", "Keyword alignment", 5, pct(covered(reqs), max(len(reqs), 1))),
-        ("education", "Education", 5, 1.0),
+        # These three were 1.0, 1.0 and a copy of requirement_coverage — twenty
+        # of the hundred points carrying no information, which is most of why
+        # every resume in the pipeline scored 90+.
+        ("ats_structure", "ATS structure", 10, _ats_structure(sections, profile)),
+        ("keyword_alignment", "Keyword alignment", 5,
+         _keyword_alignment(score, sections, summary)),
+        ("education", "Education", 5, _education_fit(job, profile)),
     ]
 
     scored = []
@@ -802,7 +946,8 @@ def _audit(
         total += pts
         scored.append({"key": key, "label": label, "score": pts, "max": mx})
 
-    decision = "SHORTLIST" if total >= 90 else "REVIEW" if total >= 75 else "REJECT"
+    # Thresholds moved down ten with the scale, not because standards dropped.
+    decision = "SHORTLIST" if total >= 80 else "REVIEW" if total >= 65 else "REJECT"
 
     works = []
     if exact:
@@ -841,7 +986,13 @@ def _audit(
 # What a strong tailored resume should reach. Below this the resume still ships
 # — a real posting the candidate is a 78 for is worth applying to — but the
 # audit says plainly what is holding it down.
-TARGET_SCORE = 85
+# Rebased from 85 when five of the eight audit categories stopped being
+# constants. The old scale credited roughly ten points to every resume
+# regardless of content — twenty hardcoded or duplicated, partly offset by
+# genuinely-earned structure and education marks — so the observed median fell
+# from 90 to 81 with no document changing. 75 here is the same standard 85 was
+# meant to express, measured on a scale that now discriminates.
+TARGET_SCORE = 75
 
 
 def _fixes(

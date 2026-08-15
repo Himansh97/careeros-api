@@ -131,7 +131,15 @@ def main() -> int:
     else:
         failures.append(f"tie-break ignored the quantified bullet; kept {kept}")
 
-    if TARGET_SCORE != 85:
+    # Rebased 85 -> 75 when five of the eight audit categories stopped being
+    # constants. relevant_experience was pct(bullets, 6) against a budget of 16
+    # so it clamped to 1.0 forever; achievements asked that half the bullets
+    # carry a figure, which every resume met; ats_structure and education were
+    # literal 1.0; keyword_alignment duplicated requirement_coverage. Removing
+    # that credit moved the observed median from 90 to 81 without a single
+    # document changing, so the thresholds moved with it. This guard exists to
+    # make the next drift deliberate too — if it fires, say why in the commit.
+    if TARGET_SCORE != 75:
         failures.append(f"TARGET_SCORE drifted to {TARGET_SCORE}")
 
     # A partial match backed by a claim is rewordable; one backed by nothing
