@@ -123,6 +123,7 @@ def main() -> int:
 
     changed = 0
     no_verb: list[str] = []
+    restated: list[tuple[str, str, str]] = []
     for c in claims:
         text = c["claim"]
         proposed = {
@@ -132,10 +133,24 @@ def main() -> int:
         }
         if not proposed["seniority_verb"]:
             no_verb.append(c["claim_id"])
-        for k, v in proposed.items():
-            if v and not c.get(k):
-                c[k] = v
-                changed = changed + 1 if k == "seniority_verb" else changed
+
+        # metrics and scope are only filled when absent: the candidate may have
+        # corrected them by hand and a re-run must not stamp over that.
+        for k in ("metrics", "scope"):
+            if proposed[k] and not c.get(k):
+                c[k] = proposed[k]
+
+        # seniority_verb is different. It is purely mechanical — the claim's
+        # own first word — so it must track the text rather than persist. When
+        # a claim is edited from "Mentored" to "Led a team of 4", a stale verb
+        # of `mentor` would make the containment check reject the claim's own
+        # true wording as inflation. The text is the authority.
+        derived = proposed["seniority_verb"]
+        if derived and c.get("seniority_verb") != derived:
+            if c.get("seniority_verb"):
+                restated.append((c["claim_id"], c["seniority_verb"], derived))
+            c["seniority_verb"] = derived
+            changed += 1
 
     counts = {
         "with metrics": sum(1 for c in claims if c.get("metrics")),
@@ -145,6 +160,10 @@ def main() -> int:
     print(f"{len(claims)} claims")
     for k, v in counts.items():
         print(f"  {k:22} {v}")
+    if restated:
+        print(f"\n  seniority re-derived after a claim edit ({len(restated)}):")
+        for cid, was, now_ in restated:
+            print(f"    {cid:22} {was!r} -> {now_!r}")
     if no_verb:
         print(f"\n  no rankable opening verb ({len(no_verb)}): {', '.join(no_verb[:8])}")
         print("  these stay empty, so a rewrite may not raise their verb at all")
