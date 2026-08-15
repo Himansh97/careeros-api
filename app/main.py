@@ -413,6 +413,10 @@ async def edit_bullet(job_id: str, claim_id: str, body: dict[str, Any]) -> dict[
         job_id, claim_id, text, claim.claim,
         rationale=(body.get("rationale") or "").strip(),
         author="user",
+        # The claim's recorded verb is the authoritative ceiling. Without it
+        # the check re-derives one from the claim text, which is the same
+        # answer most of the time and wrong exactly when the claim was edited.
+        seniority_ceiling=claim.seniority_verb,
     )
     return {**result, "original": claim.claim}
 

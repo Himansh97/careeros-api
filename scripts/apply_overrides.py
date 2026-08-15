@@ -51,7 +51,8 @@ OVERRIDES_DIR = Path.home() / "careeros" / "overrides"
 def apply_file(path: Path, dry_run: bool = False) -> int:
     spec = json.loads(path.read_text())
     job_id = spec.get("jobId") or path.stem
-    claims = {c.claim_id: c.claim for c in load_profile().evidence}
+    by_id = {c.claim_id: c for c in load_profile().evidence}
+    claims = {cid: c.claim for cid, c in by_id.items()}
 
     print(f"\n{job_id}  ({path.name})")
     failed = 0
@@ -80,6 +81,7 @@ def apply_file(path: Path, dry_run: bool = False) -> int:
         result = save_override(
             job_id, claim_id, bullet["text"], original,
             rationale=bullet.get("rationale", ""),
+            seniority_ceiling=by_id[claim_id].seniority_verb,
         )
         if result["ok"]:
             print(f"  OK   {claim_id}")

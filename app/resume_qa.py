@@ -38,6 +38,44 @@ def _month_index(token: str) -> int | None:
 def check_resume(resume: dict[str, Any], profile: Any) -> list[dict[str, str]]:
     findings: list[dict[str, str]] = []
 
+    # 0. A pinned summary or headline that has drifted from the generator.
+    #
+    # A saved edit wins over the generated field forever, which is right for a
+    # deliberate rewrite and wrong once the generator improves past it. The
+    # repo already carries this scar: an edit saved before the summary learned
+    # to name the MS in Business Analytics silently kept dropping that
+    # credential from the highest-scoring resume.
+    #
+    # Found again in an audit — a pinned summary shipping "end-to-end AI  data
+    # engineering, solutions backed by" (note the double space and the mangled
+    # clause order) while the generator produced clean text. Nothing surfaced
+    # it, because a pin is invisible once saved.
+    for field in resume.get("editedFields") or []:
+        text = str(resume.get(field) or "")
+        if not text:
+            continue
+        if re.search(r"\s{2,}", text):
+            findings.append({
+                "severity": "medium",
+                "type": "pinned_field_defect",
+                "detail": (
+                    f"The {field} is a saved edit containing doubled whitespace. "
+                    "Pinned fields override the generator permanently, so a typo "
+                    "here ships on every resume for this job until it is cleared."
+                ),
+            })
+        # The credential is the specific thing a stale pin has dropped before.
+        if field == "summary" and not re.search(r"\bMS\b|Master", text):
+            findings.append({
+                "severity": "medium",
+                "type": "pinned_field_stale",
+                "detail": (
+                    "The summary is a saved edit that does not mention the "
+                    "master's credential the generator now includes. Clear it to "
+                    "pick up the current wording, or keep it deliberately."
+                ),
+            })
+
     # 1. Repeated text between a role heading and its subtitle.
     for section in resume.get("sections", []):
         heading = section.get("heading", "")
