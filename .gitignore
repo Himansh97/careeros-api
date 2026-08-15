@@ -3,6 +3,9 @@ __pycache__/
 *.pyc
 *.db
 .env
+# Any copy of it too. A rename-and-restore left one behind once, and a
+# bare `.env` pattern does not match `.env.backup-20260815-144759`.
+.env.*
 .claude/
 .DS_Store
 

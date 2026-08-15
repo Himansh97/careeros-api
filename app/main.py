@@ -77,6 +77,27 @@ async def _job_or_404(job_id: str) -> dict[str, Any]:
     raise HTTPException(status_code=404, detail="Job not found")
 
 
+@app.get("/api/usage")
+async def usage_report(days: int = 30) -> dict[str, Any]:
+    """What the resume writer has spent, and what is left of the budget.
+
+    Cost is computed here from the published per-token rates rather than read
+    back from Anthropic, so it tracks the invoice closely without being it. The
+    Console remains the authority on what you are actually billed.
+    """
+    from .usage import summary
+
+    return summary(days)
+
+
+@app.get("/api/usage/budget")
+async def usage_budget() -> dict[str, Any]:
+    """Just the caps and what is left — cheap enough to poll."""
+    from .usage import budget_state
+
+    return budget_state()
+
+
 @app.get("/api/skywatch")
 async def skywatch_feed() -> dict[str, Any]:
     """Live sky: near-Earth approaches, geomagnetic activity, ISS position.
