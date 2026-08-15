@@ -499,6 +499,44 @@ def _select_bullets(
         ]
 
 
+# Each family, the posting titles that select it, and the skills that have to
+# be evidenced before the candidate may be positioned as one. The third element
+# is the part that was missing: the docstring below has always promised it, and
+# without it a posting's title alone decided how the candidate was described.
+_FAMILIES: list[tuple[tuple[str, ...], str, tuple[str, ...]]] = [
+    (
+        ("business intelligence", "bi developer", "bi analyst"),
+        "Business Intelligence Analyst",
+        ("power bi", "dashboarding"),
+    ),
+    (
+        ("data engineer", "analytics engineer", "etl"),
+        "Analytics Engineer",
+        ("etl", "data pipelines"),
+    ),
+    (
+        ("business analyst", "operations analyst"),
+        "Business Analyst",
+        ("requirements gathering", "stakeholder management"),
+    ),
+    (
+        ("data analyst", "reporting analyst"),
+        "Data Analyst",
+        ("sql", "data analysis"),
+    ),
+    (
+        ("project manager", "program manager", "delivery"),
+        "Analytics Delivery Manager",
+        ("project management", "stakeholder management"),
+    ),
+    (
+        ("machine learning", "ai engineer", "ml engineer"),
+        "AI/ML Analyst",
+        ("machine learning", "python"),
+    ),
+]
+
+
 def _headline(job: dict[str, Any], profile: CandidateProfile) -> str:
     """Position the candidate against this posting's role family.
 
@@ -506,19 +544,33 @@ def _headline(job: dict[str, Any], profile: CandidateProfile) -> str:
     held, so aligning it to the posting is positioning rather than a claim.
     It only ever narrows to a family the candidate has genuine evidence in;
     anything unrecognised falls back to their own headline.
+
+    That last sentence was a promise this function did not keep. It matched the
+    posting title and returned the label, with no reference to the evidence
+    file at all — so a posting titled "ML Engineer" described the candidate as
+    an "AI/ML Analyst" whether or not a single machine-learning claim existed.
+    The headline is the first line a recruiter reads, which makes it the worst
+    place in the document to assert something unbacked.
+
+    A family now requires evidence for at least one of the skills that define
+    it, resolved through the same `_find_evidence` cascade scoring uses, so
+    aliases and inflections are handled identically. Falling back to the
+    candidate's own headline is always safe: it is theirs, and it claims
+    nothing about this posting.
     """
+    from .scoring import _find_evidence
+
     title = (job.get("title") or "").lower()
-    families = [
-        (("business intelligence", "bi developer", "bi analyst"), "Business Intelligence Analyst"),
-        (("data engineer", "analytics engineer", "etl"), "Analytics Engineer"),
-        (("business analyst", "operations analyst"), "Business Analyst"),
-        (("data analyst", "reporting analyst"), "Data Analyst"),
-        (("project manager", "program manager", "delivery"), "Analytics Delivery Manager"),
-        (("machine learning", "ai engineer", "ml engineer"), "AI/ML Analyst"),
-    ]
-    for needles, label in families:
-        if any(n in title for n in needles):
-            return label
+    for needles, label, defining in _FAMILIES:
+        if not any(n in title for n in needles):
+            continue
+        # One defining skill with real evidence is enough to position; demanding
+        # all of them would refuse families the candidate genuinely works in.
+        for skill in defining:
+            _, match = _find_evidence(skill, profile)
+            if match in ("exact", "partial"):
+                return label
+        break
     return profile.headline or "Business Analytics Consultant"
 
 
