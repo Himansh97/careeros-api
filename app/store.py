@@ -136,9 +136,37 @@ def upsert_application(job: dict[str, Any], score: dict[str, Any]) -> dict[str, 
     return get_application(app_id)
 
 
-# Statuses that mean the candidate has already acted. Re-tailoring must not
-# walk any of these backwards.
-_COMMITTED_STATUSES = ("applied", "interviewing", "offer", "rejected", "withdrawn")
+# Statuses that mean the application has been sent, or the employer has already
+# responded. Re-tailoring must not walk any of these backwards.
+#
+# This listed "applied" and "interviewing" — two spellings nothing in the system
+# writes. The pipeline the UI actually drives is qualified -> tailoring -> ready
+# -> applying -> submitted -> recruiter_contacted -> screening -> interview ->
+# offer -> rejected, so the guard missed "submitted": the exact status the
+# "Mark applied" button produces, and the only one `advance` stamps
+# `submitted_at` for.
+#
+# The cost was the failure this guard exists to prevent. Six applications the
+# candidate had sent were rewound to "ready" by the next autopilot re-tailor and
+# reappeared in the apply queue, asking to be applied to a second time — and one
+# was, taking a submitted application back to "applying". Sending is the one
+# piece of state in this pipeline that cannot be reconstructed from the job
+# boards.
+#
+# "applied", "interviewing" and "withdrawn" stay as legacy spellings that are
+# already in the stored data. "applying" is deliberately absent: it means in
+# progress, not sent, and must stay re-tailorable.
+_COMMITTED_STATUSES = (
+    "applied",
+    "submitted",
+    "recruiter_contacted",
+    "screening",
+    "interview",
+    "interviewing",
+    "offer",
+    "rejected",
+    "withdrawn",
+)
 
 
 def set_resume_score(app_id: str, resume_score: int) -> None:

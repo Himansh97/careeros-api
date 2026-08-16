@@ -124,6 +124,49 @@ def test_a_sent_application_is_not_rewound_by_a_low_score() -> None:
     assert row["resume_score"] == 40, "the score itself should still be recorded"
 
 
+def test_every_status_the_ui_can_reach_past_sending_is_protected() -> None:
+    """The guard has to know the words the rest of the system actually writes.
+
+    It listed "applied" and "interviewing" — two spellings the frontend never
+    produces. The pipeline the UI drives is qualified -> tailoring -> ready ->
+    applying -> submitted -> recruiter_contacted -> screening -> interview ->
+    offer, so the guard missed "submitted" entirely: the exact status the
+    "Mark applied" button writes.
+
+    The damage was not theoretical. Six applications the candidate had sent
+    were rewound to ready by the next autopilot re-tailor and reappeared in the
+    apply queue asking to be applied to a second time.
+    """
+    from app.store import set_resume_score
+
+    for status in (
+        "submitted",
+        "recruiter_contacted",
+        "screening",
+        "interview",
+        "offer",
+        "rejected",
+    ):
+        _fresh_db()
+        _seed("s1", status)
+        set_resume_score("s1", 95)  # a high score, so "ready" is the tempting write
+        got = _row("s1")["status"]
+        assert got == status, (
+            f"a {status!r} application was rewound to {got!r} by a re-tailor — "
+            "the candidate cannot reconstruct that it was sent"
+        )
+
+
+def test_applying_is_not_treated_as_sent() -> None:
+    """"Applying" means in progress, not done. It must stay re-tailorable."""
+    _fresh_db()
+    from app.store import set_resume_score
+
+    _seed("s2", "applying")
+    set_resume_score("s2", 95)
+    assert _row("s2")["status"] == "ready"
+
+
 def test_tailor_and_the_store_agree_on_the_word_ready() -> None:
     """The two rules must read the same constant, not two copies of a number.
 
