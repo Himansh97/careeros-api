@@ -157,6 +157,74 @@ def test_every_status_the_ui_can_reach_past_sending_is_protected() -> None:
         )
 
 
+def _timeline(app_id: str) -> list[str]:
+    import app.store as store
+
+    with store.connect() as conn:
+        return [
+            r["label"]
+            for r in conn.execute(
+                "SELECT label FROM timeline WHERE application_id=? ORDER BY rowid",
+                (app_id,),
+            )
+        ]
+
+
+def test_a_rescore_that_changes_nothing_writes_no_history() -> None:
+    """Autopilot re-tailors on every pass, at the same score nearly every time.
+
+    Logging each one made 85% of the timeline "Resume tailored", and 1158 of
+    those 1330 entries repeated the score immediately above them. A history
+    that records non-events buries the events.
+    """
+    _fresh_db()
+    from app.store import set_resume_score
+
+    _seed("t1", "draft")
+    set_resume_score("t1", 84)
+    set_resume_score("t1", 84)
+    set_resume_score("t1", 84)
+    entries = _timeline("t1")
+    assert len(entries) == 1, f"three identical rescores wrote {len(entries)} entries"
+
+
+def test_the_first_score_is_always_recorded() -> None:
+    _fresh_db()
+    from app.store import set_resume_score
+
+    _seed("t2", "draft")
+    set_resume_score("t2", 84)
+    assert len(_timeline("t2")) == 1
+
+
+def test_a_changed_score_records_the_move() -> None:
+    """"Resume tailored — score 83" twice does not say the score held. Naming
+    both numbers is what makes the entry worth reading."""
+    _fresh_db()
+    from app.store import set_resume_score
+
+    _seed("t3", "draft")
+    set_resume_score("t3", 71)
+    set_resume_score("t3", 84)
+    entries = _timeline("t3")
+    assert len(entries) == 2, f"a real change was not recorded: {entries}"
+    assert "71" in entries[1] and "84" in entries[1], (
+        f"the entry does not say what moved: {entries[1]!r}"
+    )
+
+
+def test_a_rescore_of_a_sent_application_still_records_a_real_change() -> None:
+    """The committed guard protects `status`, not the score history."""
+    _fresh_db()
+    from app.store import set_resume_score
+
+    _seed("t4", "submitted")
+    set_resume_score("t4", 71)
+    set_resume_score("t4", 90)
+    assert len(_timeline("t4")) == 2
+    assert _row("t4")["status"] == "submitted"
+
+
 def test_applying_is_not_treated_as_sent() -> None:
     """"Applying" means in progress, not done. It must stay re-tailorable."""
     _fresh_db()

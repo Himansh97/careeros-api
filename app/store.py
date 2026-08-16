@@ -189,9 +189,10 @@ def set_resume_score(app_id: str, resume_score: int) -> None:
     ready = resume_score >= READY_SCORE
     with connect() as conn:
         row = conn.execute(
-            "SELECT status FROM applications WHERE id=?", (app_id,)
+            "SELECT status, resume_score FROM applications WHERE id=?", (app_id,)
         ).fetchone()
         committed = row and (row["status"] or "") in _COMMITTED_STATUSES
+        previous = row["resume_score"] if row else None
 
         if committed:
             conn.execute(
@@ -212,7 +213,23 @@ def set_resume_score(app_id: str, resume_score: int) -> None:
                     app_id,
                 ),
             )
-        add_timeline(conn, app_id, f"Resume tailored — score {resume_score}")
+        # Only a change is history.
+        #
+        # Autopilot re-tailors on every pass and lands on the same score nearly
+        # every time, so logging each call made 85% of the timeline read
+        # "Resume tailored", with 1158 of those 1330 entries repeating the
+        # number immediately above them. One application carried twenty
+        # identical lines at score 83. A history that records non-events buries
+        # the events it exists to show.
+        if previous is None:
+            add_timeline(conn, app_id, f"Resume tailored — score {resume_score}")
+        elif previous != resume_score:
+            direction = "up" if resume_score > previous else "down"
+            add_timeline(
+                conn,
+                app_id,
+                f"Resume re-tailored — score {direction} {previous} to {resume_score}",
+            )
 
 
 # Statuses that mean the employer has responded — the moment worth timing an
