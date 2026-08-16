@@ -47,6 +47,45 @@ def anthropic_key() -> str | None:
     """
     return os.getenv("ANTHROPIC_API_KEY") or None
 
+# The Notion API version this code is written against.
+#
+# Pinned deliberately, and it must stay pinned. Notion shipped at least five
+# breaking or behaviour-changing versions in the first half of 2026 alone —
+# pagination defaults, webhook secret validation, rate-limit header formats —
+# and 2025-09-03 is itself the one that split a `database` into a container
+# holding one or more `data_source`s, moving the query endpoint and changing
+# what a page's parent is. An unpinned client does not fail loudly on any of
+# that; it starts writing to the wrong shape.
+NOTION_VERSION = "2025-09-03"
+
+# Notion's published ceiling is "an average of three requests per second, with
+# some bursts beyond the average allowed". The mirror is ~40 applications, so
+# this is never the constraint — it exists so that a future caller which loops
+# something larger degrades into slowness rather than a wall of 429s.
+NOTION_MAX_RPS = 3
+
+
+def notion_token() -> str | None:
+    """The Notion integration secret, or None when the mirror is off.
+
+    Same contract as `anthropic_key`: absent means the feature does not run,
+    never that something breaks. The mirror is a convenience — a copy of the
+    pipeline on a phone — and CareerOS has to work identically without it.
+    """
+    return os.getenv("NOTION_TOKEN") or None
+
+
+def notion_data_source_id() -> str | None:
+    """The data source the mirror writes rows into.
+
+    A *data source*, not a database. Since API version 2025-09-03 a database is
+    a container that holds one or more data sources, and the rows live in the
+    latter — so this is the id that `/v1/data_sources/{id}/query` takes and that
+    a new page names as its parent.
+    """
+    return os.getenv("NOTION_DATA_SOURCE_ID") or None
+
+
 DB_PATH = Path(
     os.environ.get("CAREEROS_DB", Path.home() / "careeros-api" / "careeros.db")
 ).expanduser()

@@ -159,6 +159,24 @@ async def main() -> int:
     except Exception as exc:  # noqa: BLE001 - never let this stop the run
         log(f"alerts failed: {type(exc).__name__}: {exc}")
 
+    # Mirror the pipeline to Notion, if it is configured. One way: CareerOS
+    # owns every column this writes, and the mirror exists for the things a
+    # localhost app cannot do — reaching a phone, surviving the disk, being
+    # shown to another person. It is off unless NOTION_TOKEN is set, and off is
+    # a normal state rather than a degraded one.
+    try:
+        from app.notion import available as notion_available, sync as notion_sync
+        from app.store import list_applications as _list_applications
+
+        ready, why = notion_available()
+        if ready:
+            report = await notion_sync(_list_applications())
+            log(f"notion mirror: {report.summary}")
+        else:
+            log(f"notion mirror skipped — {why}")
+    except Exception as exc:  # noqa: BLE001 - never let this stop the run
+        log(f"notion mirror failed: {type(exc).__name__}: {exc}")
+
     # Refresh the handoff snapshot so the next session — human or agent — opens
     # a file that reflects this run rather than the last manual one.
     snapshot = ROOT.parent / "careeros" / "scripts" / "snapshot_state.py"

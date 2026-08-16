@@ -49,7 +49,33 @@ reads it through `app/profile.py`.
 ./.venv/bin/python scripts/prefill_apply.py <job_id>            # open it pre-filled
 ./.venv/bin/python scripts/check_replies.py --sent s.json --inbox i.json
 ./.venv/bin/python scripts/prune_approvals.py --dry-run
+./.venv/bin/python scripts/sync_notion.py --setup <page_id>  # once, builds the database
+./.venv/bin/python scripts/sync_notion.py --write            # mirror applications to Notion
 ```
+
+## The Notion mirror is one way, and must stay that way
+
+`app/notion.py` publishes applications to Notion. It is off unless `NOTION_TOKEN`
+and `NOTION_DATA_SOURCE_ID` are in `.env`, and off is a normal state — CareerOS
+works identically without it. The daily job runs it and logs a skip line when it
+is not configured.
+
+**CareerOS owns every column it writes; Notion owns only `Notes`, which the sync
+never touches.** This asymmetry is the whole design. Two systems that can both
+write a status disagree silently — that is not hypothetical here, it is what
+`_COMMITTED_STATUSES` saying "applied" while the UI wrote "submitted" already
+cost: six applications the candidate had sent were rewound and offered back to
+them to send again. A second system with its own opinion of what "applied" means
+is that same failure with a network in the middle.
+
+`_Client` therefore has exactly three public methods and no way to read pipeline
+state beyond the row keys it needs to update rather than duplicate.
+`tests/test_notion_mirror.py` fails if a fourth appears.
+
+`NOTION_VERSION` is pinned in `config.py` and must stay pinned. Notion shipped at
+least five breaking versions in H1 2026, and `2025-09-03` is the one that split a
+database into a container holding data sources — an unpinned client does not fail
+loudly, it starts writing to the wrong shape.
 
 ## Refresh the Gmail snapshot when you have the connector
 
