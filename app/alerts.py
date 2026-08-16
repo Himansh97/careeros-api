@@ -66,6 +66,66 @@ def _humanise(hours: float) -> str:
     return f"{int(hours // 24)} days"
 
 
+def _settled_by_a_send(draft: dict[str, Any]) -> bool:
+    """Whether this draft's *current* approval has already gone out.
+
+    The presence of `sentAt` was taken as the answer, and it is not the
+    question. A draft row is reused across cycles, so a thread replied to once
+    carries `sentAt` forever — and a later approval that failed to produce a
+    draft was silently swallowed by that stale timestamp. What matters is which
+    came last: an approval after the last send is a cycle that has not been
+    sent, whatever the record remembers about August.
+    """
+    sent = draft.get("sentAt")
+    if not sent:
+        return False
+    approved = draft.get("approvedAt")
+    if not approved:
+        return True
+    # Compared as ages rather than as strings: these arrive in two formats
+    # ("...Z" and "...+00:00") that do not sort correctly against each other.
+    return _age_hours(sent) <= _age_hours(approved)
+
+
+def failed_reply_drafts() -> list[Alert]:
+    """Replies the candidate approved that never became a draft at all.
+
+    This had no alert of any kind. `unsent_recruiter_replies` covers "approved
+    and not sent", which assumes a draft exists to go and send; when draft
+    creation itself failed there is nothing in Gmail to open, and the record
+    was additionally hidden by a stale `sentAt` from an earlier cycle. So a
+    decision to reply could fail, and be reported nowhere, indefinitely.
+
+    Raised regardless of age. Every other alert here waits for something to go
+    stale because the thing might still be in progress; a failure is already
+    final, and waiting six hours to mention it only delays the retry.
+    """
+    from .recruiter_messages import list_messages
+
+    alerts: list[Alert] = []
+    for message in list_messages():
+        draft = message.get("draft") or {}
+        if draft.get("status") != "failed":
+            continue
+        who = message.get("senderName") or message.get("senderEmail") or "a recruiter"
+        age = _age_hours(draft.get("updatedAt") or draft.get("approvedAt"))
+        reason = (draft.get("lastErrorMessage") or "").strip() or "Gmail rejected the request."
+        alerts.append(
+            Alert(
+                kind="recruiter_reply_failed",
+                severity="high",
+                title=f"Reply to {who} could not be drafted",
+                detail=(
+                    f"You approved this reply and Gmail draft creation failed "
+                    f"{_humanise(age)} ago, so nothing was created. {reason}"
+                ),
+                action="Re-approve the reply to try creating the draft again",
+                ref=message.get("gmailMessageId"),
+            )
+        )
+    return alerts
+
+
 def unsent_recruiter_replies() -> list[Alert]:
     """Replies approved for sending that never went out.
 
@@ -78,7 +138,12 @@ def unsent_recruiter_replies() -> list[Alert]:
     alerts: list[Alert] = []
     for message in list_messages():
         draft = message.get("draft") or {}
-        if draft.get("sentAt") or draft.get("status") in (None, "dismissed", "awaiting_approval"):
+        # `failed` has its own alert. Reporting it here as well would tell the
+        # candidate to open a draft that was never created, and put two
+        # entries on the list for one problem.
+        if draft.get("status") in (None, "dismissed", "awaiting_approval", "failed"):
+            continue
+        if _settled_by_a_send(draft):
             continue
         age = _age_hours(draft.get("approvedAt") or draft.get("updatedAt"))
         if age < STALE_APPROVAL_HOURS:
@@ -277,8 +342,8 @@ def aging_applications() -> list[Alert]:
 
 def build_alerts() -> list[dict[str, Any]]:
     """Everything outstanding, most urgent first."""
-    alerts = (unsent_recruiter_replies() + blocked_applications()
-              + unsent_outreach() + aging_applications())
+    alerts = (failed_reply_drafts() + unsent_recruiter_replies()
+              + blocked_applications() + unsent_outreach() + aging_applications())
     order = {"high": 0, "medium": 1}
     alerts.sort(key=lambda a: (order.get(a.severity, 9), a.kind))
     return [a.as_dict() for a in alerts]
