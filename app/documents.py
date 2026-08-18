@@ -55,6 +55,16 @@ def safe_filename(name: str) -> str:
 
 
 def _contact_line(profile: Any) -> str:
+    """Header line, ordered by how a recruiter actually uses it.
+
+    Phone and email first because those are how they reply. The portfolio sits
+    beside LinkedIn rather than at the end: it is the only item on the line
+    that shows work rather than asserting it, and past the location nobody
+    reads. Location stays last because it is the field most likely to end the
+    conversation and least likely to start one.
+    """
+    from .outreach import portfolio_host
+
     linkedin = (
         (profile.linkedin_url or "")
         .replace("https://", "")
@@ -62,7 +72,9 @@ def _contact_line(profile: Any) -> str:
         .replace("www.", "")
         .rstrip("/")
     )
-    return "  |  ".join(b for b in [profile.phone, profile.email, linkedin, profile.location] if b)
+    site = portfolio_host(getattr(profile, "portfolio_url", ""))
+    parts = [profile.phone, profile.email, linkedin, site, profile.location]
+    return "  |  ".join(b for b in parts if b)
 
 
 def _edu_period(edu: dict[str, Any]) -> str:

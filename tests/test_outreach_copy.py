@@ -23,11 +23,14 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
+from app.compose import _signature  # noqa: E402
+from app.documents import _contact_line  # noqa: E402
 from app.outreach import (  # noqa: E402
     LINKEDIN_NOTE_LIMIT,
     _linkedin_note,
     _readable_list,
     _short_title,
+    portfolio_host,
 )
 
 LONG = (
@@ -121,6 +124,63 @@ def test_lists_read_as_prose() -> None:
     assert _readable_list(["A", "B", "C"]) == "A, B and C"
     assert _readable_list(["Solo"]) == "Solo"
     assert _readable_list([]) == ""
+
+
+# ------------------------------------------------------- the portfolio link
+
+
+class _Profile:
+    """Enough of CandidateProfile for the two places contact details render."""
+
+    def __init__(self, portfolio_url: str = "https://dana-whitfield.github.io"):
+        self.name = "Dana Whitfield"
+        self.phone = "+1 (555) 010-0000"
+        self.email = "dana@example.com"
+        self.location = "Austin, TX"
+        self.linkedin_url = "https://www.linkedin.com/in/dana/"
+        self.portfolio_url = portfolio_url
+
+
+def test_the_portfolio_renders_as_a_bare_host() -> None:
+    """Gmail rewrites a full URL in a plain-text body into a google.com/url
+    redirect that arrives wrapped across two lines. The host survives."""
+    for given in (
+        "https://dana-whitfield.github.io",
+        "http://dana-whitfield.github.io/",
+        "https://www.dana-whitfield.github.io/",
+        "dana-whitfield.github.io",
+    ):
+        assert portfolio_host(given) == "dana-whitfield.github.io", given
+
+
+def test_no_portfolio_configured_adds_no_line() -> None:
+    """The link lives in gitignored profile data, so absent is a normal state
+    and must degrade to exactly the old output rather than an empty label."""
+    sig = _signature(_Profile(portfolio_url=""))
+    assert "Work:" not in sig, sig
+    assert sig.splitlines()[-1].startswith("LinkedIn:"), sig
+
+
+def test_the_email_signature_ends_on_the_portfolio() -> None:
+    """Last line on purpose — it is the one a curious reader clicks, and it
+    should still be visible after they skim past a phone number."""
+    sig = _signature(_Profile())
+    assert sig.splitlines()[-1] == "Work: dana-whitfield.github.io", sig
+
+
+def test_the_resume_header_carries_the_portfolio_before_the_location() -> None:
+    """Location is the field most likely to end a conversation and least
+    likely to start one, so nothing useful sits behind it."""
+    line = _contact_line(_Profile())
+    assert "dana-whitfield.github.io" in line, line
+    assert line.index("dana-whitfield.github.io") < line.index("Austin"), line
+
+
+def test_the_resume_header_survives_a_missing_portfolio() -> None:
+    line = _contact_line(_Profile(portfolio_url=""))
+    assert "github.io" not in line
+    assert line.endswith("Austin, TX"), line
+    assert "  |    |  " not in line, "an empty field left a hole in the header"
 
 
 if __name__ == "__main__":

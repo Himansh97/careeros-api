@@ -214,6 +214,8 @@ def check_pdf(pdf_bytes: bytes, profile: Any) -> list[dict[str, str]]:
     from pypdf import PdfReader
     import io as _io
 
+    from .outreach import portfolio_host
+
     findings: list[dict[str, str]] = []
     reader = PdfReader(_io.BytesIO(pdf_bytes))
     text = "".join(p.extract_text() or "" for p in reader.pages)
@@ -252,6 +254,18 @@ def check_pdf(pdf_bytes: bytes, profile: Any) -> list[dict[str, str]]:
                 "detail": f"{label} did not survive text extraction.",
                 "fix": "Contact details must be selectable text in the header.",
             })
+
+    # A portfolio link that does not survive extraction is worse than no link:
+    # the header still spends a line on it, and the reader still cannot click.
+    # Separate from the check above because a mangled portfolio is a lost
+    # opportunity, not an unreachable candidate.
+    site = portfolio_host(getattr(profile, "portfolio_url", ""))
+    if site and site.replace(" ", "") not in text.replace(" ", ""):
+        findings.append({
+            "severity": "medium", "type": "portfolio_link_broken", "where": "header",
+            "detail": f"{site} did not survive text extraction.",
+            "fix": "The portfolio host must be selectable text, not part of an image.",
+        })
 
     if len(reader.pages) > 2:
         findings.append({

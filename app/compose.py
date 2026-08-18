@@ -380,6 +380,8 @@ Hard rules:
   If the posting asks for something they lack, either stay silent about it or name it
   plainly — never imply it.
 - Do not mention an attached resume unless explicitly told one is attached.
+- Never write a bare URL other than the portfolio host you are given, and never write
+  a scheme, a path or a tracking parameter on anything.
 
 Return only JSON, no prose around it:
 
@@ -451,6 +453,17 @@ def _prompt(
         if has_attachment
         else "RESUME IS ATTACHED: no — do not mention an attachment."
     )
+    from .outreach import portfolio_host
+
+    site = portfolio_host(getattr(profile, "portfolio_url", ""))
+    if site:
+        parts.append(
+            f"PORTFOLIO: {site} — live demos of the candidate's own work. You may "
+            "point at it once, in the body, only if one of the accomplishments above "
+            "is the sort of thing a reader would want to see running. Write the host "
+            "exactly as given, with no scheme and no path. It also appears in the "
+            "signature, so do not repeat it there."
+        )
 
     if avoid_openings:
         parts.append("")
@@ -591,7 +604,7 @@ def _signature(profile: CandidateProfile) -> str:
     interpretation, and asking a model to reproduce a phone number is asking
     for a transcription error in the only field where one is unrecoverable.
     """
-    from .outreach import _linkedin_handle
+    from .outreach import _linkedin_handle, portfolio_host
 
     lines = [profile.name]
     contact_line = " | ".join(x for x in (profile.phone, profile.email) if x)
@@ -600,6 +613,12 @@ def _signature(profile: CandidateProfile) -> str:
     handle = _linkedin_handle(profile.linkedin_url)
     if handle:
         lines.append(f"LinkedIn: {handle}")
+    site = portfolio_host(getattr(profile, "portfolio_url", ""))
+    if site:
+        # Last line of the block, because it is the one a curious reader
+        # clicks and the one they should still see after skimming past
+        # the phone number they were never going to dial.
+        lines.append(f"Work: {site}")
     return "\n".join(lines)
 
 
@@ -621,6 +640,7 @@ def _allowed_nouns(
     words += _word_tokens(job.get("location", ""))
     words += _word_tokens(getattr(profile, "name", ""))
     words += _word_tokens(getattr(profile, "location", ""))
+    words += _word_tokens(getattr(profile, "portfolio_url", ""))
     words += _word_tokens((contact or {}).get("name", ""))
     words += _word_tokens((contact or {}).get("title", ""))
     return frozenset(w.lower() for w in words)

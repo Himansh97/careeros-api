@@ -186,6 +186,23 @@ def _linkedin_handle(url: str) -> str:
     return handle or (url or "")
 
 
+def portfolio_host(url: str) -> str:
+    """Render the portfolio as a bare host, for the same reason as the handle.
+
+    A full `https://.../` in a plain-text body is rewritten by Gmail into a
+    `google.com/url?q=...` redirect and arrives as a long wrapped link. The
+    bare host is short, still clickable in every client, and reads like
+    something a person typed.
+    """
+    host = (url or "").strip()
+    for prefix in ("https://", "http://"):
+        if host.startswith(prefix):
+            host = host[len(prefix):]
+    if host.startswith("www."):
+        host = host[4:]
+    return host.rstrip("/")
+
+
 def build_outreach(
     job: dict[str, Any],
     score: dict[str, Any],
@@ -253,6 +270,8 @@ def build_outreach(
         f"{ask}\n\n"
         f"Thanks for reading,\n{profile.name}\n{profile.phone} | {profile.email}\n"
         f"LinkedIn: {_linkedin_handle(profile.linkedin_url)}\n"
+        + (f"Work: {portfolio_host(profile.portfolio_url)}\n"
+           if getattr(profile, "portfolio_url", "") else "")
     )
 
     linkedin_note = _linkedin_note(first_name, title, company, top_skills)

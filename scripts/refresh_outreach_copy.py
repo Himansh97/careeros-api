@@ -78,8 +78,14 @@ async def main() -> int:
     print(f"{len(rows)} drafted outreach records; {len(updates)} would change")
     if missing:
         print(f"  {missing} skipped — posting no longer in the source pool")
-    for _, company, subject, _, _ in updates[:6]:
-        print(f"    {company[:20]:20} {subject[:56]}")
+    # This preview used to print straight under the "N skipped" line at the same
+    # indent and with no header of its own, so six changed records read as the
+    # skipped list — and the names did not even overlap. A report that has to be
+    # cross-checked against the database is not a report.
+    if updates:
+        print(f"  new subject lines ({min(len(updates), 6)} of {len(updates)}):")
+        for _, company, subject, _, _ in updates[:6]:
+            print(f"    {company[:20]:20} {subject[:56]}")
 
     if not updates:
         return 0

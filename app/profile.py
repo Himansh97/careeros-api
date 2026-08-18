@@ -97,6 +97,7 @@ class CandidateProfile:
     skills_inventory: dict[str, list[str]]
     employment_history: list[dict[str, Any]]
     headline: str = ""
+    portfolio_url: str = ""
     professional_summary: str = ""
     credentials_line: list[str] = field(default_factory=list)
     evidence: list[EvidenceClaim] = field(default_factory=list)
@@ -166,6 +167,7 @@ def load_profile() -> CandidateProfile:
         location=raw.get("location", ""),
         linkedin_url=raw.get("linkedin_url", ""),
         work_authorization=raw.get("work_authorization", ""),
+        portfolio_url=raw.get("portfolio_url", ""),
         education=raw.get("education", []),
         certifications=raw.get("certifications", []),
         skills_inventory=raw.get("current_skills_inventory", {}),
