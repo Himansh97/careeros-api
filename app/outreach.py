@@ -191,6 +191,9 @@ def build_outreach(
     score: dict[str, Any],
     profile: CandidateProfile,
     contact: dict[str, Any] | None = None,
+    *,
+    use_model: bool = True,
+    has_attachment: bool = False,
 ) -> dict[str, Any]:
     company = job["company"]["name"]
     title = job["title"]
@@ -273,6 +276,27 @@ def build_outreach(
             "be fabrication. Add a contact manually to enable targeted outreach."
         )
 
+    # Everything above is the message this always produced, and it stays the
+    # answer whenever generation is unavailable or produces something the
+    # containment gate will not pass. `compose_email` returns None for a missing
+    # key, a spent budget, malformed JSON, a caught fabrication or template
+    # phrasing — all of which mean "ship the rule-based one", never "fail".
+    warnings: list[str] = []
+    generated = False
+    if use_model:
+        from .compose import compose_email
+
+        written = compose_email(
+            job, score, profile, contact, has_attachment=has_attachment
+        )
+        if written is not None:
+            email_subject = written.subject
+            email_body = written.body
+            warnings = written.warnings
+            generated = True
+            to = quote((contact or {}).get("email") or "")
+            mailto = f"mailto:{to}?subject={quote(email_subject)}&body={quote(email_body)}"
+
     return {
         "jobId": job["id"],
         "company": company,
@@ -284,6 +308,11 @@ def build_outreach(
         "emailDraft": email_body,
         "linkedinDraft": linkedin_note,
         "mailtoUrl": mailto,
+        # Whether a model wrote this, and anything the gate let through with a
+        # caveat. Surfaced so a reviewer can tell a generated draft from a
+        # templated one without reading both.
+        "generated": generated,
+        "reviewNotes": warnings,
         "sendPolicy": (
             "Nothing is sent automatically. Use the mailto link to open this in "
             "your own mail client, review it, and send it yourself."
