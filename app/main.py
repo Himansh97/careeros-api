@@ -1234,8 +1234,19 @@ async def outreach_list() -> dict[str, Any]:
     from .outreach_store import list_outreach
 
     items = list_outreach()
+
+    # Which mailbox this is meant to be sent from.
+    #
+    # The compose link opens mail.google.com, which resolves to whichever
+    # Google account the browser has as default — so on a machine signed into
+    # more than one, a draft could be composed and sent from the wrong address
+    # and never appear in the Sent folder being watched. Pinning `authuser` to
+    # the profile address makes Google open the right mailbox, or prompt.
+    sender = getattr(_profile(), "email", None)
+
     cache: dict[str, dict[str, Any] | None] = {}
     for item in items:
+        item["fromEmail"] = sender
         contact_id = item.get("contactId")
         if not contact_id:
             continue
