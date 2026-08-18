@@ -120,6 +120,24 @@ def test_a_draft_sent_after_its_approval_is_settled() -> None:
     assert not _run([msg], alerts.unsent_recruiter_replies)
 
 
+def test_a_created_draft_can_still_be_dismissed() -> None:
+    """Deciding not to send has to stay available after the draft exists.
+
+    Dismissal was gated on the edit statuses, so a `created` draft had no exit:
+    it could not be dropped, and the "approved but never sent" alert repeated
+    indefinitely unless it was sent. Two real drafts were never sendable at
+    all — one to a `donotreply@` mailbox, one to a colleague covering a
+    parental leave that had ended — and the app offered no way to close them.
+    """
+    from app.recruiter_messages import _DISMISSABLE_STATUSES, _EDITABLE_STATUSES
+
+    assert "created" in _DISMISSABLE_STATUSES
+    # Editing stays narrower: rewriting text Gmail already holds would let the
+    # app's copy and the mailbox diverge.
+    assert "created" not in _EDITABLE_STATUSES
+    assert _EDITABLE_STATUSES <= _DISMISSABLE_STATUSES
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

@@ -49,6 +49,19 @@ CREATE TABLE IF NOT EXISTS recruiter_reply_drafts (
 
 _EDITABLE_STATUSES = {"awaiting_approval", "failed"}
 
+# Deciding not to send is always available, including once a Gmail draft
+# exists. Dismissal was gated on the same set as editing, which left `created`
+# with no exit: the draft could not be dismissed, and the "approved but never
+# sent" alert therefore repeated forever unless it was sent. Two of these were
+# never sendable in the first place — one addressed to a `donotreply@` mailbox,
+# one to a colleague covering a parental leave that had since ended — so the
+# only honest resolution for them was the one the app did not offer.
+#
+# Editing stays narrower on purpose: changing the text after Gmail holds a copy
+# would let the two diverge, which is a different problem from choosing to drop
+# the reply altogether.
+_DISMISSABLE_STATUSES = _EDITABLE_STATUSES | {"created"}
+
 
 # Sending is recorded as its own fact rather than another `status` value.
 #
@@ -354,7 +367,7 @@ def dismiss_draft(message_id: str) -> dict:
         conn.execute("BEGIN IMMEDIATE")
         event = _message_or_raise(conn, message_id)
         draft = _draft_or_raise(conn, message_id)
-        if draft["status"] not in _EDITABLE_STATUSES and draft["status"] != "dismissed":
+        if draft["status"] not in _DISMISSABLE_STATUSES and draft["status"] != "dismissed":
             raise ValueError(f"Draft cannot be dismissed while {draft['status']}")
         if draft["status"] != "dismissed":
             conn.execute(
