@@ -41,6 +41,78 @@ def _best_proof(score: dict[str, Any], profile: CandidateProfile) -> str | None:
     return best[1] if best else None
 
 
+# LinkedIn's hard cap on a connection request note.
+LINKEDIN_NOTE_LIMIT = 300
+
+
+def _short_title(title: str, limit: int) -> str:
+    """A job title that fits, cut at a word rather than mid-word.
+
+    Real titles run long — "Analyst, FP&A - Medicare/Medicaid COGS & Network
+    Performance" is 62 characters before anything else is said. Cutting at the
+    last separator keeps the part that identifies the role.
+    """
+    title = title.strip()
+    if len(title) <= limit:
+        return title
+    for sep in (" - ", " – ", ", ", " "):
+        head = title[:limit].rsplit(sep, 1)[0]
+        if 12 <= len(head) < len(title):
+            return head
+    return title[:limit].rstrip()
+
+
+def _linkedin_note(first_name: str, title: str, company: str, top_skills: str) -> str:
+    """A connection note that fits in 300 characters without being cut off.
+
+    This was built at full length and then sliced with `[:300]`, which on a long
+    title ended the message mid-clause — "...and if someone else is closer to
+    this" — turning a warm note into one that looks broken. A note that stops
+    talking mid-sentence is worse than a shorter one.
+
+    So variants are tried longest-first and the first one that fits is sent.
+    What gets dropped is ordered by what earns least: the skills aside goes
+    before the pointer request, because someone who cannot help often knows who
+    can, and that ask is far easier to say yes to than a call.
+    """
+    name = first_name or "there"
+    pointer = " And if someone else is closer to this one, I'd be grateful for a pointer."
+
+    # Loop order is the priority order, and it is deliberate. The first draft
+    # tried the full title first, so a 112-character title survived intact by
+    # spending the pointer request — trading the most valuable sentence in the
+    # note for a job title the recipient already knows. Title length is what
+    # gives way first.
+    for tail in (f" Would love to connect either way.{pointer}",
+                 " Would love to connect either way."):
+        for aside in (f" ({top_skills}).", "."):
+            for job_title in (title, _short_title(title, 46), _short_title(title, 28)):
+                note = (
+                    f"Hi {name} — I just applied for the {job_title} role at "
+                    f"{company}, and it's genuinely the kind of work I'm most "
+                    f"drawn to" + aside + tail
+                )
+                if len(note) <= LINKEDIN_NOTE_LIMIT:
+                    return note
+
+    # Every variant is still too long, which means the company and title alone
+    # fill the budget. Say the one thing that matters and stop.
+    fallback = f"Hi {name} — I just applied for the {_short_title(title, 28)} role at {company}. Would love to connect."
+    return fallback[:LINKEDIN_NOTE_LIMIT]
+
+
+def _readable_list(items: list[str]) -> str:
+    """Join for prose, not for a CSV.
+
+    "Python, Azure" mid-sentence reads as a field that leaked into a letter.
+    The email is trying to sound like a person wrote it, and people write "and".
+    """
+    items = [i for i in items if i]
+    if len(items) <= 1:
+        return items[0] if items else ""
+    return f"{', '.join(items[:-1])} and {items[-1]}"
+
+
 def _gap_line(score: dict[str, Any]) -> str:
     """Name the required things the candidate cannot evidence.
 
@@ -117,35 +189,64 @@ def build_outreach(
     company = job["company"]["name"]
     title = job["title"]
     proof = _best_proof(score, profile)
-    top_skills = ", ".join(score["strongMatches"][:3]) or "my analytics background"
+    top_skills = _readable_list(score["strongMatches"][:3]) or "my analytics background"
 
-    proof_line = (
-        f"{proof}\n\n" if proof else ""
-    )
+    # The claim is a resume bullet. Dropped into an email unannounced it reads
+    # like one, so it gets a conversational lead-in — the sentence stays
+    # verbatim, because it is the part that has to remain true.
+    proof_line = f"For a sense of what that looks like in practice: {proof}\n\n" if proof else ""
 
     # Address the person by name when a provider actually returned one. The
     # draft previously opened "Hello," and carried a note saying no recruiter
     # could be identified — which stopped being true once contact lookup was
     # wired in, but the note was hardcoded so it still claimed otherwise.
     first_name = ((contact or {}).get("name") or "").split(" ")[0].strip()
-    greeting = f"Hello {first_name}," if first_name else "Hello,"
+    # "Hi" rather than "Hello" — the rest of the note is written as one person
+    # to another, and "Hello," on its own line sets a formality the body then
+    # contradicts.
+    greeting = f"Hi {first_name}," if first_name else "Hi there,"
 
-    email_subject = f"Application for {title} — {profile.name}"
+    # Subject lines that get opened are short, specific and sound like a person
+    # wrote them. "Application for X — Name" reads like a form submission, and a
+    # recruiter scanning fifty of those has no reason to open one.
+    # Inboxes cut the subject around 60 characters on desktop and far less on a
+    # phone, so the title is trimmed to leave the question visible rather than
+    # letting a 62-character title push everything else out of view.
+    subject_title = _short_title(title, 30)
+    email_subject = (
+        f"{first_name} — quick question about {subject_title}"
+        if first_name
+        else f"Quick question about the {subject_title} role"
+    )
+
+    # Written for a reply, not for completeness. Four things do the work, and
+    # none of them are tricks — a trick that gets a reply and then disappoints
+    # costs more than the reply was worth:
+    #
+    # * brevity — under ~130 words, because a wall of text on a phone gets
+    #   archived and the previous draft opened with an unbroken paragraph
+    # * one concrete number, early — credibility is specificity, not adjectives
+    # * reciprocity — offering something useful before asking for anything
+    # * a single, low-friction question at the end, plus an explicit easy out.
+    #   Naming the graceful no is what makes the yes cheap to give, and it
+    #   costs nothing because it is true either way.
+    ask = "Would a short call in the next week or two make sense?"
     email_body = (
         f"{greeting}\n\n"
-        f"I'm applying for the {title} role at {company}. The overlap with my "
-        f"background in {top_skills} is what stood out.\n\n"
+        f"I applied for the {title} role at {company} and wanted to reach out "
+        f"directly — it lines up closely with the work I actually enjoy most, "
+        f"which is {top_skills}.\n\n"
         f"{proof_line}"
         f"{_gap_line(score)}"
-        f"Resume attached. Happy to jump on a quick call whenever useful.\n\n"
-        f"Best,\n{profile.name}\n{profile.phone} | {profile.email}\n"
+        f"Happy to send a short note on how I'd approach the first 90 days if "
+        f"that's useful — and if the role has already moved on, no problem at "
+        f"all; I'd just ask to be kept in mind for similar work.\n\n"
+        f"{ask}\n\n"
+        f"Thanks for reading,\n{profile.name}\n{profile.phone} | {profile.email}\n"
         f"LinkedIn: {_linkedin_handle(profile.linkedin_url)}\n"
     )
 
-    linkedin_note = (
-        f"Hi — I just applied for the {title} role at {company}. "
-        f"My background is {top_skills}. Would love to connect."
-    )[:280]
+    linkedin_note = _linkedin_note(first_name, title, company, top_skills)
 
     to = quote((contact or {}).get("email") or "")
     mailto = (

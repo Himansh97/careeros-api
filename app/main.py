@@ -1220,9 +1220,38 @@ async def contact_status(contact_id: str, req: ContactStatus) -> dict[str, Any]:
 # ------------------------------------------------------------------ outreach
 @app.get("/api/outreach")
 async def outreach_list() -> dict[str, Any]:
+    """Outreach drafts, each carrying the person it is addressed to.
+
+    The stored record keeps only `contactId`, so the client had a draft and no
+    way to address it: no name, no email, no LinkedIn. Sending one meant opening
+    Contacts in another tab, finding the row and copying the address by hand —
+    every time, for every draft. That is why thirteen of them were never sent.
+
+    Joined here rather than in the client so there is one round trip and one
+    definition of which contact a draft belongs to.
+    """
+    from .contacts import get_contact
     from .outreach_store import list_outreach
 
-    return {"outreach": list_outreach()}
+    items = list_outreach()
+    cache: dict[str, dict[str, Any] | None] = {}
+    for item in items:
+        contact_id = item.get("contactId")
+        if not contact_id:
+            continue
+        if contact_id not in cache:
+            cache[contact_id] = get_contact(contact_id)
+        contact = cache[contact_id]
+        if not contact:
+            continue
+        item["contactName"] = contact.get("name")
+        item["contactTitle"] = contact.get("title")
+        item["contactEmail"] = contact.get("email")
+        item["contactLinkedin"] = contact.get("linkedinUrl")
+        # Surfaced so an unverified address is visible at the moment of
+        # sending, not buried in the contact record it came from.
+        item["contactEmailVerified"] = bool(contact.get("emailVerified"))
+    return {"outreach": items}
 
 
 class OutreachAction(BaseModel):
