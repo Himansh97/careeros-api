@@ -40,8 +40,8 @@ async def main() -> int:
 
     with connect() as conn:
         rows = conn.execute(
-            "SELECT id, job_id, contact_id, company, status, email_subject, email_draft "
-            "FROM outreach WHERE status = 'drafted'"
+            "SELECT id, job_id, contact_id, company, status, email_subject, "
+            "email_draft, linkedin_draft FROM outreach WHERE status = 'drafted'"
         ).fetchall()
 
     updates: list[tuple[str, str, str, str, str]] = []
@@ -55,7 +55,16 @@ async def main() -> int:
             continue
         contact = get_contact(row["contact_id"]) if row["contact_id"] else None
         built = build_outreach(job, score_job_cached(job, profile), profile, contact)
-        if built["emailDraft"] != row["email_draft"]:
+        # Subject and LinkedIn note are compared too. Comparing the body alone
+        # meant a fix that only touched the subject line reported "0 would
+        # change" and left the old subjects in place — which is exactly what a
+        # mid-word truncation fix does.
+        changed = (
+            built["emailDraft"] != row["email_draft"]
+            or built["emailSubject"] != row["email_subject"]
+            or built["linkedinDraft"] != row["linkedin_draft"]
+        )
+        if changed:
             updates.append(
                 (
                     row["id"],

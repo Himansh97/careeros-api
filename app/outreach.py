@@ -55,11 +55,17 @@ def _short_title(title: str, limit: int) -> str:
     title = title.strip()
     if len(title) <= limit:
         return title
+    window = title[:limit]
     for sep in (" - ", " – ", ", ", " "):
-        head = title[:limit].rsplit(sep, 1)[0]
-        if 12 <= len(head) < len(title):
+        # `rsplit` returns the whole string when the separator is absent, so
+        # without this guard a title with no separator in the first `limit`
+        # characters came back cut mid-word — "Staff Product Manager, Enterpr".
+        if sep not in window:
+            continue
+        head = window.rsplit(sep, 1)[0].rstrip(" ,-–")
+        if len(head) >= 12:
             return head
-    return title[:limit].rstrip()
+    return window.rstrip(" ,-–")
 
 
 def _linkedin_note(first_name: str, title: str, company: str, top_skills: str) -> str:

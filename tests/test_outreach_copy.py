@@ -88,6 +88,33 @@ def test_short_title_leaves_a_short_title_alone() -> None:
     assert _short_title("Data Analyst", 46) == "Data Analyst"
 
 
+def test_short_title_never_cuts_mid_word() -> None:
+    """`rsplit` returns the whole string when the separator is absent.
+
+    Without a guard for that, "Staff Product Manager, Enterprise Resource
+    Management" trimmed to 30 came back as "Staff Product Manager, Enterpr" —
+    which then went out as a subject line.
+    """
+    cases = [
+        ("Staff Product Manager, Enterprise Resource Management", 30),
+        ("Data Analyst Payments Analytics - Vice President", 30),
+        ("Senior Business Intelligence Developer Consultant", 24),
+        (LONG, 30),
+        (LONGER, 30),
+    ]
+    for title, limit in cases:
+        out = _short_title(title, limit)
+        assert len(out) <= limit, f"{out!r} exceeds {limit}"
+        assert out == out.strip(), f"{out!r} has loose whitespace"
+        # The cut must land where the original had a boundary, so the result is
+        # a whole word: either the title ended, or a space follows in the source.
+        assert title.startswith(out), f"{out!r} is not a prefix of the title"
+        rest = title[len(out):]
+        assert rest == "" or rest[0] in " ,-–", (
+            f"cut mid-word: {out!r} then {rest[:12]!r}"
+        )
+
+
 def test_lists_read_as_prose() -> None:
     """"Python, Azure" mid-sentence reads as a field that leaked into a letter."""
     assert _readable_list(["Python", "Azure"]) == "Python and Azure"
