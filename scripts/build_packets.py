@@ -15,6 +15,7 @@ import pathlib
 import sqlite3
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
@@ -30,10 +31,19 @@ ROOT = pathlib.Path.home() / "Desktop" / "CareerOS-Applications"
 
 
 def fetch(job_id: str) -> dict | None:
+    """Fetch one job, tolerating whatever an importer put in the id.
+
+    Ids are not all url-safe: a manually imported row carries
+    "imported_ZipRecruiter (imported)_6", and dropping that straight into a
+    path raised InvalidURL from http.client — an uncaught exception class, so
+    one such row aborted the whole packet rebuild partway through and left the
+    Desktop folder half old and half new.
+    """
+    url = f"{API}/api/jobs/{urllib.parse.quote(job_id, safe='')}"
     try:
-        with urllib.request.urlopen(f"{API}/api/jobs/{job_id}", timeout=30) as r:
+        with urllib.request.urlopen(url, timeout=30) as r:
             return json.load(r)
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError):
         return None
 
 

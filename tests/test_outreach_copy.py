@@ -24,7 +24,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from app.compose import _signature  # noqa: E402
-from app.documents import _contact_line  # noqa: E402
+from app.documents import _contact_line, _contact_markup, contact_parts  # noqa: E402
 from app.outreach import (  # noqa: E402
     LINKEDIN_NOTE_LIMIT,
     _linkedin_note,
@@ -181,6 +181,49 @@ def test_the_resume_header_survives_a_missing_portfolio() -> None:
     assert "github.io" not in line
     assert line.endswith("Austin, TX"), line
     assert "  |    |  " not in line, "an empty field left a hole in the header"
+
+
+def test_every_reachable_field_carries_a_link() -> None:
+    """A resume is read on a screen far more often than on paper, and a link
+    the reader has to retype is a link they do not follow."""
+    pairs = dict(contact_parts(_Profile()))
+    assert pairs["dana@example.com"] == "mailto:dana@example.com"
+    assert pairs["dana-whitfield.github.io"] == "https://dana-whitfield.github.io"
+    assert pairs["linkedin.com/in/dana"] == "https://linkedin.com/in/dana"
+    assert pairs["+1 (555) 010-0000"] == "tel:+15550100000", pairs["+1 (555) 010-0000"]
+
+
+def test_the_location_is_not_a_link() -> None:
+    assert dict(contact_parts(_Profile()))["Austin, TX"] == ""
+
+
+def test_the_visible_text_stays_the_address() -> None:
+    """Never a "LinkedIn" label. A resume gets printed, pasted as plain text
+    and scraped by an ATS, and in all three the address survives while the
+    link does not."""
+    line = _contact_line(_Profile())
+    assert "linkedin.com/in/dana" in line
+    assert "LinkedIn" not in line, line
+
+
+def test_the_plain_line_and_the_linked_one_read_identically() -> None:
+    """The two renderers used to build the same string separately, which is how
+    a fix lands in the PDF and silently misses the DOCX."""
+    import re
+
+    markup = _contact_markup(_Profile())
+    stripped = re.sub(r"<[^>]+>", "", markup).replace("&amp;", "&")
+    assert stripped == _contact_line(_Profile()), (stripped, _contact_line(_Profile()))
+
+
+def test_a_profile_with_no_links_still_produces_a_header() -> None:
+    bare = _Profile(portfolio_url="")
+    bare.linkedin_url = ""
+    bare.phone = ""
+    parts = contact_parts(bare)
+    assert [t for t, _ in parts] == ["dana@example.com", "Austin, TX"], parts
+    assert "|" in _contact_line(bare)
+    assert "  |    |  " not in _contact_line(bare), "an empty field left a hole"
 
 
 if __name__ == "__main__":

@@ -18,6 +18,9 @@ from typing import Any
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
+from docx.opc.constants import RELATIONSHIP_TYPE as _RT
+from docx.oxml import OxmlElement as _El
+from docx.oxml.ns import qn as _qn
 from docx.shared import Inches, Pt, RGBColor
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY
@@ -54,14 +57,25 @@ def safe_filename(name: str) -> str:
     return cleaned or "resume"
 
 
-def _contact_line(profile: Any) -> str:
-    """Header line, ordered by how a recruiter actually uses it.
+CONTACT_SEP = "  |  "
 
-    Phone and email first because those are how they reply. The portfolio sits
-    beside LinkedIn rather than at the end: it is the only item on the line
-    that shows work rather than asserting it, and past the location nobody
-    reads. Location stays last because it is the field most likely to end the
-    conversation and least likely to start one.
+
+def contact_parts(profile: Any) -> list[tuple[str, str]]:
+    """The header line as (what it reads, where it goes) pairs.
+
+    One source of truth for both renderers. They used to build the same string
+    independently, which is how a fix lands in the PDF and silently misses the
+    DOCX that half of ATS uploads actually parse.
+
+    Ordered by how a recruiter uses it. Phone and email first because those are
+    how they reply. The portfolio sits beside LinkedIn rather than at the end:
+    it is the only item on the line that shows work rather than asserting it,
+    and past the location nobody reads. Location stays last because it is the
+    field most likely to end the conversation and least likely to start one.
+
+    The visible text stays the address itself, never a "LinkedIn" label. A
+    resume gets printed, forwarded as text, and scraped — and in all three the
+    label survives while the link does not.
     """
     from .outreach import portfolio_host
 
@@ -73,8 +87,37 @@ def _contact_line(profile: Any) -> str:
         .rstrip("/")
     )
     site = portfolio_host(getattr(profile, "portfolio_url", ""))
-    parts = [profile.phone, profile.email, linkedin, site, profile.location]
-    return "  |  ".join(b for b in parts if b)
+    phone = (profile.phone or "").strip()
+    tel = "".join(ch for ch in phone if ch.isdigit() or ch == "+")
+
+    pairs = [
+        (phone, f"tel:{tel}" if tel else ""),
+        ((profile.email or "").strip(), f"mailto:{profile.email}" if profile.email else ""),
+        (linkedin, f"https://{linkedin}" if linkedin else ""),
+        (site, f"https://{site}" if site else ""),
+        ((profile.location or "").strip(), ""),
+    ]
+    return [(text, href) for text, href in pairs if text]
+
+
+def _contact_line(profile: Any) -> str:
+    """The same header as plain text, for anything that cannot carry a link."""
+    return CONTACT_SEP.join(text for text, _ in contact_parts(profile))
+
+
+def _contact_markup(profile: Any) -> str:
+    """The header for ReportLab, with real link annotations on it.
+
+    Deliberately not blue and not underlined. The visible text is already the
+    address, so decorating it adds nothing a reader needs and makes a printed
+    resume look like a web page from 2003. The link is there for the reader who
+    clicks; the text is there for everyone else.
+    """
+    out = []
+    for text, href in contact_parts(profile):
+        safe = _escape(text)
+        out.append(f'<a href="{_escape(href)}">{safe}</a>' if href else safe)
+    return _escape(CONTACT_SEP).join(out)
 
 
 def _edu_period(edu: dict[str, Any]) -> str:
@@ -348,7 +391,7 @@ def _render_pdf(resume: dict[str, Any], profile: Any,
         return t
 
     flow: list[Any] = [Paragraph(_escape(profile.name.upper()), name_s)]
-    flow.append(Paragraph(_escape(_contact_line(profile)), contact_s))
+    flow.append(Paragraph(_contact_markup(profile), contact_s))
     if getattr(profile, "credentials_line", []):
         flow.append(Paragraph(_escape("  |  ".join(profile.credentials_line)), creds_s))
     flow.append(Spacer(1, 3))
@@ -448,8 +491,49 @@ def build_docx(resume: dict[str, Any], profile: Any) -> bytes:
         r.bold, r.italic = bold, italic
         r.font.size = Pt(size)
 
+    def _link_run(paragraph: Any, text: str, url: str, size: float) -> None:
+        """python-docx has no hyperlink API, so the relationship and the
+        w:hyperlink element are built by hand.
+
+        Styled to match the surrounding text rather than picking up Word's
+        Hyperlink style, for the same reason as the PDF: the address is already
+        the visible text, and blue underline on a resume reads as an accident.
+        """
+        r_id = paragraph.part.relate_to(url, _RT.HYPERLINK, is_external=True)
+        link = _El("w:hyperlink")
+        link.set(_qn("r:id"), r_id)
+        run = _El("w:r")
+        props = _El("w:rPr")
+        sz = _El("w:sz")
+        sz.set(_qn("w:val"), str(int(size * 2)))       # half-points
+        props.append(sz)
+        colour = _El("w:color")
+        colour.set(_qn("w:val"), "000000")
+        props.append(colour)
+        run.append(props)
+        node = _El("w:t")
+        node.text = text
+        node.set(_qn("xml:space"), "preserve")
+        run.append(node)
+        link.append(run)
+        paragraph._p.append(link)
+
+    def contact_paragraph(size: float) -> None:
+        p = document.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        parts = contact_parts(profile)
+        for i, (text, href) in enumerate(parts):
+            if i:
+                sep = p.add_run(CONTACT_SEP)
+                sep.font.size = Pt(size)
+            if href:
+                _link_run(p, text, href, size)
+            else:
+                r = p.add_run(text)
+                r.font.size = Pt(size)
+
     centered(profile.name.upper(), 16, bold=True)
-    centered(_contact_line(profile), 9)
+    contact_paragraph(9)
     if getattr(profile, "credentials_line", []):
         centered("  |  ".join(profile.credentials_line), 9, italic=True)
 
