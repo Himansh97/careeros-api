@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import pathlib
 import sqlite3
 from contextlib import contextmanager
 from email.utils import parseaddr
@@ -76,12 +77,36 @@ _SENT_COLUMNS = (
     ("gmail_sent_message_id", "TEXT"),
 )
 
+# Attachments were missing entirely, which is why "resume attached" went out
+# three times with nothing attached. The draft had no field for one, so no
+# review step could catch it and no reader could tell the difference between a
+# reply that forgot the resume and one that never wanted it.
+#
+# Paths rather than bytes. The packet PDFs are regenerated whenever a resume is
+# retailored, and a copy pasted into the database at draft time would quietly
+# become the stale version. The path is resolved and read at send time, so what
+# goes out is what is on disk now, and a missing file is an error rather than an
+# old resume nobody noticed.
+_ATTACHMENT_COLUMNS = (
+    ("attachment_paths", "TEXT"),
+)
+
+# Phrases that promise an attachment. If the body makes the promise and nothing
+# is attached, approval fails -- the same shape as the figure-binding check in
+# Custody: the claim has to be backed by the thing it refers to.
+_ATTACHMENT_CLAIMS = re.compile(
+    r"\b(resume|cv|c\.v\.)\s+(is\s+)?(attached|enclosed)\b"
+    r"|\battach(ed|ing)\s+(is\s+)?(my|the|a)?\s*(resume|cv)\b"
+    r"|\bplease\s+(find|see)\s+(the\s+)?attach",
+    re.IGNORECASE,
+)
+
 
 def _connect() -> sqlite3.Connection:
     conn = store.connect()
     conn.executescript(RECRUITER_MESSAGE_SCHEMA)
     existing = {r[1] for r in conn.execute("PRAGMA table_info(recruiter_reply_drafts)")}
-    for name, kind in _SENT_COLUMNS:
+    for name, kind in _SENT_COLUMNS + _ATTACHMENT_COLUMNS:
         if name not in existing:
             conn.execute(f"ALTER TABLE recruiter_reply_drafts ADD COLUMN {name} {kind}")
     return conn
@@ -122,6 +147,33 @@ def _normalize_addresses(addresses: list[str] | None) -> list[str]:
             normalized.append(value)
             seen.add(value)
     return normalized
+
+
+def _normalize_attachments(value: Any) -> list[str]:
+    """Absolute, de-duplicated paths. Existence is checked at approval, not here.
+
+    A draft is allowed to name a resume that has not been generated yet -- the
+    packet may be rebuilt between drafting and sending. What is not allowed is
+    approving one whose file is missing.
+    """
+    if value in (None, ""):
+        return []
+    if isinstance(value, str):
+        value = [value]
+    out: list[str] = []
+    for item in value:
+        text = str(item or "").strip()
+        if not text:
+            continue
+        resolved = str(pathlib.Path(text).expanduser())
+        if resolved not in out:
+            out.append(resolved)
+    return out
+
+
+def _attachment_paths(row: sqlite3.Row) -> list[str]:
+    raw = _optional(row, "attachment_paths")
+    return json.loads(raw) if raw else []
 
 
 def _draft_values(draft: dict[str, Any]) -> tuple[str, str, str, str, str]:
@@ -174,6 +226,7 @@ def _row_to_draft(row: sqlite3.Row) -> dict[str, Any]:
         "lastErrorMessage": row["last_error_message"],
         "sentAt": _optional(row, "sent_at"),
         "gmailSentMessageId": _optional(row, "gmail_sent_message_id"),
+        "attachments": _attachment_paths(row),
     }
 
 
@@ -210,6 +263,10 @@ def _fingerprint(draft: sqlite3.Row) -> str:
         "bcc": json.loads(draft["bcc_addresses"]),
         "subject": draft["subject"],
         "body": draft["body"],
+        # Swapping the resume changes what gets sent, so it has to change the
+        # fingerprint -- otherwise an approved draft could be re-pointed at a
+        # different file without the approval being invalidated.
+        "attachments": _attachment_paths(draft),
     }
     canonical = json.dumps(content, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -220,8 +277,26 @@ def _validate_complete(draft: sqlite3.Row) -> None:
         raise ValueError("Draft requires at least one recipient")
     if not draft["subject"].strip():
         raise ValueError("Draft requires a subject")
-    if not draft["body"].strip():
+    body = draft["body"]
+    if not body.strip():
         raise ValueError("Draft requires a body")
+
+    attachments = _attachment_paths(draft)
+
+    # The failure this exists to stop: a reply that says "resume attached" and
+    # arrives with nothing attached. It happened three times before the draft
+    # had anywhere to record an attachment at all.
+    if _ATTACHMENT_CLAIMS.search(body) and not attachments:
+        raise ValueError(
+            "Draft says a resume is attached but has no attachment. Attach the "
+            "file, or reword the body so it does not promise one."
+        )
+
+    missing = [p for p in attachments if not pathlib.Path(p).is_file()]
+    if missing:
+        raise ValueError(
+            "Attachment file is missing: " + ", ".join(missing)
+        )
 
 
 def _timeline(conn: sqlite3.Connection, event: sqlite3.Row, label: str) -> None:
@@ -269,10 +344,11 @@ def upsert_message(payload: dict) -> dict:
         conn.execute(
             """INSERT OR IGNORE INTO recruiter_reply_drafts
                (id, gmail_message_id, to_addresses, cc_addresses, bcc_addresses,
-                subject, body, status, created_at, updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                subject, body, status, created_at, updated_at, attachment_paths)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
             (f"rmd_{payload['gmailMessageId']}", payload["gmailMessageId"], to, cc, bcc,
-             subject, body, "awaiting_approval", ts, ts),
+             subject, body, "awaiting_approval", ts, ts,
+             json.dumps(_normalize_attachments(draft.get("attachments")))),
         )
         event = _message_or_raise(conn, payload["gmailMessageId"])
         association_changed = (
@@ -307,7 +383,7 @@ def list_messages(application_id: str | None = None) -> list[dict]:
 
 
 def update_draft(message_id: str, patch: dict) -> dict:
-    allowed = {"to", "cc", "bcc", "subject", "body"}
+    allowed = {"to", "cc", "bcc", "subject", "body", "attachments"}
     unknown = set(patch) - allowed
     if unknown:
         raise ValueError(f"Unsupported draft fields: {', '.join(sorted(unknown))}")
@@ -327,6 +403,9 @@ def update_draft(message_id: str, patch: dict) -> dict:
         if "body" in patch:
             fields.append("body=?")
             values.append(str(patch["body"] or ""))
+        if "attachments" in patch:
+            fields.append("attachment_paths=?")
+            values.append(json.dumps(_normalize_attachments(patch["attachments"])))
         if fields:
             if draft["status"] == "failed":
                 fields.append("content_fingerprint=NULL")
@@ -396,6 +475,31 @@ def retry_draft(message_id: str) -> dict:
         return _row_to_message(conn, event)
 
 
+_MIME_BY_SUFFIX = {
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".txt": "text/plain",
+}
+
+
+def _read_attachments(paths: list[str]) -> list[dict[str, Any]]:
+    """Base64 payloads shaped for the Gmail draft call, so the sender never
+    has to touch the filesystem or encode anything by hand."""
+    import base64
+
+    payloads = []
+    for path in paths:
+        file = pathlib.Path(path)
+        if not file.is_file():
+            raise ValueError(f"Attachment file is missing: {path}")
+        payloads.append({
+            "filename": file.name,
+            "mimeType": _MIME_BY_SUFFIX.get(file.suffix.lower(), "application/octet-stream"),
+            "content": base64.b64encode(file.read_bytes()).decode("ascii"),
+        })
+    return payloads
+
+
 def claim_approved_draft() -> dict | None:
     with _connection() as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -413,7 +517,15 @@ def claim_approved_draft() -> dict | None:
             return None
         event = _message_or_raise(conn, draft["gmail_message_id"])
         _timeline(conn, event, "Draft creation started")
-        return _row_to_message(conn, event)
+        message = _row_to_message(conn, event)
+        # Read the files here, at send time, rather than storing bytes at draft
+        # time -- a resume retailored in between should go out in its current
+        # form, and a file that has disappeared should stop the send instead of
+        # silently dropping the attachment.
+        message["draft"]["attachmentPayloads"] = _read_attachments(
+            _attachment_paths(draft)
+        )
+        return message
 
 
 def mark_draft_created(message_id: str, gmail_draft_id: str) -> dict:

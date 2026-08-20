@@ -184,6 +184,122 @@ class RecruiterMessageStoreTests(unittest.TestCase):
 
         self.assertNotEqual(retried["draft"]["contentFingerprint"], original)
 
+    # ------------------------------------------------------------ attachments
+    #
+    # Three replies went out saying "resume attached" with nothing attached,
+    # because the draft had no field for an attachment and so no check could
+    # notice. These hold the fix to that.
+
+    def _resume(self) -> str:
+        path = Path(self.temp_dir.name) / "Himanshu_Srivastava_Analytics.pdf"
+        path.write_bytes(b"%PDF-1.4\n% not a real resume, but a real file\n")
+        return str(path)
+
+    def test_a_body_promising_a_resume_cannot_be_approved_without_one(self) -> None:
+        payload = self.payload()
+        payload["draft"]["body"] = "Hi Izzy,\n\nResume attached. Happy to talk.\n"
+        upsert_message(payload)
+        with self.assertRaises(ValueError) as caught:
+            approve_draft(payload["gmailMessageId"])
+        self.assertIn("no attachment", str(caught.exception).lower())
+
+    def test_the_same_body_approves_once_the_resume_is_attached(self) -> None:
+        payload = self.payload()
+        payload["draft"]["body"] = "Hi Izzy,\n\nResume attached. Happy to talk.\n"
+        upsert_message(payload)
+        update_draft(payload["gmailMessageId"], {"attachments": [self._resume()]})
+        message = approve_draft(payload["gmailMessageId"])
+        self.assertEqual(message["draft"]["status"], "approved")
+        self.assertEqual(len(message["draft"]["attachments"]), 1)
+
+    def test_the_promise_is_recognised_in_several_phrasings(self) -> None:
+        for body in ("Please find my resume attached.",
+                     "Attaching my resume for your review.",
+                     "My CV is attached below.",
+                     "Please see attached."):
+            with self.subTest(body=body):
+                payload = self.payload()
+                payload["draft"]["body"] = body
+                upsert_message(payload)
+                with self.assertRaises(ValueError):
+                    approve_draft(payload["gmailMessageId"])
+                dismiss_draft(payload["gmailMessageId"])
+
+    def test_a_body_that_promises_nothing_still_approves_with_no_attachment(self) -> None:
+        """The guard must not turn into a requirement that every reply carry a
+        resume -- most of them should not."""
+        payload = self.payload()
+        payload["draft"]["body"] = "Thank you for the update. I appreciate the consideration.\n"
+        upsert_message(payload)
+        self.assertEqual(approve_draft(payload["gmailMessageId"])["draft"]["status"], "approved")
+
+    def test_an_attachment_that_no_longer_exists_blocks_approval(self) -> None:
+        payload = self.payload()
+        upsert_message(payload)
+        missing = str(Path(self.temp_dir.name) / "deleted.pdf")
+        update_draft(payload["gmailMessageId"], {"attachments": [missing]})
+        with self.assertRaises(ValueError) as caught:
+            approve_draft(payload["gmailMessageId"])
+        self.assertIn("missing", str(caught.exception).lower())
+
+    def test_claiming_a_draft_returns_the_file_ready_to_send(self) -> None:
+        """The sender gets base64 it can hand straight to Gmail. Anything less
+        means somebody encodes a PDF by hand, which is how this breaks."""
+        import base64
+
+        payload = self.payload()
+        payload["draft"]["body"] = "Resume attached.\n"
+        upsert_message(payload)
+        resume = self._resume()
+        update_draft(payload["gmailMessageId"], {"attachments": [resume]})
+        approve_draft(payload["gmailMessageId"])
+
+        claimed = claim_approved_draft()
+        sendable = claimed["draft"]["attachmentPayloads"]
+        self.assertEqual(len(sendable), 1)
+        self.assertEqual(sendable[0]["filename"], "Himanshu_Srivastava_Analytics.pdf")
+        self.assertEqual(sendable[0]["mimeType"], "application/pdf")
+        self.assertEqual(base64.b64decode(sendable[0]["content"]),
+                         Path(resume).read_bytes())
+
+    def test_the_file_is_read_at_send_time_not_at_draft_time(self) -> None:
+        """A resume retailored between drafting and sending must go out in its
+        current form, not a copy frozen when the draft was written."""
+        import base64
+
+        payload = self.payload()
+        upsert_message(payload)
+        resume = self._resume()
+        update_draft(payload["gmailMessageId"], {"attachments": [resume]})
+        approve_draft(payload["gmailMessageId"])
+
+        Path(resume).write_bytes(b"%PDF-1.4\n% the retailored version\n")
+        claimed = claim_approved_draft()
+        self.assertIn(b"retailored",
+                      base64.b64decode(claimed["draft"]["attachmentPayloads"][0]["content"]))
+
+    def test_swapping_the_attachment_changes_the_fingerprint(self) -> None:
+        """The fingerprint is what stops an approved draft being re-pointed at a
+        different file after somebody signed off on the first one."""
+        payload = self.payload()
+        upsert_message(payload)
+        first = self._resume()
+        second = str(Path(self.temp_dir.name) / "other.pdf")
+        Path(second).write_bytes(b"%PDF-1.4\n% a different document\n")
+
+        update_draft(payload["gmailMessageId"], {"attachments": [first]})
+        before = approve_draft(payload["gmailMessageId"])["draft"]["contentFingerprint"]
+
+        # Same body, same recipients, different file.
+        payload_two = self.payload()
+        payload_two["gmailMessageId"] = "msg_second"
+        upsert_message(payload_two)
+        update_draft(payload_two["gmailMessageId"], {"attachments": [second]})
+        after = approve_draft(payload_two["gmailMessageId"])["draft"]["contentFingerprint"]
+
+        self.assertNotEqual(before, after,
+                            "two drafts differing only in attachment hashed the same")
+
     def test_rejects_invalid_recipient_addresses(self) -> None:
         """Invalid recipient data must not enter the approved Gmail queue."""
         mid = upsert_message(self.payload())["gmailMessageId"]
