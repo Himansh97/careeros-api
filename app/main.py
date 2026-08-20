@@ -98,6 +98,20 @@ async def usage_budget() -> dict[str, Any]:
     return budget_state()
 
 
+@app.get("/api/news")
+async def news_feed() -> dict[str, Any]:
+    """Recent movement in tech and AI: Hacker News, arXiv, new GitHub repos.
+
+    Public sources, no API keys, cached per-feed by how fast each one actually
+    changes. Headlines only — there is deliberately no model in this path, so
+    nothing here can misdescribe a paper it half-read. A feed that fails is
+    named in `failures` and omitted rather than served stale.
+    """
+    from .newsfeed import newsfeed
+
+    return await newsfeed()
+
+
 @app.get("/api/skywatch")
 async def skywatch_feed() -> dict[str, Any]:
     """Live sky: near-Earth approaches, geomagnetic activity, ISS position.
