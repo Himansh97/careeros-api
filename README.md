@@ -78,3 +78,27 @@ Then point the frontend at it via `NEXT_PUBLIC_API_URL=http://localhost:8000`.
 | POST | `/api/applications/{id}/advance` | Move pipeline stage |
 | GET | `/api/approvals` | Items awaiting human review |
 | POST | `/api/approvals/{id}` | Approve or reject |
+
+## Technical Interview Lab
+
+The lab at `/api/prep/technical` provides a versioned curriculum across SQL,
+statistics, metrics, interpretation, Python/Pandas, modelling, ETL quality,
+dashboard design, and five analyst role missions. Guided attempts use progressive
+hints and require an unaided practice plus a different-shape transfer to establish
+mastery. Timed 30/45/60-minute sessions freeze their question manifest and reveal
+grading only after submission or authoritative server expiry.
+
+SQL executes in a disposable subprocess against server-owned deterministic
+SQLite fixtures. Python executes in a browser Web Worker; the API receives only
+bounded normalized output. Neither path grades against live CareerOS data. The
+optional `build_private_snapshot` helper creates an ungraded aggregate-only local
+sandbox and refuses to copy identifiers, companies, roles, contacts, or free text.
+
+```bash
+./.venv/bin/python -m unittest discover -s tests -v
+./.venv/bin/python scripts/verify_technical_lab.py
+```
+
+To extend the curriculum, add an immutable versioned JSON manifest in
+`app/technical_learning`, register its dataset version, and keep public manifests
+free of expected answers, rubrics, and solutions.

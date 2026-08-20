@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections import Counter
 from pathlib import Path
 from typing import Callable
 
@@ -158,3 +159,52 @@ def dataset_schema(dataset_id: str, version: str) -> list[dict[str, object]]:
         ]
     finally:
         connection.close()
+
+
+def build_private_snapshot(source_path: Path, target_path: Path) -> Path:
+    """Build an opt-in, aggregate-only sandbox from a local CareerOS database.
+
+    The snapshot is intentionally excluded from graded drills and never copies
+    row-level identifiers, company/role names, contacts, or free text.
+    """
+    source = Path(source_path).resolve()
+    target = Path(target_path).resolve()
+    if not source.is_file():
+        raise FileNotFoundError("private snapshot source is unavailable")
+    if target.exists():
+        raise FileExistsError("private snapshot target already exists")
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    with sqlite3.connect(f"file:{source}?mode=ro&immutable=1", uri=True) as connection:
+        available = {
+            row[1]
+            for row in connection.execute('PRAGMA table_info("applications")')
+        }
+        if "status" not in available:
+            raise ValueError("applications.status is required for a private snapshot")
+        date_column = next(
+            (name for name in ("created_at", "applied_at", "submitted_at") if name in available),
+            None,
+        )
+        projection = f'"status", "{date_column}"' if date_column else '"status", NULL'
+        rows = connection.execute(f'SELECT {projection} FROM "applications"').fetchall()
+
+    aggregates: Counter[tuple[str, str]] = Counter()
+    for status, created_at in rows:
+        safe_status = str(status or "unknown").strip().lower()[:80] or "unknown"
+        raw_date = str(created_at or "")
+        month = raw_date[:7] if len(raw_date) >= 7 and raw_date[4:5] == "-" else "unknown"
+        aggregates[(safe_status, month)] += 1
+
+    with sqlite3.connect(target) as connection:
+        connection.execute(
+            "CREATE TABLE applications_summary "
+            "(status TEXT NOT NULL, created_month TEXT NOT NULL, application_count INTEGER NOT NULL)"
+        )
+        connection.executemany(
+            "INSERT INTO applications_summary VALUES (?,?,?)",
+            [(status, month, count) for (status, month), count in sorted(aggregates.items())],
+        )
+        connection.commit()
+        connection.execute("VACUUM")
+    return target

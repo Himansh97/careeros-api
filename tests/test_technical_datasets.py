@@ -49,6 +49,32 @@ class TechnicalDatasetTests(unittest.TestCase):
         finally:
             connection.close()
 
+    def test_private_snapshot_is_aggregate_only_and_omits_pii(self) -> None:
+        source = self.root / "source.sqlite3"
+        target = self.root / "private.sqlite3"
+        with sqlite3.connect(source) as connection:
+            connection.execute(
+                "CREATE TABLE applications "
+                "(id TEXT, company TEXT, title TEXT, status TEXT, created_at TEXT, "
+                "contact_name TEXT, contact_email TEXT, notes TEXT)"
+            )
+            connection.executemany(
+                "INSERT INTO applications VALUES (?,?,?,?,?,?,?,?)",
+                [
+                    ("1", "Acme", "Analyst", "applied", "2026-08-01", "Recruiter", "r@example.com", "private"),
+                    ("2", "Beta", "Engineer", "applied", "2026-08-05", "Hiring", "h@example.com", "secret"),
+                ],
+            )
+
+        built = datasets.build_private_snapshot(source, target)
+        with sqlite3.connect(built) as connection:
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(applications_summary)")}
+            rows = connection.execute("SELECT status, created_month, application_count FROM applications_summary").fetchall()
+
+        self.assertEqual(columns, {"status", "created_month", "application_count"})
+        self.assertEqual(rows, [("applied", "2026-08", 2)])
+        self.assertNotIn("example.com", built.read_bytes().decode("utf-8", errors="ignore"))
+
 
 if __name__ == "__main__":
     unittest.main()
