@@ -28,6 +28,7 @@ from .outreach import build_outreach
 from .profile import ProfileNotFound, load_profile
 from .scoring import score_job_cached as score_job
 from .store import (
+    StatusRegression,
     add_approval,
     advance,
     get_application,
@@ -965,13 +966,43 @@ async def application_outcome(app_id: str, req: OutcomeRequest) -> dict[str, Any
 class AdvanceRequest(BaseModel):
     status: str
     note: str | None = None
+    # Off unless the candidate deliberately picked an earlier stage. The apply
+    # queue once computed a target from a stale cache and wrote it as an
+    # absolute status, dragging a submitted application backwards; defaulting
+    # this to true would reopen exactly that.
+    force: bool = False
+
+
+@app.post("/api/applications/{app_id}/opened")
+async def application_opened(app_id: str) -> dict[str, Any]:
+    """The candidate has gone to the employer's site to apply.
+
+    The one transition in the pipeline that needs no inference: you cannot apply
+    without opening the application. Idempotent, and silent when the application
+    is already further on — re-opening a submitted application to check
+    something is normal and must not read as an error.
+    """
+    from .pipeline_signals import mark_applying
+
+    if not get_application(app_id):
+        raise HTTPException(status_code=404, detail="Application not found")
+    moved = mark_applying(app_id)
+    return {"application": get_application(app_id), "advanced": moved}
 
 
 @app.post("/api/applications/{app_id}/advance")
 async def application_advance(app_id: str, req: AdvanceRequest) -> dict[str, Any]:
     if not get_application(app_id):
         raise HTTPException(status_code=404, detail="Application not found")
-    advance(app_id, req.status, req.note or f"Moved to {req.status}")
+    try:
+        advance(
+            app_id, req.status, req.note or f"Moved to {req.status}",
+            allow_regression=req.force,
+        )
+    except StatusRegression as exc:
+        # 409, not 400: the request is well-formed and the caller is simply out
+        # of date. The UI should refetch rather than rewrite the field.
+        raise HTTPException(status_code=409, detail=str(exc)) from None
     return get_application(app_id)
 
 

@@ -349,10 +349,38 @@ def aging_applications() -> list[Alert]:
     return alerts
 
 
+def unconfirmed_applications() -> list[Alert]:
+    """Opened on the employer's site, and never confirmed.
+
+    Deliberately a question rather than a transition. Plenty of ATSs send no
+    confirmation email at all, so silence is not evidence the application failed
+    -- and it is certainly not evidence it succeeded. Nothing may mark an
+    application `submitted` because time passed; that would write a false send
+    date onto a real application.
+    """
+    from .pipeline_signals import stuck_applying
+
+    return [
+        Alert(
+            kind="application_unconfirmed",
+            severity="high",
+            title=f"{row['company']} — opened {row['days']} days ago, never confirmed",
+            detail=(
+                f"{row['title']} was opened on the employer's site and no "
+                "confirmation has arrived. Some employers never send one."
+            ),
+            action="Confirm whether you submitted it, or reopen and finish it",
+            ref=row["id"],
+        )
+        for row in stuck_applying()
+    ]
+
+
 def build_alerts() -> list[dict[str, Any]]:
     """Everything outstanding, most urgent first."""
     alerts = (failed_reply_drafts() + unsent_recruiter_replies()
-              + blocked_applications() + unsent_outreach() + aging_applications())
+              + blocked_applications() + unsent_outreach() + aging_applications()
+              + unconfirmed_applications())
     order = {"high": 0, "medium": 1}
     alerts.sort(key=lambda a: (order.get(a.severity, 9), a.kind))
     return [a.as_dict() for a in alerts]

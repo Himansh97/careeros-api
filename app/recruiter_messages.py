@@ -357,7 +357,19 @@ def upsert_message(payload: dict) -> dict:
         )
         if association_changed:
             _timeline(conn, event, "Recruiter reply detected")
-        return _row_to_message(conn, event)
+        message = _row_to_message(conn, event)
+
+    # Outside the transaction on purpose: `advance` opens its own connection,
+    # and nesting them on one SQLite file deadlocks under BEGIN IMMEDIATE.
+    #
+    # This is the step that was missing. The classifier has produced
+    # "application confirmation" since the beginning and nothing read it, so
+    # Adobe and CVS both confirmed receipt while their applications sat waiting
+    # for the candidate to press a button.
+    from .pipeline_signals import apply_signal
+
+    message["signal"] = apply_signal(message)
+    return message
 
 
 def get_message(message_id: str) -> dict | None:

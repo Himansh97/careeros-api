@@ -241,6 +241,34 @@ _RESPONSE_STATUSES = ("recruiter_contacted", "screening", "interview", "offer", 
 # cannot silently erase how an application actually ended.
 _TERMINAL = {"offer": "offer", "rejected": "rejected", "withdrawn": "withdrawn"}
 
+# The pipeline in order, so "forwards" is a fact rather than a judgement call.
+#
+# `advance` would happily walk a sent application back to `ready`, and the
+# comment above _UNSENT records what that cost once already: six applications
+# the candidate had actually sent were rewound and offered back to them to send
+# again. Automatic signals make that far likelier -- a confirmation email
+# arriving out of order must not undo a later stage -- so regression is refused
+# unless a human explicitly asks for it.
+_PIPELINE = (
+    "qualified", "tailoring", "draft", "ready", "applying", "submitted",
+    "applied", "recruiter_contacted", "screening", "interview", "offer",
+)
+
+# Ends the application; reachable from anywhere, and never walked back out of.
+_ABSORBING = ("rejected", "withdrawn")
+
+
+def _rank(status: str) -> int:
+    """Position in the pipeline. Unknown statuses rank -1 and never block."""
+    try:
+        return _PIPELINE.index(status)
+    except ValueError:
+        return -1
+
+
+class StatusRegression(Exception):
+    """A transition that would move an application backwards."""
+
 
 def record_outcome(
     app_id: str, outcome: str, reason: str = "", stage: str = ""
@@ -276,14 +304,44 @@ def record_outcome(
         add_timeline(conn, app_id, label)
 
 
-def advance(app_id: str, status: str, note: str) -> None:
+def advance(
+    app_id: str,
+    status: str,
+    note: str,
+    *,
+    at: str | None = None,
+    allow_regression: bool = False,
+) -> None:
     """Move an application on, stamping the timestamps that transition implies.
 
     Each stamp is written only if empty, so re-entering a stage keeps the date
     it was first reached — the first response is the one that matters for
     timing, not the most recent.
+
+    `at` is when the transition actually happened, which is not always now. A
+    confirmation email can arrive days after the application went out, and
+    stamping `submitted_at` with the moment the mail was *read* would put a
+    false date on a real application.
+
+    `allow_regression` is off by default. A human correcting a mistake through
+    the UI may pass it; an automatic signal may not, because a late or
+    misordered email must never undo a stage the application has already
+    reached.
     """
-    ts = now()
+    ts = at or now()
+    current = (get_application(app_id) or {}).get("status")
+    if (
+        not allow_regression
+        and current
+        and current not in _ABSORBING
+        and status not in _ABSORBING
+        and _rank(status) >= 0
+        and _rank(current) > _rank(status)
+    ):
+        raise StatusRegression(
+            f"{app_id} is already at {current!r}; refusing to move it back to "
+            f"{status!r}"
+        )
     with connect() as conn:
         sets = ["status=?", "updated_at=?"]
         args: list[Any] = [status, ts]
