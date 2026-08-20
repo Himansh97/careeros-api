@@ -208,6 +208,8 @@ def blocked_applications() -> list[Alert]:
     A posting that closed and an application that stopped on a verification
     step are both things only the candidate can decide about.
     """
+    from .liveness_sync import is_closure_note
+
     alerts: list[Alert] = []
     with connect() as conn:
         rows = conn.execute(
@@ -220,7 +222,7 @@ def blocked_applications() -> list[Alert]:
         low = note.lower()
         if not any(marker in low for marker in _BLOCKING_NOTES):
             continue
-        closed = "closed" in low or "no longer accepting" in low
+        closed = is_closure_note(note)
         alerts.append(
             Alert(
                 kind="application_closed" if closed else "application_blocked",
@@ -307,14 +309,23 @@ def aging_applications() -> list[Alert]:
     """
     from .store import connect
 
+    from .liveness_sync import is_closure_note
+
     alerts: list[Alert] = []
     with connect() as conn:
         rows = conn.execute(
-            "SELECT job_id, company, title, status, updated_at, created_at, apply_url"
+            "SELECT job_id, company, title, status, updated_at, created_at, apply_url,"
+            " next_action"
             " FROM applications WHERE status IN ('ready','qualified','tailoring')"
         ).fetchall()
 
     for row in rows:
+        # A closed posting is already reported by its own alert; saying it is
+        # also stale is noise on something that cannot be acted on. This comment
+        # sat above no filter at all, and `next_action` was not even selected,
+        # so eight dead postings were telling the candidate to go submit them.
+        if is_closure_note(row["next_action"]):
+            continue
         stamp = row["created_at"] or row["updated_at"]
         hours = _age_hours(stamp)
         if hours is None:
@@ -322,8 +333,6 @@ def aging_applications() -> list[Alert]:
         days = hours / 24.0
         if days < STALE_AFTER_DAYS:
             continue
-        # A closed posting is already reported by its own alert; saying it is
-        # also stale is noise on something that cannot be acted on.
         alerts.append(
             Alert(
                 kind="application_aging",

@@ -31,9 +31,21 @@ CLOSED_NOTE = "Posting closed — no longer accepting"
 _OURS = ("posting closed", "no longer accepting")
 
 
-def _is_closure_note(note: str | None) -> bool:
+def is_closure_note(note: str | None) -> bool:
+    """Does this `next_action` mean the posting is gone?
+
+    Public because three places need the answer and two of them were deciding
+    it for themselves. `alerts.blocked_applications` re-derived it with its own
+    string test, and `alerts.aging_applications` carried a comment saying closed
+    postings were skipped while doing no such thing — so a closed posting still
+    produced "ready for 10 days, go submit it". One definition, imported.
+    """
     low = (note or "").lower()
     return any(marker in low for marker in _OURS)
+
+
+# Kept so nothing importing the private name breaks.
+_is_closure_note = is_closure_note
 
 
 def apply_verdicts(checks: list[dict[str, Any]], apps: list[dict[str, Any]]) -> dict[str, int]:

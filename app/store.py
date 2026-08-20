@@ -313,6 +313,10 @@ def _optional(row: sqlite3.Row, key: str) -> Any:
 
 
 def _row_to_app(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
+    # Imported here rather than at module scope: liveness_sync imports from this
+    # module, and a top-level import would close the loop.
+    from .liveness_sync import is_closure_note
+
     events = conn.execute(
         "SELECT label, at FROM timeline WHERE application_id=? ORDER BY id", (row["id"],)
     ).fetchall()
@@ -328,6 +332,11 @@ def _row_to_app(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
         "resumeScore": row["resume_score"],
         "applyUrl": row["apply_url"],
         "nextAction": row["next_action"],
+        # Whether the posting is gone, as a field rather than as a string every
+        # caller has to parse for itself. A "ready" application against a closed
+        # posting is not ready for anything, and eight of them were sitting in
+        # the queue sorted by fit score with nothing to tell them apart.
+        "postingClosed": is_closure_note(row["next_action"]),
         # When this application last changed. Already stored on every write;
         # it simply was not returned, so the resume list had no recency signal
         # and "where is the one I was working on" had no answer.
