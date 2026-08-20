@@ -7,6 +7,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import pathlib
+import sys
+
+# Every other test file in this repo carries this. Without it, running the way
+# AGENTS.md documents — `./.venv/bin/python tests/<file>.py` — dies on
+# "No module named 'app'", so eight passing suites read as a broken suite.
+# `tests/test_recruiter_messages.py` records this exact bug happening before.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from app.technical_learning import datasets
 
 
