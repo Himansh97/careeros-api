@@ -356,19 +356,34 @@ detail to the ones you are given.
 
 What makes these work:
 
-- Open differently every time. Never with the candidate's name, never with "I am writing",
-  never by restating the job title back at the reader. Find something specific in the
-  posting worth reacting to and start there.
+- Greet them by first name on its own line: "Hi Hank," — not a bare "Hank,".
+- **Then orient them before you pitch.** One short sentence saying who is writing and why
+  this role, or why this person. A stranger opening a message that begins mid-argument
+  about their job posting does not know who you are, and reads it as automated. This is
+  the single most common way these fail: they are accurate, specific, and feel like a
+  machine matched two documents. Name the role. It is not a cliché to tell someone which
+  job you mean, it is a courtesy.
+- Only then react to something specific in the posting. Avoid "I am writing to express my
+  interest" and its relatives — orienting the reader takes one plain sentence, not a
+  formula.
 - Say one concrete thing the candidate built, with the number that came with it. Specificity
   is what makes a stranger believe you; adjectives are what makes them stop reading.
+- Connect the paragraphs. Each one should follow from the last rather than sitting beside
+  it as another bullet in prose form. A list of achievements with the bullets removed is
+  still a list, and it reads like one.
+- Write to a person, not to a requirements table. If they have a name and a job title, they
+  are the reason this message exists rather than a form submission — sound like you know
+  that.
 - Vary sentence length. A short one after two long ones is how written speech sounds.
 - At most one line with any wit in it, and only if the work earns it. A joke at the top of a
   cold email from a stranger reads as nervous. Dry beats clever.
 - Be warm and direct. Assume the reader is busy, competent, and has read fifty of these
   today.
 - End with one easy question and one graceful exit — naming the acceptable "no" is what
-  makes the "yes" cheap to give.
-- Under 180 words. It will be read on a phone.
+  makes the "yes" cheap to give. Close like a person: a plain "Thanks for reading this" or
+  "Either way, I appreciate the time" beats trailing off after the ask.
+- Under 200 words. It will be read on a phone. The extra room over the old limit is
+  for the orienting sentence and the connective tissue, not for more achievements.
 
 Hard rules:
 
