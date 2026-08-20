@@ -34,6 +34,7 @@ class Drill(BaseModel):
     dataset_id: str | None = None
     dataset_version: str | None = None
     starter_answer: str = ""
+    fixture: dict[str, Any] = Field(default_factory=dict)
     expected_sql: str | None = None
     expected_output: Any | None = None
     rubric: list[RubricElement] = Field(default_factory=list)
@@ -51,6 +52,8 @@ class Drill(BaseModel):
             raise ValueError("SQL drills require expected_sql")
         if self.kind == "python" and self.expected_output is None:
             raise ValueError("Python drills require expected_output")
+        if self.kind == "python" and not self.fixture:
+            raise ValueError("Python drills require a synthetic fixture")
         if self.kind == "case" and not self.rubric:
             raise ValueError("Case drills require rubric")
         if self.kind in {"sql", "python"} and not self.dataset_id:

@@ -66,6 +66,12 @@ class TechnicalCurriculumTests(unittest.TestCase):
         with self.assertRaisesRegex(KeyError, "drill"):
             get_drill("missing", CURRICULUM_VERSION)
 
+    def test_python_drills_include_small_public_synthetic_fixtures(self) -> None:
+        for drill in (item for item in load_curriculum().drills if item.kind == "python"):
+            self.assertTrue(drill.fixture, drill.id)
+            self.assertLess(len(repr(drill.fixture)), 10_000)
+            self.assertNotIn("expected_output", repr(public_curriculum()["drills"]))
+
 
 if __name__ == "__main__":
     unittest.main()
