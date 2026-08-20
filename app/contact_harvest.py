@@ -69,6 +69,9 @@ def usable(email: str, suffix: str) -> bool:
 
 
 _REPOS_SCANNED = 5
+
+# Enough to establish a pattern and leave a few real humans; not a directory.
+MAX_SAVED = 6
 _COMMITS_PER_REPO = 100
 
 
@@ -106,6 +109,51 @@ async def find_org(client: httpx.AsyncClient, company: str, domain: str) -> str 
         # picks up fan accounts and unrelated orgs with similar names.
         if domain and domain.lower() in blog:
             return login
+    return None
+
+
+async def resolve_domain(client: httpx.AsyncClient, company: str) -> str | None:
+    """A company's mail domain, from the website its GitHub org publishes.
+
+    `resolve_domain_by_company` asks Hunter, which is the only route the system
+    had and which stops the moment a free tier is spent — Lyft was unreachable
+    for exactly that reason while its own GitHub org states lyft.com plainly.
+
+    This is confirmation rather than inference: the domain is read off the
+    organisation's own profile, not assembled from the company name. An org
+    whose name does not resemble the company is ignored, because the failure
+    worth avoiding is confidently returning some unrelated project's domain.
+    """
+    r = await client.get(
+        f"{GITHUB_API}/search/users",
+        params={"q": f"{company} type:org", "per_page": 5},
+        headers=_headers(),
+    )
+    if r.status_code != 200:
+        return None
+
+    wanted = re.sub(r"[^a-z0-9]", "", company.lower())
+    for item in (r.json().get("items") or [])[:5]:
+        login = item.get("login") or ""
+        if not login:
+            continue
+        slug = re.sub(r"[^a-z0-9]", "", login.lower())
+        if wanted not in slug and slug not in wanted:
+            continue
+        detail = await client.get(f"{GITHUB_API}/orgs/{login}", headers=_headers())
+        if detail.status_code != 200:
+            continue
+        blog = (detail.json().get("blog") or "").strip()
+        m = re.search(r"https?://([^/]+)", blog if "://" in blog else f"http://{blog}")
+        if not m:
+            continue
+        host = m.group(1).lower()
+        if host.startswith("www."):
+            host = host[4:]
+        # A domain that publishes no mail servers is not a mail domain, whatever
+        # the profile says.
+        if host and accepts_mail(host):
+            return host
     return None
 
 
@@ -263,6 +311,15 @@ async def harvest(company: str, domain: str,
     }
 
     async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+        if not domain:
+            # Last resort before giving up, and free — the org states its own
+            # website, so this keeps working when every paid resolver is dry.
+            domain = await resolve_domain(client, company)
+            result["domain"] = domain
+            result["acceptsMail"] = accepts_mail(domain) if domain else None
+        if not domain:
+            result["notes"].append("no mail domain could be resolved for this company")
+            return result
         org = await find_org(client, company, domain)
         result["org"] = org
         if org:
@@ -282,4 +339,97 @@ async def harvest(company: str, domain: str,
     result["pattern"], result["patternSamples"] = pattern, count
     if not pattern and samples:
         result["notes"].append("samples disagree — no single pattern to infer from")
+    return result
+
+
+# ------------------------------------------------------- saving what is found
+
+
+def known_for(company: str) -> list[tuple[str, str]]:
+    """Name/email pairs already recorded for a company.
+
+    The pattern needs no storage of its own: saved contacts *are* the samples,
+    so it stays correct as more are found rather than freezing at whatever was
+    true the first time.
+    """
+    import sqlite3
+
+    from .store import connect
+
+    conn = connect()
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT name, email FROM contacts WHERE company=? AND email IS NOT NULL"
+            " AND email != ''", (company,)
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    return [(r["name"], r["email"]) for r in rows]
+
+
+def infer_for(name: str, company: str, domain: str) -> dict[str, Any] | None:
+    """An address for someone whose name you have but whose address you do not.
+
+    This is the half of the tool that keeps working after every provider is dry.
+    Given a name from anywhere — a job posting, a colleague, a page the candidate
+    read themselves — it applies the pattern this company demonstrably uses.
+
+    Returns None rather than a guess when no pattern is established. An address
+    built from no evidence is indistinguishable from one built from plenty, and
+    that is exactly the confusion this module exists to prevent.
+    """
+    pattern, samples = detect_pattern(known_for(company))
+    if not pattern:
+        return None
+    email = apply_pattern(name, domain, pattern)
+    if not email:
+        return None
+    return {
+        "email": email,
+        "name": name,
+        "source": "inferred",
+        "verified": False,
+        # Deliberately below every harvested address. A guess from twenty
+        # samples is still a guess, and must never outrank a proven one.
+        "confidence": min(70, 40 + samples * 3),
+        "why": f"{company} uses {pattern} across {samples} known addresses",
+    }
+
+
+async def harvest_and_save(company: str, domain: str,
+                           job_id: str | None = None) -> dict[str, Any]:
+    """Harvest a company and record what was found, provenance intact."""
+    from .contacts import save_contact
+
+    result = await harvest(company, domain, known_for(company))
+    saved = []
+    # A cap, because the point of harvesting is mostly the *pattern*, and a
+    # handful of samples establishes it as firmly as fifty. Left uncapped it
+    # saved 51 Datadog engineers into a table meant for people to write to,
+    # burying the two recruiters already in there.
+    for contact in result["contacts"][:MAX_SAVED]:
+        if not contact.get("name"):
+            # A commit with no author name gives nothing to address a message
+            # to, and "Hi ," is worse than not writing.
+            continue
+        save_contact({
+            "company": company,
+            "jobId": job_id,
+            "name": contact["name"],
+            "title": None,
+            "email": contact["email"],
+            # Proven to exist, which is not the same as verified deliverable.
+            # The distinction matters and the column means the latter.
+            "emailVerified": False,
+            "confidence": contact["confidence"],
+            "provider": "github-commits",
+            "whySelected": contact["why"],
+        })
+        saved.append(contact["email"])
+
+    # Recomputed after saving, so it reflects everything now on file.
+    pattern, samples = detect_pattern(known_for(company))
+    result["saved"] = saved
+    result["pattern"], result["patternSamples"] = pattern, samples
     return result

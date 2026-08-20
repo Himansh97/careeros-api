@@ -1350,6 +1350,31 @@ async def job_contacts(job_id: str) -> dict[str, Any]:
     return result
 
 
+@app.post("/api/jobs/{job_id}/contacts/harvest")
+async def harvest_job_contacts(job_id: str) -> dict[str, Any]:
+    """Find addresses at this employer from public sources, costing nothing.
+
+    Used when every paid provider is dry, which is the normal state on free
+    tiers. Returns what was harvested and the address pattern now derivable,
+    each labelled with where it came from — a harvested address exists, an
+    inferred one is a guess, and the two must never be presented alike.
+    """
+    from .contact_harvest import harvest_and_save
+    from .contacts import company_domain, resolve_domain_by_company
+
+    job = await _job_or_404(job_id)
+    company = job["company"]["name"]
+    domain = company_domain(company, job.get("applyUrl", "")) or \
+        await resolve_domain_by_company(company)
+    if not domain:
+        raise HTTPException(
+            status_code=422,
+            detail=("No employer mail domain could be resolved for this posting. "
+                    "Nothing can be looked up without one."),
+        )
+    return await harvest_and_save(company, domain, job_id)
+
+
 @app.get("/api/contacts")
 async def contacts() -> dict[str, Any]:
     return {"contacts": list_contacts(), "lookupEnabled": hunter_key() is not None}
