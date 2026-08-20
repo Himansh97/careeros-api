@@ -48,6 +48,7 @@ from .recruiter_messages import (
     retry_draft,
     update_draft,
 )
+from .technical_learning.router import router as technical_learning_router
 
 app = FastAPI(title="CareerOS API", version="1.0.0")
 app.add_middleware(
@@ -57,6 +58,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(technical_learning_router)
 
 
 def _profile():
