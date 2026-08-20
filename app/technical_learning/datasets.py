@@ -5,6 +5,24 @@ from collections import Counter
 from pathlib import Path
 from typing import Callable
 
+
+_PRIVATE_SNAPSHOT_STATUSES = {
+    "applied",
+    "applying",
+    "draft",
+    "interview",
+    "interviewing",
+    "offer",
+    "qualified",
+    "ready",
+    "recruiter_contacted",
+    "rejected",
+    "screening",
+    "submitted",
+    "tailoring",
+    "withdrawn",
+}
+
 from app.config import CAREEROS_DIR
 
 
@@ -191,7 +209,12 @@ def build_private_snapshot(source_path: Path, target_path: Path) -> Path:
 
     aggregates: Counter[tuple[str, str]] = Counter()
     for status, created_at in rows:
-        safe_status = str(status or "unknown").strip().lower()[:80] or "unknown"
+        normalized_status = str(status or "").strip().lower()
+        safe_status = (
+            normalized_status
+            if normalized_status in _PRIVATE_SNAPSHOT_STATUSES
+            else "other"
+        )
         raw_date = str(created_at or "")
         month = raw_date[:7] if len(raw_date) >= 7 and raw_date[4:5] == "-" else "unknown"
         aggregates[(safe_status, month)] += 1

@@ -63,6 +63,7 @@ class TechnicalDatasetTests(unittest.TestCase):
                 [
                     ("1", "Acme", "Analyst", "applied", "2026-08-01", "Recruiter", "r@example.com", "private"),
                     ("2", "Beta", "Engineer", "applied", "2026-08-05", "Hiring", "h@example.com", "secret"),
+                    ("3", "Gamma", "Scientist", "person@example.com", "2026-08-05", "Contact", "c@example.com", "private"),
                 ],
             )
 
@@ -72,7 +73,7 @@ class TechnicalDatasetTests(unittest.TestCase):
             rows = connection.execute("SELECT status, created_month, application_count FROM applications_summary").fetchall()
 
         self.assertEqual(columns, {"status", "created_month", "application_count"})
-        self.assertEqual(rows, [("applied", "2026-08", 2)])
+        self.assertEqual(rows, [("applied", "2026-08", 2), ("other", "2026-08", 1)])
         self.assertNotIn("example.com", built.read_bytes().decode("utf-8", errors="ignore"))
 
 
