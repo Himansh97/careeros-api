@@ -163,3 +163,44 @@ async def check_all(
             results.append({**entry, "verdict": verdict, "why": why, "method": "firecrawl"})
 
     return results
+
+
+# A summary that does not add up is worse than no summary. The script counted
+# only `unverified` as unchecked and never counted `unknown` at all, so a run
+# where Firecrawl rate-limited a dozen postings printed
+#
+#     55 checked — 10 closed, 42 live, 0 unverifiable
+#
+# where 10 + 42 = 52. Three postings vanished from their own report, and the
+# line actively asserted that everything had been determined. Undetermined is
+# not live, and a check that could not reach a page has to say so.
+def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """Counts that account for every result, plus why any went undetermined."""
+    counts: dict[str, int] = {}
+    for r in results:
+        counts[r.get("verdict") or "unknown"] = counts.get(r.get("verdict") or "unknown", 0) + 1
+
+    undetermined = [r for r in results
+                    if r.get("verdict") not in ("live", "closed")]
+    reasons: dict[str, int] = {}
+    for r in undetermined:
+        reasons[str(r.get("why") or "no reason given")] = (
+            reasons.get(str(r.get("why") or "no reason given"), 0) + 1
+        )
+
+    summary = {
+        "total": len(results),
+        "counts": counts,
+        "undetermined": len(undetermined),
+        "reasons": reasons,
+        # Transient and worth calling out separately: re-running later fixes it,
+        # whereas a missing key or a dead URL does not.
+        "rate_limited": sum(1 for r in undetermined if "429" in str(r.get("why") or "")),
+    }
+    accounted = counts.get("live", 0) + counts.get("closed", 0) + summary["undetermined"]
+    if accounted != summary["total"]:      # pragma: no cover - arithmetic guard
+        raise AssertionError(
+            f"liveness summary does not account for every result: "
+            f"{accounted} of {summary['total']}"
+        )
+    return summary

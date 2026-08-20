@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.discovery import fetch_all_jobs  # noqa: E402
-from app.liveness import check_all, firecrawl_key  # noqa: E402
+from app.liveness import check_all, firecrawl_key, summarize  # noqa: E402
 from app.store import add_timeline, connect, list_applications, now  # noqa: E402
 
 MARK = {"live": "  live     ", "closed": "  CLOSED   ",
@@ -46,6 +46,7 @@ async def main() -> int:
         print(f"{MARK.get(r['verdict'], '  ?        ')} {r['company'][:24]:<24} "
               f"{r['title'][:38]:<38} {r['why']}")
 
+    summary = summarize(results)
     closed = [r for r in results if r["verdict"] == "closed"]
     unchecked = [r for r in results if r["verdict"] == "unverified"]
 
@@ -60,9 +61,19 @@ async def main() -> int:
             print(f"\n  cleared {changed['cleared']} stale closed flag(s) — "
                   "those postings are live again")
 
-    print(f"\n  {len(results)} checked — {len(closed)} closed, "
-          f"{sum(1 for r in results if r['verdict'] == 'live')} live, "
-          f"{len(unchecked)} unverifiable")
+    print(f"\n  {summary['total']} checked — {summary['counts'].get('closed', 0)} closed, "
+          f"{summary['counts'].get('live', 0)} live, "
+          f"{summary['undetermined']} undetermined")
+
+    # Undetermined is not live. Saying so, with the reason, is the difference
+    # between "everything is fine" and "I could not reach twelve of these".
+    if summary["undetermined"]:
+        print("\n  Undetermined — these were NOT confirmed open or closed:")
+        for why, n in sorted(summary["reasons"].items(), key=lambda kv: -kv[1]):
+            print(f"    {n:>3}  {why}")
+        if summary["rate_limited"]:
+            print(f"\n  {summary['rate_limited']} of those were rate-limited (HTTP 429).")
+            print("  That is transient — re-run later and they will resolve.")
 
     if unchecked and not key:
         print("\n  Set FIRECRAWL_API_KEY in careeros-api/.env to check the rest.")
