@@ -106,6 +106,80 @@ class OutreachDraftTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             approve_outreach(OID)
 
+    # ------------------------------------------------ the duplicate guard
+
+    def _contact(self, email: str = "hank@acme.test") -> None:
+        with store.connect() as conn:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS contacts (id TEXT PRIMARY KEY,"
+                " job_id TEXT, company TEXT, name TEXT, title TEXT, email TEXT,"
+                " email_verified INTEGER, linkedin_url TEXT, confidence INTEGER,"
+                " provider TEXT, why_selected TEXT, status TEXT)"
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO contacts (id, company, name, email)"
+                " VALUES ('c_1','Acme Logistics','Hank',?)", (email,)
+            )
+            conn.execute("UPDATE outreach SET contact_id='c_1' WHERE id=?", (OID,))
+            conn.commit()
+
+    def test_someone_already_written_to_is_not_approved_again(self) -> None:
+        """Three people received the same outreach twice in one day because a
+        second batch was drafted while the first had already gone out."""
+        self._outreach()
+        self._contact()
+        with store.connect() as conn:
+            conn.execute(
+                "INSERT INTO outreach (id, job_id, company, job_title, channel,"
+                " status, contact_id, sent_at, created_at)"
+                " VALUES ('o_earlier','j2','Acme Logistics','Data Analyst','email',"
+                " 'sent','c_1','2026-08-20T05:10:00+00:00','2026-08-01T00:00:00+00:00')"
+            )
+            conn.commit()
+
+        with self.assertRaises(outreach_store.AlreadyContacted) as caught:
+            approve_outreach(OID)
+        self.assertIn("already written to", str(caught.exception))
+
+    def test_a_deliberate_follow_up_can_still_be_approved(self) -> None:
+        """A second approach on purpose is not a duplicate, and the guard must
+        not make a genuine follow-up impossible."""
+        self._outreach()
+        self._contact()
+        with store.connect() as conn:
+            conn.execute(
+                "INSERT INTO outreach (id, job_id, company, job_title, channel,"
+                " status, contact_id, sent_at, created_at)"
+                " VALUES ('o_earlier','j2','Acme Logistics','Data Analyst','email',"
+                " 'sent','c_1','2026-08-20T05:10:00+00:00','2026-08-01T00:00:00+00:00')"
+            )
+            conn.commit()
+        self.assertEqual(
+            approve_outreach(OID, force=True)["draftStatus"], "approved"
+        )
+
+    def test_a_first_approach_is_not_blocked(self) -> None:
+        self._outreach()
+        self._contact()
+        self.assertEqual(approve_outreach(OID)["draftStatus"], "approved")
+
+    def test_the_result_says_whether_the_check_could_conclude_anything(self) -> None:
+        """"No prior contact" read off a stale mailbox snapshot is not a finding.
+        The caller has to be able to tell that apart from a real all-clear."""
+        self._outreach()
+        self._contact()
+        check = approve_outreach(OID)["duplicateCheck"]
+        self.assertTrue(check["checked"])
+        self.assertEqual(check["priorSends"], 0)
+        self.assertIn("conclusive", check)
+
+    def test_outreach_with_no_contact_is_not_silently_cleared(self) -> None:
+        """Nothing to check against is not the same as checked and clean."""
+        self._outreach()
+        check = approve_outreach(OID)["duplicateCheck"]
+        self.assertFalse(check["checked"])
+        self.assertFalse(check["conclusive"])
+
     # --------------------------------------------------------- the handoff
 
     def test_claiming_returns_the_attachment_ready_to_send(self) -> None:

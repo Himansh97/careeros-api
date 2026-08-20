@@ -8,6 +8,7 @@ way to burn a contact.
 from __future__ import annotations
 
 import json
+import pathlib
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -306,6 +307,104 @@ def toggle_search(sid: str) -> None:
 # candidate presses send in Gmail, having read it.
 
 
+# A mailbox snapshot older than this describes a mailbox that has moved on, so
+# its silence stops meaning anything. Same threshold daily_fetch reconciles at.
+SNAPSHOT_STALE_HOURS = 36
+
+
+def _sent_snapshot() -> tuple[list[dict[str, Any]], float | None]:
+    """Messages this account has already sent, and how old that record is.
+
+    Read from the gitignored Gmail snapshot, because CareerOS holds no Gmail
+    credentials and cannot look at the live mailbox itself. The age is returned
+    with it: a stale snapshot that shows nothing is not evidence that nothing
+    was sent, and a caller that cannot tell those apart will state the wrong
+    thing confidently.
+    """
+    import datetime
+
+    path = pathlib.Path.home() / "careeros" / "gmail-snapshot" / "sent.json"
+    if not path.exists():
+        return [], None
+    age_hours = (
+        datetime.datetime.now() - datetime.datetime.fromtimestamp(path.stat().st_mtime)
+    ).total_seconds() / 3600
+    try:
+        payload = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return [], age_hours
+
+    threads = payload if isinstance(payload, list) else payload.get("threads", [])
+    out = []
+    for thread in threads:
+        for message in thread.get("messages", []):
+            for address in message.get("toRecipients") or []:
+                out.append({
+                    "to": str(address).lower(),
+                    "subject": message.get("subject") or "",
+                    "date": message.get("date") or "",
+                })
+    return out, age_hours
+
+
+def prior_sends(email: str, company: str = "") -> dict[str, Any]:
+    """Whether this person has already been written to, and how sure we are.
+
+    Two independent sources, because neither is complete on its own:
+
+    * **The outreach table** — what this system knows it sent. It missed a batch
+      once: rows sat at `drafted` while the emails had already gone out, and a
+      second set of drafts was written for the same three people, who each
+      received the same message twice in one day.
+    * **The Gmail sent snapshot** — what actually left the mailbox, which is the
+      only place a send made outside this system appears at all.
+
+    The snapshot's age is reported rather than swallowed. Beyond
+    SNAPSHOT_STALE_HOURS it cannot rule anything out, and saying "no prior
+    contact" from a two-day-old file is exactly the false confidence that caused
+    the duplicates.
+    """
+    address = (email or "").strip().lower()
+    hits: list[dict[str, Any]] = []
+
+    rows = []
+    if address:
+        with connect() as conn:
+            _ensure(conn)
+            try:
+                rows = conn.execute(
+                    "SELECT o.company, o.job_title, o.sent_at FROM outreach o"
+                    " JOIN contacts c ON c.id = o.contact_id"
+                    " WHERE lower(c.email)=? AND o.sent_at IS NOT NULL", (address,)
+                ).fetchall()
+            except sqlite3.OperationalError:
+                # `contacts` is owned by app/contacts.py and is created lazily.
+                # Its absence means no contact has been recorded, not an error.
+                rows = []
+        hits += [
+            {"source": "outreach", "when": r["sent_at"],
+             "what": f"{r['company']} — {r['job_title']}"}
+            for r in rows
+        ]
+
+    snapshot, age_hours = _sent_snapshot()
+    if address:
+        hits += [
+            {"source": "gmail", "when": m["date"], "what": m["subject"]}
+            for m in snapshot if m["to"] == address
+        ]
+
+    stale = age_hours is None or age_hours > SNAPSHOT_STALE_HOURS
+    return {
+        "email": address,
+        "sends": sorted(hits, key=lambda h: str(h["when"]), reverse=True),
+        "snapshotAgeHours": round(age_hours, 1) if age_hours is not None else None,
+        # True when the mailbox record is too old to rule anything out. A caller
+        # showing "no prior contact" must show this next to it.
+        "snapshotStale": stale,
+    }
+
+
 def set_attachments(oid: str, paths: Any) -> dict[str, Any] | None:
     with connect() as conn:
         _ensure(conn)
@@ -316,12 +415,51 @@ def set_attachments(oid: str, paths: Any) -> dict[str, Any] | None:
     return get_outreach(oid)
 
 
-def approve_outreach(oid: str) -> dict[str, Any] | None:
+def _contact_email(conn: sqlite3.Connection, oid: str) -> str | None:
+    """The recipient's address, or None when there is no contact on file."""
+    try:
+        row = conn.execute(
+            "SELECT c.email FROM outreach o LEFT JOIN contacts c"
+            " ON c.id = o.contact_id WHERE o.id=?", (oid,)
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    return (row["email"] if row else None) or None
+
+
+class AlreadyContacted(ValueError):
+    """This person has been written to already."""
+
+
+def approve_outreach(oid: str, *, force: bool = False) -> dict[str, Any] | None:
     """Mark a composed outreach email ready for a Gmail draft to be made.
 
-    Refuses a body that promises a resume it does not have — the failure that
-    sent three recruiter replies saying "resume attached" with nothing attached.
+    Two refusals, both from failures that happened:
+
+    * A body that promises a resume it does not have — the one that sent three
+      recruiter replies saying "resume attached" with nothing attached.
+    * A recipient who has already been written to. Three people received the
+      same outreach twice in one day because a second batch of drafts was
+      written while the first had already gone out, and nothing looked.
+
+    `force` is for the deliberate second approach — a genuine follow-up is not a
+    duplicate — and it is recorded rather than silent.
     """
+    if not force:
+        with connect() as conn:
+            _ensure(conn)
+            row = _contact_email(conn, oid)
+        email = row or ""
+        if email:
+            history = prior_sends(email)
+            if history["sends"]:
+                last = history["sends"][0]
+                raise AlreadyContacted(
+                    f"{email} was already written to on {str(last['when'])[:10]} "
+                    f"({last['what'][:60]}). Approve with force=true if this is a "
+                    "deliberate follow-up."
+                )
+
     with connect() as conn:
         _ensure(conn)
         row = conn.execute("SELECT * FROM outreach WHERE id=?", (oid,)).fetchone()
@@ -337,7 +475,23 @@ def approve_outreach(oid: str) -> dict[str, Any] | None:
             " last_error_message=NULL WHERE id=?",
             (now(), oid),
         )
-    return get_outreach(oid)
+    record = get_outreach(oid)
+    if record:
+        with connect() as conn:
+            _ensure(conn)
+            row = _contact_email(conn, oid)
+        email = row or ""
+        history = prior_sends(email) if email else {"snapshotStale": True,
+                                                    "snapshotAgeHours": None}
+        # "No prior contact" from a stale mailbox record is not a finding, and a
+        # caller that cannot tell the difference will state it as one.
+        record["duplicateCheck"] = {
+            "checked": bool(email),
+            "priorSends": len(history.get("sends", [])),
+            "snapshotAgeHours": history.get("snapshotAgeHours"),
+            "conclusive": bool(email) and not history.get("snapshotStale", True),
+        }
+    return record
 
 
 def claim_approved_outreach() -> dict[str, Any] | None:

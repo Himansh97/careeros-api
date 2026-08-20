@@ -1462,6 +1462,9 @@ async def outreach_status(outreach_id: str, req: OutreachAction) -> dict[str, An
 class OutreachDraftAction(BaseModel):
     action: str                      # approve | dismiss
     attachments: list[str] | None = None
+    # A deliberate second approach to someone already contacted. Off by default
+    # so a duplicate has to be chosen rather than merely not noticed.
+    force: bool = False
 
 
 @app.post("/api/outreach/{outreach_id}/draft")
@@ -1473,7 +1476,8 @@ async def outreach_draft(outreach_id: str, req: OutreachDraftAction) -> dict[str
     the draft, which the candidate then reads and sends themselves.
     """
     from .outreach_store import (
-        approve_outreach, dismiss_outreach, get_outreach, set_attachments,
+        AlreadyContacted, approve_outreach, dismiss_outreach, get_outreach,
+        set_attachments,
     )
 
     if not get_outreach(outreach_id):
@@ -1482,9 +1486,12 @@ async def outreach_draft(outreach_id: str, req: OutreachDraftAction) -> dict[str
         set_attachments(outreach_id, req.attachments)
     try:
         if req.action == "approve":
-            return approve_outreach(outreach_id) or {}
+            return approve_outreach(outreach_id, force=req.force) or {}
         if req.action == "dismiss":
             return dismiss_outreach(outreach_id) or {}
+    except AlreadyContacted as exc:
+        # 409, not 400: the request is fine, the world already contains a send.
+        raise HTTPException(status_code=409, detail=str(exc)) from None
     except ValueError as exc:
         # The attachment guard, mostly: a body promising a resume it lacks.
         raise HTTPException(status_code=400, detail=str(exc)) from None
