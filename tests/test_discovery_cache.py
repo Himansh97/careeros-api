@@ -33,6 +33,9 @@ class StaleWhileRevalidate(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         discovery._cache.clear()
         discovery._refresh_task = None
+        restore = mock.patch.object(discovery, "_restore_durable_cache", return_value=None)
+        restore.start()
+        self.addCleanup(restore.stop)
 
     async def asyncTearDown(self) -> None:
         task = discovery._refresh_task

@@ -8,6 +8,7 @@ the client rather than hidden.
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 import html
 import logging
 import re
@@ -20,6 +21,13 @@ from .config import (
     CACHE_TTL_SECONDS,
     GREENHOUSE_COMPANIES,
     HTTP_TIMEOUT_SECONDS,
+)
+from .discovery_store import (
+    DiscoverySnapshot,
+    SourceResult,
+    current_snapshot,
+    prune_generations,
+    record_generation,
 )
 
 logger = logging.getLogger(__name__)
@@ -113,6 +121,11 @@ async def fetch_all_jobs(force: bool = False) -> list[dict[str, Any]]:
     """
     ts = time.time()
     cached = _cache.get("all")
+    if cached is None and not force:
+        restored = _restore_durable_cache()
+        if restored is not None:
+            _cache["all"] = restored
+            cached = restored
     if cached and not force and ts - cached[0] < CACHE_TTL_SECONDS:
         return cached[1]
 
@@ -156,27 +169,17 @@ async def _refresh_quietly() -> None:
 
 async def _refresh() -> list[dict[str, Any]]:
     """Actually crawl every source and replace the snapshot."""
-    from .sources import fetch_every_source
+    from .sources import fetch_source_results
 
     ts = time.time()
-    cached = _cache.get("all")
 
     from .imported import list_imported
 
-    jobs, counts, failures = await fetch_every_source()
-
-    # A source that errored returns no jobs, which is indistinguishable from an
-    # employer with no openings — so a transient Greenhouse error would be
-    # cached as "Stripe has zero postings", and every saved Stripe application
-    # 404'd until the TTL expired. Carry forward the previous snapshot's jobs
-    # for anything that failed this round rather than publishing the loss.
-    if failures and cached:
-        have = {j["id"] for j in jobs}
-        recovered = [j for j in cached[1] if j["id"] not in have]
-        if recovered:
-            jobs = jobs + recovered
-            for j in recovered:
-                counts[j["source"]] = counts.get(j["source"], 0) + 1
+    results = await fetch_source_results()
+    for result in results:
+        record_generation(result)
+    prune_generations(keep=30)
+    jobs, counts, failures = _project_snapshot(current_snapshot())
 
     # Everything polled from a source API is something the system found.
     for j in jobs:
@@ -207,6 +210,41 @@ async def _refresh() -> list[dict[str, Any]]:
     # Don't hold a degraded snapshot for the full TTL — retry sooner.
     _cache["all"] = (ts - CACHE_TTL_SECONDS * 0.8 if failures else ts, jobs)
     return jobs
+
+
+def _project_snapshot(
+    snapshot: DiscoverySnapshot,
+) -> tuple[list[dict[str, Any]], dict[str, int], list[str]]:
+    from .sources import project_source_results
+
+    results = tuple(
+        SourceResult(
+            source.source_key,
+            source.state,
+            tuple(job for job in snapshot.jobs if job.get("sourceKey") == source.source_key),
+            source.error_code,
+        )
+        for source in snapshot.sources
+    )
+    return project_source_results(results)
+
+
+def _restore_durable_cache() -> tuple[float, list[dict[str, Any]]] | None:
+    snapshot = current_snapshot()
+    if not snapshot.sources:
+        return None
+    jobs, counts, failures = _project_snapshot(snapshot)
+    for job in jobs:
+        job["origin"] = "fetched"
+    _source_counts.clear()
+    _source_counts.update(counts)
+    _last_failures.clear()
+    _last_failures.extend(failures)
+    try:
+        generated_at = datetime.fromisoformat(snapshot.generated_at or "").timestamp()
+    except ValueError:
+        generated_at = 0.0
+    return generated_at, jobs
 
 
 def add_to_cache(job: dict[str, Any]) -> None:

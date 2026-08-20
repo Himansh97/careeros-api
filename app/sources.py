@@ -20,6 +20,7 @@ from typing import Any
 import httpx
 
 from .config import GREENHOUSE_COMPANIES, HTTP_TIMEOUT_SECONDS
+from .discovery_store import SourceResult, SourceState
 
 # Slugs are verified against each board's live API rather than guessed — a dead
 # slug returns nothing, which is indistinguishable from an employer with no
@@ -165,20 +166,38 @@ def _job(
     }
 
 
-async def _safe(coro, label: str, failures: list[str]) -> list[dict[str, Any]]:
-    """A failing source must never take down the whole search.
+def classify_source_error(exc: BaseException) -> str:
+    """Map provider failures to a bounded, non-sensitive operational code."""
+    if isinstance(exc, httpx.TimeoutException):
+        return "timeout"
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        if status in (401, 403):
+            return "auth"
+        if status == 429:
+            return "rate_limited"
+        return "network"
+    if isinstance(exc, httpx.HTTPError):
+        return "network"
+    return "parse"
 
-    It must also never pass for an empty one. Swallowing the error returned
-    [], which downstream could not distinguish from "this employer has no open
-    roles" — so a transient Greenhouse error got cached as Stripe having zero
-    postings, and every saved Stripe application 404'd until the cache expired.
-    Failures are now named so the caller can refuse to cache a degraded result.
-    """
+
+async def _safe_result(coro, source_key: str) -> SourceResult:
+    """Capture one adapter result without persisting raw exception text."""
     try:
-        return await coro
-    except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
-        failures.append(f"{label}: {type(exc).__name__}")
-        return []
+        jobs = await coro
+    except Exception as exc:  # noqa: BLE001 - isolation is the adapter boundary
+        return SourceResult(
+            source_key=source_key,
+            state=SourceState.DEGRADED,
+            jobs=(),
+            error_code=classify_source_error(exc),
+        )
+    return SourceResult(
+        source_key=source_key,
+        state=SourceState.HEALTHY,
+        jobs=tuple(jobs),
+    )
 
 
 async def greenhouse(client: httpx.AsyncClient, slug: str) -> list[dict[str, Any]]:
@@ -430,40 +449,46 @@ async def remoteok(client: httpx.AsyncClient) -> list[dict[str, Any]]:
     return out
 
 
-async def fetch_every_source() -> tuple[list[dict[str, Any]], dict[str, int], list[str]]:
-    """Fetch all sources in parallel.
-
-    Returns (jobs, per-source counts, failed-source labels). The failure list
-    is what lets the caller tell a genuinely empty board from a broken fetch.
-    """
-    failures: list[str] = []
+async def fetch_source_results() -> tuple[SourceResult, ...]:
+    """Fetch each configured adapter independently and preserve its health."""
     async with httpx.AsyncClient(
         timeout=HTTP_TIMEOUT_SECONDS, follow_redirects=True
     ) as client:
         tasks: list[Any] = []
-        tasks += [_safe(greenhouse(client, s), f"greenhouse/{s}", failures)
+        tasks += [_safe_result(greenhouse(client, s), f"greenhouse/{s}")
                   for s in GREENHOUSE_COMPANIES]
-        tasks += [_safe(ashby(client, s), f"ashby/{s}", failures)
+        tasks += [_safe_result(ashby(client, s), f"ashby/{s}")
                   for s in ASHBY_COMPANIES]
-        tasks += [_safe(lever(client, s), f"lever/{s}", failures)
+        tasks += [_safe_result(lever(client, s), f"lever/{s}")
                   for s in LEVER_COMPANIES]
-        tasks += [_safe(workday(client, label, base), f"workday/{label}", failures)
+        tasks += [_safe_result(workday(client, label, base), f"workday/{label.lower()}")
                   for label, base in WORKDAY_BOARDS]
-        tasks += [_safe(smartrecruiters(client, s), f"smartrecruiters/{s}", failures)
+        tasks += [_safe_result(smartrecruiters(client, s), f"smartrecruiters/{s.lower()}")
                   for s in SMARTRECRUITERS_COMPANIES]
-        tasks += [_safe(muse(client, c), f"muse/{c}", failures)
+        tasks += [_safe_result(muse(client, c), f"muse/{c.lower().replace(' ', '-')}")
                   for c in MUSE_CATEGORIES]
-        tasks.append(_safe(arbeitnow(client), "arbeitnow", failures))
-        tasks.append(_safe(remoteok(client), "remoteok", failures))
-        results = await asyncio.gather(*tasks)
+        tasks.append(_safe_result(arbeitnow(client), "arbeitnow"))
+        tasks.append(_safe_result(remoteok(client), "remoteok"))
+        return tuple(await asyncio.gather(*tasks))
+
+
+def project_source_results(
+    results: tuple[SourceResult, ...],
+) -> tuple[list[dict[str, Any]], dict[str, int], list[str]]:
+    """Compatibility projection with deduplication and fair interleaving."""
+    failures = [
+        f"{result.source_key}: {result.error_code}"
+        for result in results
+        if result.state is not SourceState.HEALTHY
+    ]
 
     deduped: list[list[dict[str, Any]]] = []
     seen: set[tuple[str, str]] = set()
     counts: dict[str, int] = {}
 
-    for batch in results:
+    for result in results:
         kept: list[dict[str, Any]] = []
-        for job in batch:
+        for job in result.jobs:
             # Dedupe across sources on (company, title) — aggregators reuse
             # the same postings that appear on company boards.
             key = (job["company"]["name"].lower(), job["title"].lower())
@@ -485,3 +510,8 @@ async def fetch_every_source() -> tuple[list[dict[str, Any]], dict[str, int], li
         jobs.extend(job for job in row if job is not None)
 
     return jobs, counts, failures
+
+
+async def fetch_every_source() -> tuple[list[dict[str, Any]], dict[str, int], list[str]]:
+    """Compatibility API over structured per-adapter results."""
+    return project_source_results(await fetch_source_results())
