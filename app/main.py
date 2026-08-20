@@ -98,6 +98,98 @@ async def usage_budget() -> dict[str, Any]:
     return budget_state()
 
 
+class PracticeAttempt(BaseModel):
+    questionId: str
+    answer: str
+    kind: str = "behavioural"
+    jobId: str | None = None
+    spoken: bool = False
+    durationSeconds: float | None = None
+
+
+@app.get("/api/prep/overview")
+async def prep_overview() -> dict[str, Any]:
+    """Readiness per competency, as a launch poll: GO, HOLD or NO-GO.
+
+    A question never attempted is NO-GO rather than blank. Not knowing whether
+    you can answer something is not the same as being ready for it, and a poll
+    that lets an unchecked system pass as ready is not a poll.
+    """
+    from .interview_practice import overview
+
+    return overview()
+
+
+@app.get("/api/prep/questions")
+async def prep_questions(kind: str = "behavioural") -> dict[str, Any]:
+    """The question set. Behavioural questions are the interviewer's standard
+    script; technical ones derive from a posting and arrive with a jobId."""
+    from .interview_practice import BEHAVIOURAL
+
+    if kind != "behavioural":
+        raise HTTPException(status_code=400, detail=f"Unknown question kind: {kind}")
+    return {"kind": kind, "questions": list(BEHAVIOURAL)}
+
+
+@app.post("/api/prep/attempts")
+async def prep_attempt(payload: PracticeAttempt) -> dict[str, Any]:
+    """Check one answer against the evidence, then coach on it.
+
+    The evidence check is deterministic and always runs. The critique needs a
+    model and may be unavailable or over budget, in which case this still
+    returns the findings — "here is what your evidence backs" is useful on its
+    own, and an error would throw away work the candidate just did.
+    """
+    from .interview_practice import BEHAVIOURAL, check_answer, critique, save_attempt
+
+    answer = (payload.answer or "").strip()
+    if not answer:
+        raise HTTPException(status_code=400, detail="An answer is required")
+
+    question = next(
+        (q for q in BEHAVIOURAL if q["id"] == payload.questionId), None
+    )
+    if question is None:
+        raise HTTPException(
+            status_code=404, detail=f"Unknown question: {payload.questionId}"
+        )
+
+    profile = _profile()
+    findings = check_answer(
+        answer, profile, duration_s=payload.durationSeconds
+    )
+    coaching = critique(
+        question["prompt"], answer, findings, job_id=payload.jobId
+    )
+    saved = save_attempt(
+        question_id=payload.questionId,
+        question_text=question["prompt"],
+        kind=payload.kind,
+        answer=answer,
+        findings=findings,
+        critique_payload=coaching,
+        job_id=payload.jobId,
+        spoken=payload.spoken,
+        duration_s=payload.durationSeconds,
+    )
+    return {
+        "id": saved["id"],
+        "question": question,
+        "findings": findings,
+        "critique": coaching,
+        # Said plainly rather than rendering an empty panel: the candidate
+        # should know whether coaching was skipped or simply had nothing to add.
+        "critiqueAvailable": coaching is not None,
+    }
+
+
+@app.get("/api/prep/attempts")
+async def prep_attempts(questionId: str | None = None, limit: int = 50) -> dict[str, Any]:
+    from .interview_practice import list_attempts
+
+    return {"attempts": list_attempts(questionId, limit)}
+
+
 @app.get("/api/news")
 async def news_feed() -> dict[str, Any]:
     """Recent movement in tech and AI: Hacker News, arXiv, new GitHub repos.
