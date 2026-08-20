@@ -95,6 +95,7 @@ class TechnicalApiTests(unittest.TestCase):
         session_id = created.json()["id"]
         started = self.client.post(f"/api/prep/technical/sessions/{session_id}/start")
         self.assertEqual(started.json()["state"], "running")
+        self.assertIn("serverNow", started.json())
         self.assertNotIn("scorecard", started.json())
 
         question_id = started.json()["questions"][0]["id"]

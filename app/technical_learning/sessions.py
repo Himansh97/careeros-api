@@ -76,6 +76,7 @@ def _row(session_id: str) -> dict[str, Any]:
         "expiresAt": row["expires_at"],
         "completedAt": row["completed_at"],
         "completionReason": row["completion_reason"],
+        "serverNow": datetime.now(UTC).isoformat(),
         **({"scorecard": json.loads(row["scorecard_json"])} if row["scorecard_json"] else {}),
     }
 
