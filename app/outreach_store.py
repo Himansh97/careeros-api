@@ -12,6 +12,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from . import mail_drafts
 from .store import connect, now
 
 OUTREACH_SCHEMA = """
@@ -42,8 +43,36 @@ CREATE TABLE IF NOT EXISTS saved_searches (
 """
 
 
+# Added after the table existed, so applied with the same additive migration the
+# rest of this codebase uses rather than by rebuilding it.
+#
+# Outreach could compose an email and store it and stop. There was no Gmail
+# draft id, no approval state, and nothing that turned a stored draft into a
+# message you could look at and send -- so twenty-one outreach emails were text
+# in a database table. Recruiter replies already had all of this; outreach was
+# simply never built that far.
+_DRAFT_COLUMNS = (
+    ("approval_status", "TEXT"),
+    ("approved_at", "TEXT"),
+    ("gmail_draft_id", "TEXT"),
+    ("gmail_sent_message_id", "TEXT"),
+    ("attachment_paths", "TEXT"),
+    ("last_error_message", "TEXT"),
+)
+
+# awaiting_approval -> approved -> creating -> created, and dismissed from any
+# of them. `sent` stays on the existing `status` column: sending is a fact about
+# the outreach, not a stage of preparing the draft.
+DRAFT_STATES = ("awaiting_approval", "approved", "creating", "created", "failed",
+                "dismissed")
+
+
 def _ensure(conn: sqlite3.Connection) -> None:
     conn.executescript(OUTREACH_SCHEMA)
+    existing = {r[1] for r in conn.execute("PRAGMA table_info(outreach)")}
+    for name, kind in _DRAFT_COLUMNS:
+        if name not in existing:
+            conn.execute(f"ALTER TABLE outreach ADD COLUMN {name} {kind}")
 
 
 def _business_days_from(start: datetime, days: int) -> datetime:
@@ -171,7 +200,23 @@ def _row(r: sqlite3.Row) -> dict[str, Any]:
         "repliedAt": r["replied_at"],
         "followUpDueAt": r["followup_due_at"],
         "createdAt": r["created_at"],
+        # The Gmail side. `draftStatus` is None on every row written before this
+        # existed, which reads correctly as "never prepared for sending".
+        "draftStatus": _opt(r, "approval_status"),
+        "approvedAt": _opt(r, "approved_at"),
+        "gmailDraftId": _opt(r, "gmail_draft_id"),
+        "gmailSentMessageId": _opt(r, "gmail_sent_message_id"),
+        "attachments": mail_drafts.stored_attachments(r),
+        "lastError": _opt(r, "last_error_message"),
     }
+
+
+def _opt(r: sqlite3.Row, key: str) -> Any:
+    """Read a column that may predate this row's schema."""
+    try:
+        return r[key]
+    except (IndexError, KeyError):
+        return None
 
 
 def get_outreach(oid: str) -> dict[str, Any] | None:
@@ -251,3 +296,112 @@ def toggle_search(sid: str) -> None:
         conn.execute(
             "UPDATE saved_searches SET auto_rerun = 1 - auto_rerun WHERE id=?", (sid,)
         )
+
+
+# ------------------------------------------------- preparing a Gmail draft
+#
+# Mirrors `recruiter_messages`, which already solved this: a draft is approved
+# by the candidate, claimed by an agent session holding the Gmail connector,
+# turned into a real Gmail draft, and marked created. Nothing sends. The
+# candidate presses send in Gmail, having read it.
+
+
+def set_attachments(oid: str, paths: Any) -> dict[str, Any] | None:
+    with connect() as conn:
+        _ensure(conn)
+        conn.execute(
+            "UPDATE outreach SET attachment_paths=? WHERE id=?",
+            (json.dumps(mail_drafts.normalize_attachments(paths)), oid),
+        )
+    return get_outreach(oid)
+
+
+def approve_outreach(oid: str) -> dict[str, Any] | None:
+    """Mark a composed outreach email ready for a Gmail draft to be made.
+
+    Refuses a body that promises a resume it does not have — the failure that
+    sent three recruiter replies saying "resume attached" with nothing attached.
+    """
+    with connect() as conn:
+        _ensure(conn)
+        row = conn.execute("SELECT * FROM outreach WHERE id=?", (oid,)).fetchone()
+        if not row:
+            return None
+        if not (row["email_draft"] or "").strip():
+            raise ValueError("This outreach has no email body to draft.")
+        if not (row["email_subject"] or "").strip():
+            raise ValueError("This outreach has no subject.")
+        mail_drafts.validate(row["email_draft"], mail_drafts.stored_attachments(row))
+        conn.execute(
+            "UPDATE outreach SET approval_status='approved', approved_at=?,"
+            " last_error_message=NULL WHERE id=?",
+            (now(), oid),
+        )
+    return get_outreach(oid)
+
+
+def claim_approved_outreach() -> dict[str, Any] | None:
+    """Take the next approved draft, with its attachments read as base64.
+
+    Claimed by moving it to `creating` inside the transaction, so two agent
+    sessions running at once cannot both create a Gmail draft for the same
+    outreach and leave the candidate with duplicates.
+    """
+    with connect() as conn:
+        _ensure(conn)
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT * FROM outreach WHERE approval_status='approved'"
+            " ORDER BY approved_at, id LIMIT 1"
+        ).fetchone()
+        if not row:
+            return None
+        claimed = conn.execute(
+            "UPDATE outreach SET approval_status='creating' WHERE id=?"
+            " AND approval_status='approved'", (row["id"],)
+        ).rowcount
+        if not claimed:
+            return None
+        oid, body, paths = row["id"], row["email_draft"], mail_drafts.stored_attachments(row)
+
+    record = get_outreach(oid)
+    try:
+        record["attachmentPayloads"] = mail_drafts.read(paths)
+    except ValueError as exc:
+        mark_outreach_failed(oid, str(exc))
+        return None
+    return record
+
+
+def mark_outreach_draft_created(oid: str, gmail_draft_id: str) -> dict[str, Any] | None:
+    if not gmail_draft_id:
+        raise ValueError("A Gmail draft ID is required.")
+    with connect() as conn:
+        _ensure(conn)
+        conn.execute(
+            "UPDATE outreach SET approval_status='created', gmail_draft_id=?,"
+            " last_error_message=NULL WHERE id=?", (gmail_draft_id, oid),
+        )
+    return get_outreach(oid)
+
+
+def mark_outreach_failed(oid: str, message: str) -> dict[str, Any] | None:
+    """Recorded rather than retried silently. A draft that failed to reach Gmail
+    and looks identical to one that never got there is how these go unnoticed."""
+    with connect() as conn:
+        _ensure(conn)
+        conn.execute(
+            "UPDATE outreach SET approval_status='failed', last_error_message=?"
+            " WHERE id=?", (str(message)[:400], oid),
+        )
+    return get_outreach(oid)
+
+
+def dismiss_outreach(oid: str) -> dict[str, Any] | None:
+    """Decide not to send this one. Distinct from failing, and from sending."""
+    with connect() as conn:
+        _ensure(conn)
+        conn.execute(
+            "UPDATE outreach SET approval_status='dismissed' WHERE id=?", (oid,)
+        )
+    return get_outreach(oid)

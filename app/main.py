@@ -1459,6 +1459,38 @@ async def outreach_status(outreach_id: str, req: OutreachAction) -> dict[str, An
     )
 
 
+class OutreachDraftAction(BaseModel):
+    action: str                      # approve | dismiss
+    attachments: list[str] | None = None
+
+
+@app.post("/api/outreach/{outreach_id}/draft")
+async def outreach_draft(outreach_id: str, req: OutreachDraftAction) -> dict[str, Any]:
+    """Prepare a composed outreach email to become a real Gmail draft.
+
+    Nothing here sends, and nothing here talks to Gmail. It marks the draft
+    ready; an agent session holding the Gmail connector claims it and creates
+    the draft, which the candidate then reads and sends themselves.
+    """
+    from .outreach_store import (
+        approve_outreach, dismiss_outreach, get_outreach, set_attachments,
+    )
+
+    if not get_outreach(outreach_id):
+        raise HTTPException(status_code=404, detail="Outreach not found")
+    if req.attachments is not None:
+        set_attachments(outreach_id, req.attachments)
+    try:
+        if req.action == "approve":
+            return approve_outreach(outreach_id) or {}
+        if req.action == "dismiss":
+            return dismiss_outreach(outreach_id) or {}
+    except ValueError as exc:
+        # The attachment guard, mostly: a body promising a resume it lacks.
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    raise HTTPException(status_code=400, detail="action must be approve|dismiss")
+
+
 class ClaimPayload(BaseModel):
     claim: str
     employer_or_project: str

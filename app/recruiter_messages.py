@@ -91,15 +91,9 @@ _ATTACHMENT_COLUMNS = (
     ("attachment_paths", "TEXT"),
 )
 
-# Phrases that promise an attachment. If the body makes the promise and nothing
-# is attached, approval fails -- the same shape as the figure-binding check in
-# Custody: the claim has to be backed by the thing it refers to.
-_ATTACHMENT_CLAIMS = re.compile(
-    r"\b(resume|cv|c\.v\.)\s+(is\s+)?(attached|enclosed)\b"
-    r"|\battach(ed|ing)\s+(is\s+)?(my|the|a)?\s*(resume|cv)\b"
-    r"|\bplease\s+(find|see)\s+(the\s+)?attach",
-    re.IGNORECASE,
-)
+# One definition, shared with outreach. Both pipelines had the same gap for the
+# same reason, and two copies of a rule like this drift.
+from .mail_drafts import ATTACHMENT_CLAIMS as _ATTACHMENT_CLAIMS
 
 
 def _connect() -> sqlite3.Connection:
