@@ -18,35 +18,9 @@ from __future__ import annotations
 
 import json
 import re
-import sqlite3
 from typing import Any
 
 from .store import connect, now
-
-OVERRIDES_SCHEMA = """
--- Author is part of the key so a system rewrite and a user edit of the same
--- bullet coexist as two layers. Reverting an edit then drops only the user
--- layer and falls back to the tailored wording, rather than all the way back
--- to the raw evidence claim.
-CREATE TABLE IF NOT EXISTS bullet_overrides (
-    job_id TEXT NOT NULL,
-    claim_id TEXT NOT NULL,
-    text TEXT NOT NULL,
-    rationale TEXT,
-    created_at TEXT NOT NULL,
-    author TEXT NOT NULL DEFAULT 'system',
-    warnings TEXT,
-    PRIMARY KEY (job_id, claim_id, author)
-);
-
-CREATE TABLE IF NOT EXISTS document_edits (
-    job_id TEXT NOT NULL,
-    field TEXT NOT NULL,
-    text TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    PRIMARY KEY (job_id, field)
-);
-"""
 
 # Editable non-bullet fields. Kept to a whitelist so an edit call can't set
 # arbitrary keys on the generated document.
@@ -78,57 +52,6 @@ def _stem(word: str) -> str:
         if word.endswith(suffix) and len(word) - len(suffix) >= 4:
             return word[: -len(suffix)]
     return word
-
-
-def _ensure(conn: sqlite3.Connection) -> None:
-    conn.executescript(OVERRIDES_SCHEMA)
-    # CREATE TABLE IF NOT EXISTS leaves an already-created table alone, so a
-    # database written before in-app editing existed keeps the old shape.
-    # Add the columns it is missing rather than requiring a wipe.
-    info = list(conn.execute("PRAGMA table_info(bullet_overrides)"))
-    existing = {row["name"] for row in info}
-    for column, ddl in (
-        ("author", "ALTER TABLE bullet_overrides ADD COLUMN author TEXT NOT NULL DEFAULT 'system'"),
-        ("warnings", "ALTER TABLE bullet_overrides ADD COLUMN warnings TEXT"),
-        # active | pending_review | dismissed. Filtered on read, so a queued
-        # rewrite is unreachable rather than merely unshown.
-        ("status", "ALTER TABLE bullet_overrides ADD COLUMN status TEXT NOT NULL DEFAULT 'active'"),
-        ("verdict", "ALTER TABLE bullet_overrides ADD COLUMN verdict TEXT"),
-        # The claim text this rewrite was verified against. Without it,
-        # "verified" means "verified against something, once, possibly no
-        # longer true" — editing a claim silently orphans its overrides, which
-        # happened for real when omnicals-02 was reworded.
-        ("original_text", "ALTER TABLE bullet_overrides ADD COLUMN original_text TEXT"),
-    ):
-        if column not in existing:
-            conn.execute(ddl)
-
-    # A primary key cannot be altered in place. If this database predates the
-    # author-keyed schema, rebuild the table so system and user layers can
-    # coexist. Existing rows keep whatever author they were written with.
-    author_in_pk = any(row["name"] == "author" and row["pk"] for row in info)
-    if info and not author_in_pk:
-        conn.executescript(
-            """
-            ALTER TABLE bullet_overrides RENAME TO bullet_overrides_old;
-            CREATE TABLE bullet_overrides (
-                job_id TEXT NOT NULL,
-                claim_id TEXT NOT NULL,
-                text TEXT NOT NULL,
-                rationale TEXT,
-                created_at TEXT NOT NULL,
-                author TEXT NOT NULL DEFAULT 'system',
-                warnings TEXT,
-                PRIMARY KEY (job_id, claim_id, author)
-            );
-            INSERT INTO bullet_overrides
-                (job_id, claim_id, text, rationale, created_at, author, warnings)
-                SELECT job_id, claim_id, text, rationale, created_at,
-                       COALESCE(author, 'system'), warnings
-                FROM bullet_overrides_old;
-            DROP TABLE bullet_overrides_old;
-            """
-        )
 
 
 def verify_override(original: str, rewritten: str) -> list[str]:
@@ -265,7 +188,6 @@ def save_override(job_id: str, claim_id: str, text: str, original: str,
                 "findings": [f.__dict__ for f in findings]}
 
     with connect() as conn:
-        _ensure(conn)
         conn.execute(
             """INSERT OR REPLACE INTO bullet_overrides
                (job_id, claim_id, text, rationale, created_at, author, warnings,
@@ -283,7 +205,6 @@ def save_override(job_id: str, claim_id: str, text: str, original: str,
 def get_overrides(job_id: str) -> dict[str, dict[str, Any]]:
     """Merge the layers for each bullet — a user edit sits on top of a system one."""
     with connect() as conn:
-        _ensure(conn)
         # Only active rows. This is the containment guarantee at the *read*
         # path, independent of the save-time gate: a queued rewrite cannot
         # reach a resume even if some future code path stores one carelessly.
@@ -315,7 +236,6 @@ def clear_override(job_id: str, claim_id: str, author: str = "user") -> None:
     evidence claim — so only the user layer is removed.
     """
     with connect() as conn:
-        _ensure(conn)
         conn.execute(
             "DELETE FROM bullet_overrides WHERE job_id=? AND claim_id=? AND author=?",
             (job_id, claim_id, author),
@@ -327,7 +247,6 @@ def save_document_edit(job_id: str, field: str, text: str) -> dict[str, Any]:
     if field not in EDITABLE_FIELDS:
         return {"ok": False, "problems": [f"'{field}' is not editable"]}
     with connect() as conn:
-        _ensure(conn)
         conn.execute(
             """INSERT OR REPLACE INTO document_edits (job_id, field, text, created_at)
                VALUES (?,?,?,?)""",
@@ -338,7 +257,6 @@ def save_document_edit(job_id: str, field: str, text: str) -> dict[str, Any]:
 
 def get_document_edits(job_id: str) -> dict[str, str]:
     with connect() as conn:
-        _ensure(conn)
         rows = conn.execute(
             "SELECT field, text FROM document_edits WHERE job_id=?", (job_id,)
         ).fetchall()
@@ -347,7 +265,6 @@ def get_document_edits(job_id: str) -> dict[str, str]:
 
 def clear_document_edit(job_id: str, field: str) -> None:
     with connect() as conn:
-        _ensure(conn)
         conn.execute(
             "DELETE FROM document_edits WHERE job_id=? AND field=?", (job_id, field)
         )
@@ -363,7 +280,6 @@ def reset_edits(job_id: str, scope: str = "user") -> None:
     claim — a rebuild-from-scratch, not an undo.
     """
     with connect() as conn:
-        _ensure(conn)
         if scope == "all":
             conn.execute("DELETE FROM bullet_overrides WHERE job_id=?", (job_id,))
         else:
@@ -375,7 +291,6 @@ def reset_edits(job_id: str, scope: str = "user") -> None:
 
 def clear_overrides(job_id: str) -> None:
     with connect() as conn:
-        _ensure(conn)
         conn.execute("DELETE FROM bullet_overrides WHERE job_id=?", (job_id,))
 
 

@@ -90,9 +90,11 @@ def _reconcile_gmail() -> None:
 
 
 async def main() -> int:
+    from app.db import initialize
     from app.automation import run_autopilot
     from app.discovery import failed_sources, fetch_all_jobs, filter_jobs
 
+    initialize()
     log("--- daily fetch starting ---")
 
     # force=True: the point of a scheduled run is fresh data, and a 15-minute

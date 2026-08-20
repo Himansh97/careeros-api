@@ -38,29 +38,6 @@ RECRUITER_TITLE_HINTS = (
     "hr ",
 )
 
-CONTACTS_SCHEMA = """
-CREATE TABLE IF NOT EXISTS contacts (
-    id TEXT PRIMARY KEY,
-    job_id TEXT,
-    company TEXT NOT NULL,
-    name TEXT NOT NULL,
-    title TEXT,
-    email TEXT,
-    email_verified INTEGER DEFAULT 0,
-    linkedin_url TEXT,
-    confidence INTEGER DEFAULT 0,
-    provider TEXT NOT NULL,
-    why_selected TEXT,
-    status TEXT DEFAULT 'not_started',
-    created_at TEXT NOT NULL
-);
-"""
-
-
-def _ensure_schema(conn: sqlite3.Connection) -> None:
-    conn.executescript(CONTACTS_SCHEMA)
-
-
 def hunter_key() -> str | None:
     return os.environ.get("HUNTER_API_KEY") or None
 
@@ -296,7 +273,6 @@ async def hunter_domain_search(domain: str, limit: int = 10) -> dict[str, Any]:
 def save_contact(payload: dict[str, Any]) -> dict[str, Any]:
     contact_id = payload.get("id") or f"c_{payload['company']}_{payload['name']}".lower().replace(" ", "-")
     with connect() as conn:
-        _ensure_schema(conn)
         conn.execute(
             """INSERT OR REPLACE INTO contacts
                (id, job_id, company, name, title, email, email_verified,
@@ -341,19 +317,16 @@ def _row(r: sqlite3.Row) -> dict[str, Any]:
 
 def list_contacts() -> list[dict[str, Any]]:
     with connect() as conn:
-        _ensure_schema(conn)
         rows = conn.execute("SELECT * FROM contacts ORDER BY created_at DESC").fetchall()
     return [_row(r) for r in rows]
 
 
 def get_contact(contact_id: str) -> dict[str, Any] | None:
     with connect() as conn:
-        _ensure_schema(conn)
         r = conn.execute("SELECT * FROM contacts WHERE id=?", (contact_id,)).fetchone()
     return _row(r) if r else None
 
 
 def set_contact_status(contact_id: str, status: str) -> None:
     with connect() as conn:
-        _ensure_schema(conn)
         conn.execute("UPDATE contacts SET status=? WHERE id=?", (status, contact_id))

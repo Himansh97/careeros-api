@@ -27,6 +27,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from app import outreach_store, store  # noqa: E402
+from app.db import initialize  # noqa: E402
 from app.outreach_store import (  # noqa: E402
     approve_outreach,
     claim_approved_outreach,
@@ -51,8 +52,7 @@ class OutreachDraftTests(unittest.TestCase):
         )
         self.patcher.start()
         self.addCleanup(self.patcher.stop)
-        with store.connect() as conn:
-            conn.executescript(store.SCHEMA)
+        initialize(path=store.DB_PATH)
 
     def _outreach(self, body: str = "Hello — I'd welcome a short call.", **over):
         payload = {
@@ -111,14 +111,10 @@ class OutreachDraftTests(unittest.TestCase):
     def _contact(self, email: str = "hank@acme.test") -> None:
         with store.connect() as conn:
             conn.execute(
-                "CREATE TABLE IF NOT EXISTS contacts (id TEXT PRIMARY KEY,"
-                " job_id TEXT, company TEXT, name TEXT, title TEXT, email TEXT,"
-                " email_verified INTEGER, linkedin_url TEXT, confidence INTEGER,"
-                " provider TEXT, why_selected TEXT, status TEXT)"
-            )
-            conn.execute(
-                "INSERT OR REPLACE INTO contacts (id, company, name, email)"
-                " VALUES ('c_1','Acme Logistics','Hank',?)", (email,)
+                "INSERT OR REPLACE INTO contacts "
+                "(id, company, name, email, provider, created_at)"
+                " VALUES ('c_1','Acme Logistics','Hank',?,'manual',?)",
+                (email, store.now()),
             )
             conn.execute("UPDATE outreach SET contact_id='c_1' WHERE id=?", (OID,))
             conn.commit()

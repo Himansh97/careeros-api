@@ -22,6 +22,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from app import outreach_store  # noqa: E402
+from app.db import initialize  # noqa: E402
 
 _ERROR = "Request could not be processed."
 
@@ -60,6 +61,7 @@ def handle(command: dict) -> dict:
 
 
 def main() -> int:
+    initialize()
     raw = sys.stdin.read().strip()
     try:
         command = json.loads(raw) if raw else {}

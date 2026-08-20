@@ -48,6 +48,7 @@ from app.store import (  # noqa: E402
     set_resume_score,
 )
 from app.tailor import tailor_resume  # noqa: E402
+from app.db import initialize  # noqa: E402
 
 
 def reconcile_status(write: bool) -> int:
@@ -110,6 +111,7 @@ def reconcile_status(write: bool) -> int:
 
 
 async def main() -> int:
+    initialize()
     ap = argparse.ArgumentParser()
     ap.add_argument("--write", action="store_true", help="apply; otherwise report only")
     args = ap.parse_args()

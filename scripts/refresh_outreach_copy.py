@@ -28,9 +28,11 @@ from app.outreach import build_outreach  # noqa: E402
 from app.profile import load_profile  # noqa: E402
 from app.scoring import score_job_cached  # noqa: E402
 from app.store import connect  # noqa: E402
+from app.db import initialize  # noqa: E402
 
 
 async def main() -> int:
+    initialize()
     ap = argparse.ArgumentParser()
     ap.add_argument("--write", action="store_true", help="apply; otherwise report only")
     args = ap.parse_args()

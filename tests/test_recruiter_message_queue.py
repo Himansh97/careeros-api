@@ -19,6 +19,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from app import store
+from app.db import initialize
 from app.recruiter_messages import approve_draft
 from scripts.recruiter_message_queue import handle
 
@@ -36,6 +37,7 @@ class RecruiterMessageQueueTests(unittest.TestCase):
         self.db_patch.start()
         self.addCleanup(self.db_patch.stop)
         self.addCleanup(self.temp_dir.cleanup)
+        initialize(path=self.db_path)
 
     def payload(self) -> dict:
         return {

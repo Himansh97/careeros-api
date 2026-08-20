@@ -15,6 +15,7 @@ import sys
 # `tests/test_recruiter_messages.py` records this exact bug happening before.
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from app import store as app_store
+from app.db import initialize
 from app.technical_learning.sessions import (
     create_session,
     get_session,
@@ -31,6 +32,7 @@ class TechnicalSessionTests(unittest.TestCase):
         patcher = patch.object(app_store, "DB_PATH", Path(self.tmp.name) / "careeros.db")
         patcher.start()
         self.addCleanup(patcher.stop)
+        initialize(path=app_store.DB_PATH)
         self.now = datetime(2026, 8, 20, 12, 0, tzinfo=UTC)
 
     def test_only_approved_durations_are_allowed(self) -> None:

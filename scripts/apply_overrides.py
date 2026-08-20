@@ -44,6 +44,7 @@ from app.overrides import (  # noqa: E402
     save_override,
 )
 from app.profile import load_profile  # noqa: E402
+from app.db import initialize  # noqa: E402
 
 OVERRIDES_DIR = Path.home() / "careeros" / "overrides"
 
@@ -101,6 +102,7 @@ def apply_file(path: Path, dry_run: bool = False) -> int:
 
 
 def main() -> int:
+    initialize()
     ap = argparse.ArgumentParser()
     ap.add_argument("job_id", nargs="?", help="job id, or omit with --all")
     ap.add_argument("--all", action="store_true", help="apply every override file")

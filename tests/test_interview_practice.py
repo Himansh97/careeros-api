@@ -211,10 +211,12 @@ def test_research_without_sources_is_refused() -> None:
     from unittest.mock import patch
 
     from app import store
+    from app.db import initialize
     from app.interview_practice import get_research, save_research
 
     with tempfile.TemporaryDirectory() as tmp:
         with patch.object(store, "DB_PATH", pathlib.Path(tmp) / "t.db"):
+            initialize(path=store.DB_PATH)
             try:
                 save_research("beh-failure", {"assesses": "x"}, [])
             except ValueError as exc:
@@ -239,10 +241,12 @@ def test_research_is_upserted_not_duplicated() -> None:
     from unittest.mock import patch
 
     from app import store
+    from app.db import initialize
     from app.interview_practice import get_research, save_research
 
     with tempfile.TemporaryDirectory() as tmp:
         with patch.object(store, "DB_PATH", pathlib.Path(tmp) / "t.db"):
+            initialize(path=store.DB_PATH)
             src = [{"title": "a", "url": "https://a.test"}]
             save_research("beh-scale", {"assesses": "first"}, src)
             save_research("beh-scale", {"assesses": "second"}, src)
@@ -256,10 +260,12 @@ def test_missing_research_returns_none_rather_than_an_empty_shape() -> None:
     from unittest.mock import patch
 
     from app import store
+    from app.db import initialize
     from app.interview_practice import get_research
 
     with tempfile.TemporaryDirectory() as tmp:
         with patch.object(store, "DB_PATH", pathlib.Path(tmp) / "t.db"):
+            initialize(path=store.DB_PATH)
             assert get_research("beh-conflict") is None
 
 

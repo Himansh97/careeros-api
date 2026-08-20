@@ -11,6 +11,8 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import recruiter_messages
+from app.db import initialize
+from app.store import connect
 
 
 _ERROR = "Request could not be processed."
@@ -19,7 +21,7 @@ _ERROR = "Request could not be processed."
 def _stale_creating() -> list[dict[str, Any]]:
     """Return creating drafts old enough for Gmail reconciliation, unchanged."""
     cutoff = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
-    with recruiter_messages._connection() as conn:
+    with connect() as conn:
         rows = conn.execute(
             "SELECT gmail_message_id FROM recruiter_reply_drafts "
             "WHERE status='creating' AND updated_at < ? ORDER BY updated_at, id",
@@ -72,6 +74,7 @@ def handle(command: dict) -> dict:
 
 
 def main() -> None:
+    initialize()
     for line in sys.stdin:
         try:
             command = json.loads(line)

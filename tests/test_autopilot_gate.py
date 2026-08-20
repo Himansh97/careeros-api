@@ -126,6 +126,9 @@ def main() -> int:
     _db = _pl.Path(_tf.mkdtemp()) / "approvals.db"
     with _patch("app.config.DB_PATH", _db), _patch("app.store.DB_PATH", _db):
         from app import store as _store
+        from app.db import initialize as _initialize
+
+        _initialize(path=_db)
 
         aid = _store.add_approval("application", "gh_x_1", {"resumeScore": 80})
         check("a new approval is pending",

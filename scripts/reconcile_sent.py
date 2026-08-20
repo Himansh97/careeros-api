@@ -33,6 +33,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.recruiter_messages import list_messages, mark_draft_sent  # noqa: E402
+from app.db import initialize  # noqa: E402
 
 _WORD = re.compile(r"[a-z0-9]+")
 _NOISE = frozenset({"re", "fwd", "the", "a", "an", "for", "and", "at", "of", "to"})
@@ -84,6 +85,7 @@ def best_match(draft: dict, sent: list[dict]) -> tuple[dict | None, str]:
 
 
 def main() -> int:
+    initialize()
     ap = argparse.ArgumentParser()
     ap.add_argument("sent", help="JSON: Gmail search_threads output for in:sent")
     ap.add_argument("--dry-run", action="store_true")

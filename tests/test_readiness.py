@@ -35,13 +35,12 @@ def _fresh_db() -> None:
     would be editing their pipeline.
     """
     import app.store as store
+    from app.db import initialize
 
     tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
     tmp.close()
     store.DB_PATH = pathlib.Path(tmp.name)
-    # `connect` applies the schema itself, so opening it once is the setup.
-    with store.connect():
-        pass
+    initialize(path=store.DB_PATH)
 
 
 def _seed(app_id: str, status: str) -> None:

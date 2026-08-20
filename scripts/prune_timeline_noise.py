@@ -28,11 +28,13 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from app.store import connect  # noqa: E402
+from app.db import initialize  # noqa: E402
 
 _PREFIX = "Resume tailored"
 
 
 def main() -> int:
+    initialize()
     ap = argparse.ArgumentParser()
     ap.add_argument("--write", action="store_true", help="apply; otherwise report only")
     args = ap.parse_args()

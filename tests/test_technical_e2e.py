@@ -18,6 +18,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from app import store as app_store
 from app.main import app
 from app.technical_learning import datasets
+from app.db import initialize
 
 
 class TechnicalLearningEndToEndTests(unittest.TestCase):
@@ -32,6 +33,7 @@ class TechnicalLearningEndToEndTests(unittest.TestCase):
         for item in self.patches:
             item.start()
             self.addCleanup(item.stop)
+        initialize(path=app_store.DB_PATH)
         self.client = TestClient(app)
         self.addCleanup(self.client.close)
 

@@ -530,15 +530,6 @@ def check_style(subject: str, body: str, *, has_attachment: bool) -> list[str]:
 
 # ---------------------------------------------------------------- repetition
 
-_OPENINGS_SCHEMA = """
-CREATE TABLE IF NOT EXISTS compose_openings (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    channel TEXT NOT NULL,
-    opening TEXT NOT NULL,
-    at TEXT NOT NULL
-);
-"""
-
 # How many recent openings are shown to the model and checked against. Twenty is
 # roughly a fortnight of sending at this volume — far enough back that a repeat
 # would be noticed by a recruiter who received two, near enough that the prompt
@@ -550,7 +541,6 @@ def recent_openings(channel: str = "email", limit: int = _OPENING_MEMORY) -> lis
     from .store import connect
 
     with connect() as conn:
-        conn.executescript(_OPENINGS_SCHEMA)
         rows = conn.execute(
             "SELECT opening FROM compose_openings WHERE channel=? "
             "ORDER BY id DESC LIMIT ?",
@@ -565,7 +555,6 @@ def remember_opening(opening: str, channel: str = "email") -> None:
     from .store import connect, now
 
     with connect() as conn:
-        conn.executescript(_OPENINGS_SCHEMA)
         conn.execute(
             "INSERT INTO compose_openings (channel, opening, at) VALUES (?,?,?)",
             (channel, opening.strip(), now()),

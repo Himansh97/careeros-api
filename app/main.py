@@ -1,6 +1,7 @@
 """CareerOS API — live job discovery, evidence-based scoring, tailoring, outreach."""
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from email.utils import parseaddr
 from typing import Any
@@ -11,6 +12,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from .config import ALLOWED_ORIGINS, GREENHOUSE_COMPANIES, SCORE_BUDGET
+from .db import initialize
 from .contacts import (
     company_domain,
     get_contact,
@@ -51,7 +53,14 @@ from .recruiter_messages import (
 )
 from .technical_learning.router import router as technical_learning_router
 
-app = FastAPI(title="CareerOS API", version="1.0.0")
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """Verify and migrate the database before accepting any request."""
+    initialize()
+    yield
+
+
+app = FastAPI(title="CareerOS API", version="1.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,

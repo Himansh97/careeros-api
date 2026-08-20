@@ -3,90 +3,23 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Iterator
 
 from .config import DB_PATH, READY_SCORE
-
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS applications (
-    id TEXT PRIMARY KEY,
-    job_id TEXT NOT NULL,
-    title TEXT NOT NULL,
-    company TEXT NOT NULL,
-    location TEXT,
-    source TEXT,
-    status TEXT NOT NULL,
-    raw_fit_score INTEGER,
-    resume_score INTEGER,
-    apply_url TEXT,
-    next_action TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS timeline (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    application_id TEXT NOT NULL,
-    label TEXT NOT NULL,
-    at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS approvals (
-    id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL,
-    job_id TEXT NOT NULL,
-    payload TEXT NOT NULL,
-    status TEXT NOT NULL,
-    created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS job_flags (
-    job_id TEXT PRIMARY KEY,
-    saved INTEGER NOT NULL DEFAULT 0,
-    dismissed INTEGER NOT NULL DEFAULT 0,
-    updated_at TEXT NOT NULL
-);
-"""
+from .db import connect as database_connection
 
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-# When each stage was reached. `submitted_at` was returned as a hardcoded None
-# for the whole life of this table, so nothing ever recorded when an application
-# actually went out — which makes every timing and conversion question
-# unanswerable in principle, not merely unanswered.
-#
-# `*_inferred` marks a timestamp reconstructed from the timeline or from
-# outreach rather than observed at the moment it happened. A backfilled date
-# that cannot be told apart from a real one would quietly become training data
-# for the learning features this exists to enable.
-_APPLICATION_COLUMNS = (
-    ("submitted_at", "TEXT"),
-    ("first_response_at", "TEXT"),
-    ("outcome", "TEXT"),
-    ("outcome_at", "TEXT"),
-    ("timestamps_inferred", "INTEGER NOT NULL DEFAULT 0"),
-    # How an application ended, in the candidate's or employer's own words.
-    # Captured now so that when there are enough outcomes to analyse, the
-    # analysis has something real to read. Reconstructing "why did that one
-    # fail" six months later produces a story, not data.
-    ("outcome_reason", "TEXT"),
-    ("outcome_stage", "TEXT"),
-)
-
-
-def connect() -> sqlite3.Connection:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.executescript(SCHEMA)
-    # SQLite cannot add a column to an existing table from CREATE TABLE, so the
-    # additive columns are applied here. Same guard pattern `job_flags` uses.
-    existing = {r[1] for r in conn.execute("PRAGMA table_info(applications)")}
-    for name, kind in _APPLICATION_COLUMNS:
-        if name not in existing:
-            conn.execute(f"ALTER TABLE applications ADD COLUMN {name} {kind}")
-    return conn
+@contextmanager
+def connect() -> Iterator[sqlite3.Connection]:
+    """Compatibility boundary over the shared, always-closing DB runtime."""
+    with database_connection(path=DB_PATH) as connection:
+        yield connection
 
 
 def add_timeline(conn: sqlite3.Connection, app_id: str, label: str) -> None:

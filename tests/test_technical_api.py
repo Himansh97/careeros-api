@@ -18,6 +18,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from app import store as app_store
 from app.main import app
 from app.technical_learning import datasets
+from app.db import initialize
 
 
 class TechnicalApiTests(unittest.TestCase):
@@ -31,6 +32,7 @@ class TechnicalApiTests(unittest.TestCase):
         dataset_patch.start()
         self.addCleanup(db_patch.stop)
         self.addCleanup(dataset_patch.stop)
+        initialize(path=app_store.DB_PATH)
         self.client = TestClient(app)
         self.addCleanup(self.client.close)
 

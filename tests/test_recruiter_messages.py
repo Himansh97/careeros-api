@@ -18,6 +18,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from app import store
+from app.db import initialize
 from app import recruiter_messages
 from app.recruiter_messages import (
     approve_draft,
@@ -42,6 +43,7 @@ class RecruiterMessageStoreTests(unittest.TestCase):
         self.db_patch.start()
         self.addCleanup(self.db_patch.stop)
         self.addCleanup(self.temp_dir.cleanup)
+        initialize(path=self.db_path)
 
     def payload(self) -> dict:
         return {

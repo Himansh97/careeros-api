@@ -18,6 +18,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from app import store
+from app.db import initialize
 from app.main import app
 from app.recruiter_messages import (
     approve_draft,
@@ -38,6 +39,7 @@ class RecruiterMessageApiTests(unittest.TestCase):
         self.db_patch.start()
         self.addCleanup(self.db_patch.stop)
         self.addCleanup(self.temp_dir.cleanup)
+        initialize(path=self.db_path)
         self.client = TestClient(app)
         self.addCleanup(self.client.close)
         self.message_id = self.seed_message()

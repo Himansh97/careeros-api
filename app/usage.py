@@ -25,7 +25,6 @@ undercount, which is why the caps are set well below anything that matters.
 from __future__ import annotations
 
 import os
-import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -58,29 +57,6 @@ _UNKNOWN = max(PRICES.values(), key=lambda p: p["output"])
 # rewrite pass on one resume is a few cents on Sonnet.
 DAILY_BUDGET_USD = float(os.environ.get("LLM_DAILY_BUDGET_USD", "2.00"))
 MONTHLY_BUDGET_USD = float(os.environ.get("LLM_MONTHLY_BUDGET_USD", "25.00"))
-
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS llm_usage (
-  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-  at                  TEXT NOT NULL,
-  model               TEXT NOT NULL,
-  purpose             TEXT NOT NULL,
-  job_id              TEXT,
-  input_tokens        INTEGER NOT NULL DEFAULT 0,
-  output_tokens       INTEGER NOT NULL DEFAULT 0,
-  cache_read_tokens   INTEGER NOT NULL DEFAULT 0,
-  cache_write_tokens  INTEGER NOT NULL DEFAULT 0,
-  cost_usd            REAL NOT NULL DEFAULT 0,
-  ok                  INTEGER NOT NULL DEFAULT 1,
-  detail              TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_llm_usage_at ON llm_usage(at);
-"""
-
-
-def _ensure(conn: sqlite3.Connection) -> None:
-    conn.executescript(_SCHEMA)
-
 
 def price_for(model: str) -> dict[str, float]:
     return PRICES.get(model, _UNKNOWN)
@@ -137,7 +113,6 @@ def record(
         cache_write_tokens=cache_write_tokens,
     )
     with connect() as conn:
-        _ensure(conn)
         conn.execute(
             "INSERT INTO llm_usage (at, model, purpose, job_id, input_tokens,"
             " output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, ok, detail)"
@@ -178,7 +153,6 @@ def budget_state() -> dict[str, Any]:
     """Spend against both caps, and whether a call may proceed."""
     day_start, month_start = _window_starts()
     with connect() as conn:
-        _ensure(conn)
         today = _spent_since(conn, day_start)
         month = _spent_since(conn, month_start)
 
@@ -223,9 +197,6 @@ def summary(days: int = 30) -> dict[str, Any]:
         "%Y-%m-%dT%H:%M:%SZ"
     )
     with connect() as conn:
-        _ensure(conn)
-        conn.row_factory = sqlite3.Row
-
         totals = conn.execute(
             "SELECT COUNT(*) calls, COALESCE(SUM(input_tokens),0) inp,"
             " COALESCE(SUM(output_tokens),0) outp,"

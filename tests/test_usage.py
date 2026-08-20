@@ -12,7 +12,6 @@ a pricing table that silently drifts turns the whole ledger into fiction.
 """
 from __future__ import annotations
 
-import importlib
 import pathlib
 import sys
 import tempfile
@@ -27,18 +26,13 @@ class Ledger(unittest.TestCase):
         self.dir = tempfile.TemporaryDirectory()
         self.db = pathlib.Path(self.dir.name) / "t.db"
 
-        import sqlite3
+        from app import store, usage
+        from app.db import initialize
 
-        def connect():
-            c = sqlite3.connect(self.db)
-            c.row_factory = sqlite3.Row
-            return c
-
-        from app import usage
-
-        self.usage = importlib.reload(usage)
-        self.p = mock.patch.object(self.usage, "connect", connect)
+        self.usage = usage
+        self.p = mock.patch.object(store, "DB_PATH", self.db)
         self.p.start()
+        initialize(path=self.db)
 
     def tearDown(self) -> None:
         self.p.stop()

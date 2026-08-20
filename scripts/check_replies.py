@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.alerts import build_alerts  # noqa: E402
 from app.recruiter_messages import list_messages, mark_draft_sent  # noqa: E402
 from app.store import add_timeline, connect, list_applications, now  # noqa: E402
+from app.db import initialize  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from reconcile_sent import best_match, flatten  # noqa: E402
@@ -144,6 +145,7 @@ def unanswered(inbox: list[dict], sent: list[dict]) -> list[dict]:
 
 
 def main() -> int:
+    initialize()
     ap = argparse.ArgumentParser()
     ap.add_argument("--sent", required=True, help="JSON: Gmail in:sent snapshot")
     ap.add_argument("--inbox", help="JSON: Gmail in:inbox snapshot")

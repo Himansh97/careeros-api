@@ -33,6 +33,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from app import store  # noqa: E402
+from app.db import initialize  # noqa: E402
 from app.pipeline_signals import (  # noqa: E402
     CONFIDENCE_FLOOR,
     apply_signal,
@@ -53,8 +54,7 @@ class PipelineSignalTests(unittest.TestCase):
         )
         self.patcher.start()
         self.addCleanup(self.patcher.stop)
-        with store.connect() as conn:
-            conn.executescript(store.SCHEMA)
+        initialize(path=store.DB_PATH)
 
     def _app(self, app_id: str, company: str, title: str, status: str = "ready",
              when: str = "2026-08-10T00:00:00+00:00") -> str:

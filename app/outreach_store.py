@@ -9,71 +9,17 @@ from __future__ import annotations
 
 import json
 import pathlib
-import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from . import mail_drafts
 from .store import connect, now
 
-OUTREACH_SCHEMA = """
-CREATE TABLE IF NOT EXISTS outreach (
-    id TEXT PRIMARY KEY,
-    job_id TEXT NOT NULL,
-    contact_id TEXT,
-    company TEXT NOT NULL,
-    job_title TEXT NOT NULL,
-    channel TEXT NOT NULL,
-    status TEXT NOT NULL,
-    email_subject TEXT,
-    email_draft TEXT,
-    linkedin_draft TEXT,
-    sent_at TEXT,
-    replied_at TEXT,
-    followup_due_at TEXT,
-    created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS saved_searches (
-    id TEXT PRIMARY KEY,
-    label TEXT NOT NULL,
-    filters TEXT NOT NULL,
-    auto_rerun INTEGER DEFAULT 0,
-    last_run_at TEXT,
-    created_at TEXT NOT NULL
-);
-"""
-
-
-# Added after the table existed, so applied with the same additive migration the
-# rest of this codebase uses rather than by rebuilding it.
-#
-# Outreach could compose an email and store it and stop. There was no Gmail
-# draft id, no approval state, and nothing that turned a stored draft into a
-# message you could look at and send -- so twenty-one outreach emails were text
-# in a database table. Recruiter replies already had all of this; outreach was
-# simply never built that far.
-_DRAFT_COLUMNS = (
-    ("approval_status", "TEXT"),
-    ("approved_at", "TEXT"),
-    ("gmail_draft_id", "TEXT"),
-    ("gmail_sent_message_id", "TEXT"),
-    ("attachment_paths", "TEXT"),
-    ("last_error_message", "TEXT"),
-)
-
 # awaiting_approval -> approved -> creating -> created, and dismissed from any
 # of them. `sent` stays on the existing `status` column: sending is a fact about
 # the outreach, not a stage of preparing the draft.
 DRAFT_STATES = ("awaiting_approval", "approved", "creating", "created", "failed",
                 "dismissed")
-
-
-def _ensure(conn: sqlite3.Connection) -> None:
-    conn.executescript(OUTREACH_SCHEMA)
-    existing = {r[1] for r in conn.execute("PRAGMA table_info(outreach)")}
-    for name, kind in _DRAFT_COLUMNS:
-        if name not in existing:
-            conn.execute(f"ALTER TABLE outreach ADD COLUMN {name} {kind}")
 
 
 def _business_days_from(start: datetime, days: int) -> datetime:
@@ -90,7 +36,6 @@ def _business_days_from(start: datetime, days: int) -> datetime:
 def upsert_outreach(payload: dict[str, Any]) -> dict[str, Any]:
     oid = f"o_{payload['jobId']}"
     with connect() as conn:
-        _ensure(conn)
         existing = conn.execute("SELECT id FROM outreach WHERE id=?", (oid,)).fetchone()
         if existing:
             conn.execute(
@@ -131,7 +76,6 @@ def mark_sent(oid: str, followup_business_days: int = 6) -> dict[str, Any] | Non
     ts = datetime.now(timezone.utc)
     due = _business_days_from(ts, followup_business_days)
     with connect() as conn:
-        _ensure(conn)
         conn.execute(
             "UPDATE outreach SET status='sent', sent_at=?, followup_due_at=? WHERE id=?",
             (ts.isoformat(), due.isoformat(), oid),
@@ -165,7 +109,6 @@ def unmark_replied(oid: str, followup_business_days: int = 6) -> dict[str, Any] 
         due = _business_days_from(start, followup_business_days).isoformat()
 
     with connect() as conn:
-        _ensure(conn)
         conn.execute(
             "UPDATE outreach SET status=?, replied_at=NULL, followup_due_at=? WHERE id=?",
             ("sent" if sent_at else "drafted", due, oid),
@@ -175,7 +118,6 @@ def unmark_replied(oid: str, followup_business_days: int = 6) -> dict[str, Any] 
 
 def mark_replied(oid: str) -> dict[str, Any] | None:
     with connect() as conn:
-        _ensure(conn)
         # Clearing followup_due_at is the cancellation — a replied thread must
         # never surface as a pending follow-up.
         conn.execute(
@@ -222,14 +164,12 @@ def _opt(r: sqlite3.Row, key: str) -> Any:
 
 def get_outreach(oid: str) -> dict[str, Any] | None:
     with connect() as conn:
-        _ensure(conn)
         r = conn.execute("SELECT * FROM outreach WHERE id=?", (oid,)).fetchone()
     return _row(r) if r else None
 
 
 def list_outreach() -> list[dict[str, Any]]:
     with connect() as conn:
-        _ensure(conn)
         rows = conn.execute("SELECT * FROM outreach ORDER BY created_at DESC").fetchall()
     return [_row(r) for r in rows]
 
@@ -237,7 +177,6 @@ def list_outreach() -> list[dict[str, Any]]:
 def list_followups() -> list[dict[str, Any]]:
     """Only sent-and-unanswered outreach is ever a follow-up."""
     with connect() as conn:
-        _ensure(conn)
         rows = conn.execute(
             """SELECT * FROM outreach
                WHERE status='sent' AND followup_due_at IS NOT NULL AND replied_at IS NULL
@@ -259,7 +198,6 @@ def list_followups() -> list[dict[str, Any]]:
 def save_search(label: str, filters: dict[str, Any]) -> dict[str, Any]:
     sid = f"s_{abs(hash((label, json.dumps(filters, sort_keys=True)))) % 10**10}"
     with connect() as conn:
-        _ensure(conn)
         conn.execute(
             """INSERT OR REPLACE INTO saved_searches
                (id, label, filters, auto_rerun, created_at) VALUES (?,?,?,?,?)""",
@@ -270,7 +208,6 @@ def save_search(label: str, filters: dict[str, Any]) -> dict[str, Any]:
 
 def list_searches() -> list[dict[str, Any]]:
     with connect() as conn:
-        _ensure(conn)
         rows = conn.execute("SELECT * FROM saved_searches ORDER BY created_at DESC").fetchall()
     return [
         {
@@ -287,13 +224,11 @@ def list_searches() -> list[dict[str, Any]]:
 
 def delete_search(sid: str) -> None:
     with connect() as conn:
-        _ensure(conn)
         conn.execute("DELETE FROM saved_searches WHERE id=?", (sid,))
 
 
 def toggle_search(sid: str) -> None:
     with connect() as conn:
-        _ensure(conn)
         conn.execute(
             "UPDATE saved_searches SET auto_rerun = 1 - auto_rerun WHERE id=?", (sid,)
         )
@@ -370,7 +305,6 @@ def prior_sends(email: str, company: str = "") -> dict[str, Any]:
     rows = []
     if address:
         with connect() as conn:
-            _ensure(conn)
             try:
                 rows = conn.execute(
                     "SELECT o.company, o.job_title, o.sent_at FROM outreach o"
@@ -407,7 +341,6 @@ def prior_sends(email: str, company: str = "") -> dict[str, Any]:
 
 def set_attachments(oid: str, paths: Any) -> dict[str, Any] | None:
     with connect() as conn:
-        _ensure(conn)
         conn.execute(
             "UPDATE outreach SET attachment_paths=? WHERE id=?",
             (json.dumps(mail_drafts.normalize_attachments(paths)), oid),
@@ -447,7 +380,6 @@ def approve_outreach(oid: str, *, force: bool = False) -> dict[str, Any] | None:
     """
     if not force:
         with connect() as conn:
-            _ensure(conn)
             row = _contact_email(conn, oid)
         email = row or ""
         if email:
@@ -461,7 +393,6 @@ def approve_outreach(oid: str, *, force: bool = False) -> dict[str, Any] | None:
                 )
 
     with connect() as conn:
-        _ensure(conn)
         row = conn.execute("SELECT * FROM outreach WHERE id=?", (oid,)).fetchone()
         if not row:
             return None
@@ -478,7 +409,6 @@ def approve_outreach(oid: str, *, force: bool = False) -> dict[str, Any] | None:
     record = get_outreach(oid)
     if record:
         with connect() as conn:
-            _ensure(conn)
             row = _contact_email(conn, oid)
         email = row or ""
         history = prior_sends(email) if email else {"snapshotStale": True,
@@ -502,7 +432,6 @@ def claim_approved_outreach() -> dict[str, Any] | None:
     outreach and leave the candidate with duplicates.
     """
     with connect() as conn:
-        _ensure(conn)
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
             "SELECT * FROM outreach WHERE approval_status='approved'"
@@ -531,7 +460,6 @@ def mark_outreach_draft_created(oid: str, gmail_draft_id: str) -> dict[str, Any]
     if not gmail_draft_id:
         raise ValueError("A Gmail draft ID is required.")
     with connect() as conn:
-        _ensure(conn)
         conn.execute(
             "UPDATE outreach SET approval_status='created', gmail_draft_id=?,"
             " last_error_message=NULL WHERE id=?", (gmail_draft_id, oid),
@@ -543,7 +471,6 @@ def mark_outreach_failed(oid: str, message: str) -> dict[str, Any] | None:
     """Recorded rather than retried silently. A draft that failed to reach Gmail
     and looks identical to one that never got there is how these go unnoticed."""
     with connect() as conn:
-        _ensure(conn)
         conn.execute(
             "UPDATE outreach SET approval_status='failed', last_error_message=?"
             " WHERE id=?", (str(message)[:400], oid),
@@ -554,7 +481,6 @@ def mark_outreach_failed(oid: str, message: str) -> dict[str, Any] | None:
 def dismiss_outreach(oid: str) -> dict[str, Any] | None:
     """Decide not to send this one. Distinct from failing, and from sending."""
     with connect() as conn:
-        _ensure(conn)
         conn.execute(
             "UPDATE outreach SET approval_status='dismissed' WHERE id=?", (oid,)
         )

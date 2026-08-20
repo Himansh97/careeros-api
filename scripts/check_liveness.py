@@ -20,12 +20,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.discovery import fetch_all_jobs  # noqa: E402
 from app.liveness import check_all, firecrawl_key, summarize  # noqa: E402
 from app.store import add_timeline, connect, list_applications, now  # noqa: E402
+from app.db import initialize  # noqa: E402
 
 MARK = {"live": "  live     ", "closed": "  CLOSED   ",
         "unknown": "  unknown  ", "unverified": "  unchecked"}
 
 
 async def main() -> int:
+    initialize()
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="report only, write nothing")
     args = ap.parse_args()

@@ -27,6 +27,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from app.interview_practice import BEHAVIOURAL, save_research  # noqa: E402
+from app.db import initialize  # noqa: E402
 
 # Applies to every behavioural answer. Kept separate from the per-question notes
 # so the same finding is not restated ten times and can be corrected once.
@@ -147,6 +148,7 @@ QUESTIONS: dict[str, dict] = {
 
 
 def main() -> int:
+    initialize()
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="print, write nothing")
     args = ap.parse_args()

@@ -80,39 +80,6 @@ TARGET_SECONDS = (60, 105)
 _FILLERS = ("um", "uh", "like", "basically", "actually", "literally", "sort of",
             "kind of", "you know", "i mean", "right", "so yeah")
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS practice_attempts (
-    id            TEXT PRIMARY KEY,
-    question_id   TEXT NOT NULL,
-    question_text TEXT NOT NULL,
-    kind          TEXT NOT NULL,
-    job_id        TEXT,
-    answer_text   TEXT NOT NULL,
-    spoken        INTEGER NOT NULL DEFAULT 0,
-    duration_s    REAL,
-    findings      TEXT NOT NULL,
-    critique      TEXT,
-    scores        TEXT,
-    created_at    TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS ix_attempts_question ON practice_attempts(question_id);
-CREATE INDEX IF NOT EXISTS ix_attempts_created  ON practice_attempts(created_at);
-
-CREATE TABLE IF NOT EXISTS question_research (
-    question_id  TEXT PRIMARY KEY,
-    shape        TEXT NOT NULL,
-    sources      TEXT NOT NULL,
-    researched_at TEXT NOT NULL
-);
-"""
-
-
-def _connect() -> sqlite3.Connection:
-    conn = connect()
-    conn.executescript(_SCHEMA)
-    return conn
-
-
 # --------------------------------------------------------------- the checks
 
 
@@ -239,7 +206,7 @@ def save_research(question_id: str, shape: dict[str, Any], sources: list[dict]) 
         raise ValueError(
             f"refusing to store research for {question_id!r} with no sources"
         )
-    with _connect() as conn:
+    with connect() as conn:
         conn.execute(
             """INSERT INTO question_research (question_id, shape, sources, researched_at)
                VALUES (?,?,?,?)
@@ -251,7 +218,7 @@ def save_research(question_id: str, shape: dict[str, Any], sources: list[dict]) 
 
 
 def get_research(question_id: str) -> dict[str, Any] | None:
-    with _connect() as conn:
+    with connect() as conn:
         row = conn.execute(
             "SELECT * FROM question_research WHERE question_id=?", (question_id,)
         ).fetchone()
@@ -359,7 +326,7 @@ def save_attempt(
 ) -> dict[str, Any]:
     attempt_id = f"att_{uuid.uuid4().hex[:16]}"
     scores = (critique_payload or {}).get("scores") or {}
-    with _connect() as conn:
+    with connect() as conn:
         conn.execute(
             """INSERT INTO practice_attempts
                (id, question_id, question_text, kind, job_id, answer_text, spoken,
@@ -391,7 +358,7 @@ def _row_to_attempt(row: sqlite3.Row) -> dict[str, Any]:
 
 
 def list_attempts(question_id: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
-    with _connect() as conn:
+    with connect() as conn:
         if question_id:
             rows = conn.execute(
                 "SELECT * FROM practice_attempts WHERE question_id=? "

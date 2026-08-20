@@ -16,24 +16,9 @@ the fact that they were not fetched live.
 from __future__ import annotations
 
 import json
-import sqlite3
 from typing import Any
 
 from .store import connect, now
-
-IMPORTED_SCHEMA = """
-CREATE TABLE IF NOT EXISTS imported_jobs (
-    id TEXT PRIMARY KEY,
-    payload TEXT NOT NULL,
-    source TEXT NOT NULL,
-    imported_at TEXT NOT NULL
-);
-"""
-
-
-def _ensure(conn: sqlite3.Connection) -> None:
-    conn.executescript(IMPORTED_SCHEMA)
-
 
 def import_jobs(jobs: list[dict[str, Any]], source: str, live: bool = False) -> int:
     """Persist externally-sourced postings. Returns how many were stored.
@@ -49,7 +34,6 @@ def import_jobs(jobs: list[dict[str, Any]], source: str, live: bool = False) -> 
     """
     stored = 0
     with connect() as conn:
-        _ensure(conn)
         for j in jobs:
             raw_company = j.get("company")
             if isinstance(raw_company, dict):
@@ -87,14 +71,12 @@ def import_jobs(jobs: list[dict[str, Any]], source: str, live: bool = False) -> 
 
 def list_imported() -> list[dict[str, Any]]:
     with connect() as conn:
-        _ensure(conn)
         rows = conn.execute("SELECT payload FROM imported_jobs").fetchall()
     return [json.loads(r["payload"]) for r in rows]
 
 
 def imported_counts() -> dict[str, int]:
     with connect() as conn:
-        _ensure(conn)
         rows = conn.execute(
             "SELECT source, COUNT(*) n FROM imported_jobs GROUP BY source"
         ).fetchall()

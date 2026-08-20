@@ -34,9 +34,11 @@ from app.discovery import fetch_all_jobs  # noqa: E402
 from app.imported import list_imported  # noqa: E402
 from app.profile import load_profile  # noqa: E402
 from app.store import connect, list_approvals, resolve_approval  # noqa: E402
+from app.db import initialize  # noqa: E402
 
 
 async def main() -> int:
+    initialize()
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="report only, write nothing")
     args = ap.parse_args()

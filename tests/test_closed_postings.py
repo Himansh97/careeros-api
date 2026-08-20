@@ -31,6 +31,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from app import alerts, store  # noqa: E402
+from app.db import initialize  # noqa: E402
 from app.liveness_sync import CLOSED_NOTE, is_closure_note  # noqa: E402
 
 
@@ -46,8 +47,7 @@ class ClosedPostingTests(unittest.TestCase):
         self.patcher = patch.object(store, "DB_PATH", path)
         self.patcher.start()
         self.addCleanup(self.patcher.stop)
-        with store.connect() as conn:
-            conn.executescript(store.SCHEMA)
+        initialize(path=path)
 
     def _app(self, job_id: str, company: str, next_action: str | None, days: float = 10):
         with store.connect() as conn:

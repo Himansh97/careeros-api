@@ -38,6 +38,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 from app.imported import import_jobs  # noqa: E402
 from app.liveness import FIRECRAWL_URL, firecrawl_key  # noqa: E402
 from app.sources import strip_html  # noqa: E402
+from app.db import initialize  # noqa: E402
 
 # Boilerplate that appears on every ZipRecruiter page. Left in, it becomes
 # "requirements" the scorer tries to match against.
@@ -79,6 +80,7 @@ def salary_text(entry: dict) -> str:
 
 
 async def main() -> int:
+    initialize()
     ap = argparse.ArgumentParser()
     ap.add_argument("results", help="JSON file: a ZipRecruiter results array")
     ap.add_argument("--dry-run", action="store_true")

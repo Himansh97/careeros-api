@@ -33,6 +33,9 @@ def main() -> int:
     with patch("app.config.DB_PATH", tmp), patch("app.store.DB_PATH", tmp):
         from app import store
         from app.alerts import MIN_FOR_RATES
+        from app.db import initialize
+
+        initialize(path=tmp)
 
         def check(label: str, got, want):
             if got != want:

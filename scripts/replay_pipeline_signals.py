@@ -21,9 +21,11 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from app.pipeline_signals import SIGNALS, apply_signal, match_application  # noqa: E402
 from app.recruiter_messages import list_messages  # noqa: E402
 from app.store import get_application  # noqa: E402
+from app.db import initialize  # noqa: E402
 
 
 def main() -> int:
+    initialize()
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="report only, write nothing")
     args = ap.parse_args()

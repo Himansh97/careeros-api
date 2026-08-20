@@ -5,48 +5,12 @@ import hashlib
 import json
 import pathlib
 import sqlite3
-from contextlib import contextmanager
 from email.utils import parseaddr
 import re
 from typing import Any
 
 from . import store
 
-
-RECRUITER_MESSAGE_SCHEMA = """
-CREATE TABLE IF NOT EXISTS recruiter_messages (
-    gmail_message_id TEXT PRIMARY KEY,
-    application_id TEXT,
-    sender_name TEXT NOT NULL,
-    sender_email TEXT NOT NULL,
-    subject TEXT NOT NULL,
-    received_at TEXT NOT NULL,
-    classification TEXT NOT NULL,
-    synopsis TEXT NOT NULL,
-    gmail_url TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS recruiter_reply_drafts (
-    id TEXT PRIMARY KEY,
-    gmail_message_id TEXT NOT NULL UNIQUE,
-    to_addresses TEXT NOT NULL,
-    cc_addresses TEXT NOT NULL,
-    bcc_addresses TEXT NOT NULL,
-    subject TEXT NOT NULL,
-    body TEXT NOT NULL,
-    status TEXT NOT NULL CHECK (status IN (
-        'awaiting_approval', 'approved', 'creating', 'created', 'dismissed', 'failed'
-    )),
-    approved_at TEXT,
-    gmail_draft_id TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    content_fingerprint TEXT,
-    last_error_code TEXT,
-    last_error_message TEXT
-);
-"""
 
 _EDITABLE_STATUSES = {"awaiting_approval", "failed"}
 
@@ -64,59 +28,9 @@ _EDITABLE_STATUSES = {"awaiting_approval", "failed"}
 _DISMISSABLE_STATUSES = _EDITABLE_STATUSES | {"created"}
 
 
-# Sending is recorded as its own fact rather than another `status` value.
-#
-# Two reasons. The status column carries a CHECK constraint that SQLite cannot
-# alter in place, so extending the enum would mean rebuilding the table. More
-# importantly, sending is not the next step after "created" — the candidate
-# sent the GitLab reply straight from Gmail while the draft still sat at
-# `approved`, with no Gmail draft ever created. A timestamp records what
-# happened without claiming the draft moved through a state it never entered.
-_SENT_COLUMNS = (
-    ("sent_at", "TEXT"),
-    ("gmail_sent_message_id", "TEXT"),
-)
-
-# Attachments were missing entirely, which is why "resume attached" went out
-# three times with nothing attached. The draft had no field for one, so no
-# review step could catch it and no reader could tell the difference between a
-# reply that forgot the resume and one that never wanted it.
-#
-# Paths rather than bytes. The packet PDFs are regenerated whenever a resume is
-# retailored, and a copy pasted into the database at draft time would quietly
-# become the stale version. The path is resolved and read at send time, so what
-# goes out is what is on disk now, and a missing file is an error rather than an
-# old resume nobody noticed.
-_ATTACHMENT_COLUMNS = (
-    ("attachment_paths", "TEXT"),
-)
-
 # One definition, shared with outreach. Both pipelines had the same gap for the
 # same reason, and two copies of a rule like this drift.
 from .mail_drafts import ATTACHMENT_CLAIMS as _ATTACHMENT_CLAIMS
-
-
-def _connect() -> sqlite3.Connection:
-    conn = store.connect()
-    conn.executescript(RECRUITER_MESSAGE_SCHEMA)
-    existing = {r[1] for r in conn.execute("PRAGMA table_info(recruiter_reply_drafts)")}
-    for name, kind in _SENT_COLUMNS + _ATTACHMENT_COLUMNS:
-        if name not in existing:
-            conn.execute(f"ALTER TABLE recruiter_reply_drafts ADD COLUMN {name} {kind}")
-    return conn
-
-
-@contextmanager
-def _connection():
-    conn = _connect()
-    try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
 
 
 def _now() -> str:
@@ -309,7 +223,7 @@ def upsert_message(payload: dict) -> dict:
     """Insert/update event metadata without replacing an existing reply draft."""
     draft = payload["draft"]
     ts = _now()
-    with _connection() as conn:
+    with store.connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
         existing = conn.execute(
             "SELECT application_id FROM recruiter_messages WHERE gmail_message_id=?",
@@ -367,7 +281,7 @@ def upsert_message(payload: dict) -> dict:
 
 
 def get_message(message_id: str) -> dict | None:
-    with _connection() as conn:
+    with store.connect() as conn:
         event = conn.execute(
             "SELECT * FROM recruiter_messages WHERE gmail_message_id=?", (message_id,)
         ).fetchone()
@@ -375,7 +289,7 @@ def get_message(message_id: str) -> dict | None:
 
 
 def list_messages(application_id: str | None = None) -> list[dict]:
-    with _connection() as conn:
+    with store.connect() as conn:
         if application_id is None:
             rows = conn.execute(
                 "SELECT * FROM recruiter_messages ORDER BY received_at DESC, gmail_message_id DESC"
@@ -393,7 +307,7 @@ def update_draft(message_id: str, patch: dict) -> dict:
     unknown = set(patch) - allowed
     if unknown:
         raise ValueError(f"Unsupported draft fields: {', '.join(sorted(unknown))}")
-    with _connection() as conn:
+    with store.connect() as conn:
         draft = _draft_or_raise(conn, message_id)
         if draft["status"] not in _EDITABLE_STATUSES:
             raise ValueError(f"Draft is not editable while {draft['status']}")
@@ -428,7 +342,7 @@ def update_draft(message_id: str, patch: dict) -> dict:
 
 
 def approve_draft(message_id: str) -> dict:
-    with _connection() as conn:
+    with store.connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
         event = _message_or_raise(conn, message_id)
         draft = _draft_or_raise(conn, message_id)
@@ -448,7 +362,7 @@ def approve_draft(message_id: str) -> dict:
 
 
 def dismiss_draft(message_id: str) -> dict:
-    with _connection() as conn:
+    with store.connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
         event = _message_or_raise(conn, message_id)
         draft = _draft_or_raise(conn, message_id)
@@ -464,7 +378,7 @@ def dismiss_draft(message_id: str) -> dict:
 
 
 def retry_draft(message_id: str) -> dict:
-    with _connection() as conn:
+    with store.connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
         event = _message_or_raise(conn, message_id)
         draft = _draft_or_raise(conn, message_id)
@@ -507,7 +421,7 @@ def _read_attachments(paths: list[str]) -> list[dict[str, Any]]:
 
 
 def claim_approved_draft() -> dict | None:
-    with _connection() as conn:
+    with store.connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
         draft = conn.execute(
             "SELECT * FROM recruiter_reply_drafts WHERE status='approved' "
@@ -537,7 +451,7 @@ def claim_approved_draft() -> dict | None:
 def mark_draft_created(message_id: str, gmail_draft_id: str) -> dict:
     if not gmail_draft_id:
         raise ValueError("Gmail draft ID is required")
-    with _connection() as conn:
+    with store.connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
         event = _message_or_raise(conn, message_id)
         draft = _draft_or_raise(conn, message_id)
@@ -568,7 +482,7 @@ def mark_draft_sent(
     """
     if not gmail_sent_message_id:
         raise ValueError("Gmail message ID of the sent mail is required")
-    with _connection() as conn:
+    with store.connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
         event = _message_or_raise(conn, message_id)
         draft = _draft_or_raise(conn, message_id)
@@ -584,7 +498,7 @@ def mark_draft_sent(
 
 
 def mark_draft_failed(message_id: str, code: str, message: str) -> dict:
-    with _connection() as conn:
+    with store.connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
         event = _message_or_raise(conn, message_id)
         draft = _draft_or_raise(conn, message_id)

@@ -36,18 +36,6 @@ from typing import Any
 
 from .store import connect
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS interview_intel (
-    id TEXT PRIMARY KEY,
-    company TEXT NOT NULL,
-    role_family TEXT NOT NULL,
-    payload TEXT NOT NULL,
-    sources TEXT NOT NULL,
-    researched_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-"""
-
 # Beyond this, a hiring process may well have changed. Not a reason to hide the
 # intel — a reason to say how old it is.
 STALE_AFTER_DAYS = 240
@@ -86,12 +74,6 @@ def _key(company: str, family: str) -> str:
     return f"{slug}:{family}"
 
 
-def _connect():
-    conn = connect()
-    conn.executescript(SCHEMA)
-    return conn
-
-
 def _age_days(stamp: str) -> int:
     try:
         when = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
@@ -117,7 +99,7 @@ def save_intel(
         )
     now = datetime.now(timezone.utc).isoformat()
     ident = _key(company, family)
-    with _connect() as conn:
+    with connect() as conn:
         conn.execute(
             """INSERT INTO interview_intel
                (id, company, role_family, payload, sources, researched_at, updated_at)
@@ -141,7 +123,7 @@ def save_intel(
 def get_intel(company: str, title: str) -> dict[str, Any]:
     """Intel for this company and role family, or an honest absence."""
     family = role_family(title)
-    with _connect() as conn:
+    with connect() as conn:
         row = conn.execute(
             "SELECT * FROM interview_intel WHERE id=?", (_key(company, family),)
         ).fetchone()
@@ -183,7 +165,7 @@ def get_intel(company: str, title: str) -> dict[str, Any]:
 
 
 def list_intel() -> list[dict[str, Any]]:
-    with _connect() as conn:
+    with connect() as conn:
         rows = conn.execute(
             "SELECT company, role_family, researched_at FROM interview_intel "
             "ORDER BY company"

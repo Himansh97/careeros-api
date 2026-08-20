@@ -31,6 +31,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.store import connect  # noqa: E402
+from app.db import initialize  # noqa: E402
 
 # Timeline wording that records a real submission.
 SUBMIT_LABELS = ("application submitted", "submitted by candidate", "moved to submitted")
@@ -40,6 +41,7 @@ RESPONDED = ("recruiter_contacted", "screening", "interview", "offer", "rejected
 
 
 def main() -> int:
+    initialize()
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()

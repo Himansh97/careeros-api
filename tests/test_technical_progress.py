@@ -14,6 +14,7 @@ import sys
 # `tests/test_recruiter_messages.py` records this exact bug happening before.
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from app import store as app_store
+from app.db import initialize
 from app.technical_learning.progress import hint_access, progress_overview, submit_guided_attempt
 
 
@@ -24,6 +25,7 @@ class TechnicalProgressTests(unittest.TestCase):
         patcher = patch.object(app_store, "DB_PATH", Path(self.tmp.name) / "careeros.db")
         patcher.start()
         self.addCleanup(patcher.stop)
+        initialize(path=app_store.DB_PATH)
 
     def test_hints_unlock_only_after_failed_checks(self) -> None:
         initial = hint_access("stats-ab-test")

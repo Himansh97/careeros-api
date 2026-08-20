@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sqlite3
 from typing import Any
 
 from dataclasses import dataclass, field
@@ -103,21 +102,6 @@ def _skip_reason(
         return "not eligible"
     return None
 
-AUTOMATION_SCHEMA = """
-CREATE TABLE IF NOT EXISTS automation_runs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    started_at TEXT NOT NULL,
-    finished_at TEXT,
-    status TEXT NOT NULL,
-    stats TEXT,
-    nodes TEXT
-);
-CREATE TABLE IF NOT EXISTS automation_rules (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    payload TEXT NOT NULL
-);
-"""
-
 DEFAULT_RULES: dict[str, Any] = {
     "minimumFitToTailor": 75,
     "minimumResumeScore": 90,
@@ -146,13 +130,8 @@ NODE_ORDER = [
 ]
 
 
-def _ensure(conn: sqlite3.Connection) -> None:
-    conn.executescript(AUTOMATION_SCHEMA)
-
-
 def get_rules() -> dict[str, Any]:
     with connect() as conn:
-        _ensure(conn)
         row = conn.execute("SELECT payload FROM automation_rules WHERE id=1").fetchone()
     if not row:
         return dict(DEFAULT_RULES)
@@ -163,7 +142,6 @@ def get_rules() -> dict[str, Any]:
 def save_rules(rules: dict[str, Any]) -> dict[str, Any]:
     merged = {**get_rules(), **{k: v for k, v in rules.items() if v is not None}}
     with connect() as conn:
-        _ensure(conn)
         conn.execute(
             "INSERT OR REPLACE INTO automation_rules (id, payload) VALUES (1, ?)",
             (json.dumps(merged),),
@@ -185,7 +163,6 @@ def _nodes(states: dict[str, tuple[str, str]]) -> list[dict[str, Any]]:
 
 def latest_run() -> dict[str, Any] | None:
     with connect() as conn:
-        _ensure(conn)
         row = conn.execute(
             "SELECT * FROM automation_runs ORDER BY id DESC LIMIT 1"
         ).fetchone()
@@ -220,7 +197,6 @@ async def run_autopilot(max_tailor: int | None = None) -> dict[str, Any]:
     states: dict[str, tuple[str, str]] = {}
 
     with connect() as conn:
-        _ensure(conn)
         cur = conn.execute(
             "INSERT INTO automation_runs (started_at, status, nodes) VALUES (?,?,?)",
             (started, "running", json.dumps(_nodes(states))),
@@ -230,7 +206,6 @@ async def run_autopilot(max_tailor: int | None = None) -> dict[str, Any]:
     def mark(key: str, state: str, detail: str = "") -> None:
         states[key] = (state, detail)
         with connect() as c:
-            _ensure(c)
             c.execute(
                 "UPDATE automation_runs SET nodes=? WHERE id=?",
                 (json.dumps(_nodes(states)), run_id),
@@ -345,7 +320,6 @@ async def run_autopilot(max_tailor: int | None = None) -> dict[str, Any]:
 
         finished = now()
         with connect() as conn:
-            _ensure(conn)
             conn.execute(
                 "UPDATE automation_runs SET finished_at=?, status=?, stats=?, nodes=? WHERE id=?",
                 (finished, "complete", json.dumps(stats), json.dumps(_nodes(states)), run_id),
@@ -355,7 +329,6 @@ async def run_autopilot(max_tailor: int | None = None) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 - surface the failure, don't hide it
         mark("discover", "failed", str(exc)[:160])
         with connect() as conn:
-            _ensure(conn)
             conn.execute(
                 "UPDATE automation_runs SET finished_at=?, status=?, stats=? WHERE id=?",
                 (now(), "failed", json.dumps({"error": str(exc)[:300]}), run_id),
