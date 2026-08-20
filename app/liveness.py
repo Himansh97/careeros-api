@@ -22,9 +22,13 @@ check still runs and reports those as unverifiable rather than guessing.
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
+
+from .discovery_store import DiscoverySnapshot, SourceState
+from .liveness_sync import LivenessEvidence
 
 FIRECRAWL_URL = "https://api.firecrawl.dev/v2/scrape"
 
@@ -117,6 +121,8 @@ async def check_all(
     applications: list[dict[str, Any]],
     pool_ids: set[str],
     key: str | None,
+    *,
+    direct_only: bool = False,
 ) -> list[dict[str, str]]:
     """Check every staged application, cheapest method first."""
     results: list[dict[str, str]] = []
@@ -128,7 +134,7 @@ async def check_all(
         company = company.get("name") if isinstance(company, dict) else str(company or "?")
         entry = {"jobId": job_id, "company": company, "title": app.get("title", "")}
 
-        if job_id.startswith(API_PREFIXES):
+        if not direct_only and job_id.startswith(API_PREFIXES):
             live = job_id in pool_ids
             results.append({
                 **entry,
@@ -163,6 +169,110 @@ async def check_all(
             results.append({**entry, "verdict": verdict, "why": why, "method": "firecrawl"})
 
     return results
+
+
+def evidence_from_snapshot(
+    applications: list[dict[str, Any]],
+    snapshot: DiscoverySnapshot,
+    direct_checks: list[dict[str, Any]] | None = None,
+) -> tuple[LivenessEvidence, ...]:
+    """Build evidence without treating a degraded source as a mass absence."""
+    checked_at = snapshot.generated_at or datetime.now(timezone.utc).isoformat()
+    health_by_source = {source.source_key: source for source in snapshot.sources}
+    fresh_jobs = {
+        job["id"]: job
+        for job in snapshot.jobs
+        if not job.get("stale")
+    }
+    owner_by_job = {
+        job["id"]: job.get("sourceKey")
+        for job in snapshot.jobs
+        if job.get("sourceKey")
+    }
+    direct_by_job = {
+        check.get("jobId"): check for check in (direct_checks or [])
+    }
+    evidence: list[LivenessEvidence] = []
+    for application in applications:
+        job_id = application.get("jobId") or application.get("job_id") or ""
+        owner = owner_by_job.get(job_id)
+        if owner is None:
+            from .discovery_store import source_owner
+
+            owner = source_owner(job_id)
+        if owner is None:
+            check = direct_by_job.get(job_id)
+            verdict = (check or {}).get("verdict")
+            kind = {
+                "live": "direct_live",
+                "closed": "direct_closed",
+            }.get(verdict, "unknown")
+            evidence.append(
+                LivenessEvidence(
+                    job_id,
+                    "manual/direct",
+                    kind,
+                    None,
+                    SourceState.HEALTHY,
+                    checked_at,
+                    _direct_detail_code(check),
+                )
+            )
+            continue
+        health = health_by_source.get(owner) if owner else None
+        if health is None:
+            evidence.append(
+                LivenessEvidence(
+                    job_id, owner, "unknown", None, SourceState.UNAVAILABLE,
+                    checked_at, "missing_source_owner" if not owner else "missing_source_health",
+                )
+            )
+            continue
+        if health.state is not SourceState.HEALTHY:
+            evidence.append(
+                LivenessEvidence(
+                    job_id,
+                    owner,
+                    "unknown",
+                    health.generation_id,
+                    health.state,
+                    checked_at,
+                    health.error_code or f"source_{health.state.value}",
+                )
+            )
+            continue
+        evidence.append(
+            LivenessEvidence(
+                job_id,
+                owner,
+                "present" if job_id in fresh_jobs else "absent",
+                health.generation_id,
+                health.state,
+                checked_at,
+                "present" if job_id in fresh_jobs else "absent",
+            )
+        )
+    return tuple(evidence)
+
+
+def _direct_detail_code(check: dict[str, Any] | None) -> str:
+    if not check:
+        return "direct_check_missing"
+    verdict = check.get("verdict")
+    why = str(check.get("why") or "").lower()
+    if verdict == "live":
+        return "direct_reachable"
+    if "404" in why:
+        return "http_404"
+    if "410" in why:
+        return "http_410"
+    if verdict == "closed":
+        return "closed_marker"
+    if "key" in why:
+        return "missing_firecrawl_key"
+    if "credit" in why:
+        return "rate_limited"
+    return "direct_inconclusive"
 
 
 # A summary that does not add up is worse than no summary. The script counted

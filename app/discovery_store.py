@@ -218,6 +218,17 @@ def current_snapshot() -> DiscoverySnapshot:
     return DiscoverySnapshot(tuple(jobs), tuple(sources), generated_at)
 
 
+def source_owner(job_id: str) -> str | None:
+    """Return the adapter that has most recently observed a posting."""
+    with connect(read_only=True, path=Path(DB_PATH)) as connection:
+        row = connection.execute(
+            "SELECT source_key FROM job_observation WHERE job_id=? "
+            "ORDER BY observed_at DESC, rowid DESC LIMIT 1",
+            (job_id,),
+        ).fetchone()
+    return row["source_key"] if row else None
+
+
 def prune_generations(*, keep: int = 30) -> int:
     if keep < 1:
         raise ValueError("keep must be at least 1")

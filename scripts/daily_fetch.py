@@ -112,19 +112,26 @@ async def main() -> int:
     # Check staged postings before tailoring more: a role that closed overnight
     # should be flagged rather than quietly kept at the top of the queue.
     try:
-        from app.liveness import check_all, firecrawl_key
-        from app.store import add_timeline, connect, list_applications, now as _now
+        from app.discovery_store import current_snapshot
+        from app.liveness import check_all, evidence_from_snapshot, firecrawl_key
+        from app.liveness_sync import apply_evidence, preview_evidence
+        from app.store import list_applications
 
         apps = list_applications()
-        checks = await check_all(apps, {j["id"] for j in jobs}, firecrawl_key())
-        from app.liveness_sync import apply_verdicts
-
-        closed = [c for c in checks if c["verdict"] == "closed"]
-        changed = apply_verdicts(checks, apps)
-        unverified = sum(1 for c in checks if c["verdict"] == "unverified")
-        log(f"liveness: {len(closed)} closed ({changed['marked']} newly), "
-            f"{changed['cleared']} stale flags cleared, {unverified} unverifiable"
-            + (f" — {', '.join(c['company'] for c in closed)}" if closed else ""))
+        snapshot = current_snapshot()
+        initial = evidence_from_snapshot(apps, snapshot)
+        direct_ids = {item.job_id for item in initial if item.source_key == "manual/direct"}
+        direct_apps = [app for app in apps if app.get("jobId") in direct_ids]
+        direct = await check_all(
+            direct_apps, set(), firecrawl_key(), direct_only=True
+        )
+        evidence = evidence_from_snapshot(apps, snapshot, direct)
+        decisions = preview_evidence(evidence)
+        changed = apply_evidence(evidence)
+        closed = [item for item in decisions if item["verdict"] == "closed"]
+        unknown = sum(1 for item in decisions if item["verdict"] == "unknown")
+        log(f"liveness: {len(closed)} closed ({changed.marked} newly), "
+            f"{changed.cleared} stale flags cleared, {unknown} unknown")
     except Exception as exc:  # noqa: BLE001 - never let this stop the run
         log(f"liveness check failed: {type(exc).__name__}: {exc}")
 

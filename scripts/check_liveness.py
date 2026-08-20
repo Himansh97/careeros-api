@@ -18,7 +18,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.discovery import fetch_all_jobs  # noqa: E402
-from app.liveness import check_all, firecrawl_key, summarize  # noqa: E402
+from app.discovery_store import current_snapshot  # noqa: E402
+from app.liveness import check_all, evidence_from_snapshot, firecrawl_key, summarize  # noqa: E402
+from app.liveness_sync import apply_evidence, preview_evidence  # noqa: E402
 from app.store import add_timeline, connect, list_applications, now  # noqa: E402
 from app.db import initialize  # noqa: E402
 
@@ -38,30 +40,49 @@ async def main() -> int:
         return 0
 
     jobs = await fetch_all_jobs()
-    pool = {j["id"] for j in jobs}
+    del jobs
     key = firecrawl_key()
 
-    results = await check_all(apps, pool, key)
+    snapshot = current_snapshot()
+    initial = evidence_from_snapshot(apps, snapshot)
+    direct_ids = {item.job_id for item in initial if item.source_key == "manual/direct"}
+    direct_apps = [a for a in apps if a.get("jobId") in direct_ids]
+    direct = await check_all(direct_apps, set(), key, direct_only=True)
+    evidence = evidence_from_snapshot(apps, snapshot, direct)
+    decisions = preview_evidence(evidence)
+    apps_by_job = {app.get("jobId"): app for app in apps}
+    results = [
+        {
+            **decision,
+            "company": (apps_by_job[decision["jobId"]].get("company") or "?"),
+            "title": apps_by_job[decision["jobId"]].get("title") or "",
+            "why": decision["reasonCode"],
+        }
+        for decision in decisions
+    ]
     results.sort(key=lambda r: (r["verdict"] != "closed", r["company"]))
+
+    summary = summarize(results)
+    if args.dry_run:
+        print(
+            f"liveness dry run: {summary['counts'].get('live', 0)} live, "
+            f"{summary['counts'].get('closed', 0)} closed, "
+            f"{summary['undetermined']} unknown"
+        )
+        for reason, count in sorted(summary["reasons"].items()):
+            print(f"  {count:>3}  {reason}")
+        return 0
 
     for r in results:
         print(f"{MARK.get(r['verdict'], '  ?        ')} {r['company'][:24]:<24} "
               f"{r['title'][:38]:<38} {r['why']}")
 
-    summary = summarize(results)
-    closed = [r for r in results if r["verdict"] == "closed"]
-    unchecked = [r for r in results if r["verdict"] == "unverified"]
+    unchecked = [r for r in results if r["reasonCode"] == "missing_firecrawl_key"]
 
-    if not args.dry_run:
-        # Symmetric: closures recorded, and stale closures retracted. Applying
-        # only the `closed` half is what let one bad fetch mark an application
-        # dead forever.
-        from app.liveness_sync import apply_verdicts
-
-        changed = apply_verdicts(results, apps)
-        if changed["cleared"]:
-            print(f"\n  cleared {changed['cleared']} stale closed flag(s) — "
-                  "those postings are live again")
+    changed = apply_evidence(evidence)
+    if changed.cleared:
+        print(f"\n  cleared {changed.cleared} stale closed flag(s) — "
+              "those postings are live again")
 
     print(f"\n  {summary['total']} checked — {summary['counts'].get('closed', 0)} closed, "
           f"{summary['counts'].get('live', 0)} live, "

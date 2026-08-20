@@ -12,7 +12,6 @@ wrote the flag, `live` did nothing — so a single bad fetch was permanent.
 from __future__ import annotations
 
 import pathlib
-import sqlite3
 import sys
 import tempfile
 import unittest
@@ -21,6 +20,7 @@ from unittest import mock
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from app import liveness_sync  # noqa: E402
+from app.db import connect, initialize  # noqa: E402
 from app.liveness_sync import CLOSED_NOTE, apply_verdicts  # noqa: E402
 
 
@@ -28,60 +28,29 @@ class Sync(unittest.TestCase):
     def setUp(self) -> None:
         self.dir = tempfile.TemporaryDirectory()
         self.db = pathlib.Path(self.dir.name) / "t.db"
-        conn = sqlite3.connect(self.db)
-        conn.executescript(
-            """
-            CREATE TABLE applications (
-              id TEXT PRIMARY KEY, job_id TEXT, next_action TEXT, updated_at TEXT
-            );
-            CREATE TABLE timeline (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              application_id TEXT, label TEXT, at TEXT
-            );
-            """
-        )
-        conn.commit()
-        conn.close()
-
-        def connect():
-            c = sqlite3.connect(self.db)
-            c.row_factory = sqlite3.Row
-            return c
-
-        def add_timeline(conn, app_id, label):
-            conn.execute(
-                "INSERT INTO timeline (application_id, label, at) VALUES (?,?,?)",
-                (app_id, label, "now"),
-            )
-
-        self.patches = [
-            mock.patch.object(liveness_sync, "connect", connect),
-            mock.patch.object(liveness_sync, "add_timeline", add_timeline),
-        ]
-        for p in self.patches:
-            p.start()
+        initialize(path=self.db)
+        self.path_patch = mock.patch.object(liveness_sync, "DB_PATH", self.db)
+        self.path_patch.start()
 
     def tearDown(self) -> None:
-        for p in self.patches:
-            p.stop()
+        self.path_patch.stop()
         self.dir.cleanup()
 
     def _seed(self, job_id: str, note: str) -> None:
-        conn = sqlite3.connect(self.db)
-        conn.execute(
-            "INSERT INTO applications (id, job_id, next_action, updated_at) VALUES (?,?,?,?)",
-            (f"app_{job_id}", job_id, note, "then"),
-        )
-        conn.commit()
-        conn.close()
+        with connect(path=self.db) as connection:
+            connection.execute(
+                "INSERT INTO applications "
+                "(id, job_id, title, company, status, next_action, created_at, updated_at) "
+                "VALUES (?,?, 'Analyst','Acme','ready',?,'then','then')",
+                (f"app_{job_id}", job_id, note),
+            )
 
     def _note(self, job_id: str) -> str:
-        conn = sqlite3.connect(self.db)
-        row = conn.execute(
-            "SELECT next_action FROM applications WHERE id=?", (f"app_{job_id}",)
-        ).fetchone()
-        conn.close()
-        return row[0]
+        with connect(read_only=True, path=self.db) as connection:
+            row = connection.execute(
+                "SELECT next_action FROM applications WHERE id=?", (f"app_{job_id}",)
+            ).fetchone()
+            return row[0]
 
     def test_live_posting_clears_a_stale_closure(self) -> None:
         """The whole point: a posting that came back stops being marked dead."""
@@ -110,9 +79,8 @@ class Sync(unittest.TestCase):
             [{"jobId": "gh_x_3", "nextAction": CLOSED_NOTE}],
         )
         self.assertEqual(out["marked"], 0)
-        conn = sqlite3.connect(self.db)
-        n = conn.execute("SELECT COUNT(*) FROM timeline").fetchone()[0]
-        conn.close()
+        with connect(read_only=True, path=self.db) as connection:
+            n = connection.execute("SELECT COUNT(*) FROM timeline").fetchone()[0]
         self.assertEqual(n, 0)
 
     def test_other_notes_survive_a_live_verdict(self) -> None:
