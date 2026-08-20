@@ -1,12 +1,32 @@
 # careeros-api
 
-> **Part of CareerOS** — [careeros](https://github.com/Himansh97/careeros) (data + docs + state) · **careeros-api** (backend) · [careeros-web](https://github.com/Himansh97/careeros-web) (frontend)
->
-> Current state: [`careeros/docs/STATE.md`](https://github.com/Himansh97/careeros/blob/main/docs/STATE.md)
+> **Part of CareerOS** — **careeros-api** (backend) · [careeros-web](https://github.com/Himansh97/careeros-web) (frontend)
 
+Backend for CareerOS: live job discovery, evidence-based fit scoring, resume
+tailoring, and recruiter outreach drafting. FastAPI, SQLite, no ORM.
 
-Backend for CareerOS. Live job discovery, evidence-based scoring, resume
-tailoring, and outreach drafting.
+## Two rules this is built around
+
+**Nothing auto-submits.** The API prepares an application and stops. The browser
+automation in `app/prefill.py` drives a *visible* window and is structurally
+incapable of pressing submit — `SUBMIT_PATTERNS` names the controls that send an
+application and there is no flag that overrides it. This is not caution for its
+own sake: Indeed's terms prohibit automating their Apply flow, Greenhouse
+prohibits automated access and defends its boards with invisible reCAPTCHA, and
+Dice permits ordinary browsers as "Approved Devices" — which is exactly what a
+headed window a person drives is. A tool that quietly crossed that line would be
+worth less than no tool.
+
+**No claim without evidence.** Every line of a generated resume must trace to a
+claim in an evidence file, and generated prose is discarded *whole* if any
+sentence introduces a figure, a proper noun or a seniority verb its source does
+not support (`app/compose.py`, `app/containment.py`). An unrecognised requirement
+is reported as a gap, never assumed as a pass — a mortgage compliance posting
+once scored 98/100 with "no gaps" precisely because the requirements the system
+did not understand were invisible rather than unmet.
+
+The candidate's own data lives in a separate private repository and never enters
+this one.
 
 ## What is actually live
 
