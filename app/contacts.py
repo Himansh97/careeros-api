@@ -82,9 +82,23 @@ THIRD_PARTY_HOSTS = (
     "glassdoor.com", "monster.com", "careerbuilder.com", "simplyhired.com",
     "themuse.com", "arbeitnow.com", "remoteok.com", "weworkremotely.com",
     "builtin.com", "wellfound.com", "angel.co", "jobright.ai",
+    # More ATS vendors. careerpuck.com was missing, so a Lyft posting resolved
+    # to app.careerpuck.com and the lookup searched an applicant-tracking
+    # vendor for Lyft's recruiters -- the same failure as the Dice one above,
+    # just with a host nobody had hit yet.
+    "careerpuck.com", "paylocity.com", "dayforcehcm.com", "taleo.net",
+    "oraclecloud.com", "phenompeople.com", "eightfold.ai", "jazzhr.com",
+    "applytojob.com", "hire.withgoogle.com", "pinpointhq.com",
     # URL shorteners — the destination is unknown until followed
     "bit.ly", "tinyurl.com", "lnkd.in",
 )
+
+
+# Hostnames a careers page sits on. The mail domain is the thing underneath.
+_CAREERS_SUBDOMAINS = frozenset({
+    "www", "careers", "career", "jobs", "job", "apply", "boards", "work",
+    "hire", "hiring", "talent", "recruiting", "recruit", "app", "my", "join",
+})
 
 
 def company_domain(company_name: str, apply_url: str) -> str | None:
@@ -98,11 +112,24 @@ def company_domain(company_name: str, apply_url: str) -> str | None:
     if not m:
         return None
     host = m.group(1).lower()
-    if host.startswith("www."):
-        host = host[4:]
     if any(bad in host for bad in THIRD_PARTY_HOSTS):
         return None
-    return host
+
+    # Strip the subdomain a careers site lives on. `careers.datadoghq.com` is
+    # the employer's own host, so the third-party check correctly lets it
+    # through -- but nobody has a mailbox there, so the lookup returned zero
+    # contacts and read as "this company has no staff" rather than "we asked
+    # the wrong hostname".
+    #
+    # Only known job-site prefixes are removed, one at a time. Taking the last
+    # two labels instead would turn `careers.example.co.uk` into `co.uk`.
+    while True:
+        first, _, rest = host.partition(".")
+        if first in _CAREERS_SUBDOMAINS and rest.count(".") >= 1:
+            host = rest
+            continue
+        break
+    return host or None
 
 
 async def resolve_domain_by_company(company_name: str) -> str | None:
