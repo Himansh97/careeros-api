@@ -65,11 +65,12 @@ def hint_access(drill_id: str) -> dict[str, bool]:
             "SELECT COUNT(*) FROM technical_attempts WHERE drill_id=? AND passed=0",
             (drill_id,),
         ).fetchone()[0]
-    return {
+    result = {
         "conceptual": failures >= 1,
         "pattern": failures >= 2,
         "solutionRevealAvailable": failures >= 2,
     }
+    return result
 
 
 def submit_guided_attempt(
@@ -110,7 +111,7 @@ def submit_guided_attempt(
                 created_at,
             ),
         )
-    return {
+    result: dict[str, Any] = {
         "id": attempt_id,
         "drillId": drill_id,
         "grade": grade.model_dump(mode="json"),
@@ -121,6 +122,9 @@ def submit_guided_attempt(
         "metadata": metadata,
         "createdAt": created_at,
     }
+    if solution_revealed:
+        result["solution"] = drill.solution
+    return result
 
 
 def progress_overview() -> dict[str, Any]:

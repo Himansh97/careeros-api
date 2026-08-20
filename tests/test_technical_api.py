@@ -75,6 +75,13 @@ class TechnicalApiTests(unittest.TestCase):
         self.assertFalse(response.json()["grade"]["passed"])
         self.assertTrue(response.json()["hints"]["conceptual"])
         self.assertIn("debrief", response.json())
+        self.assertNotIn("solution", response.json())
+
+        revealed = self.client.post(
+            "/api/prep/technical/attempts",
+            json={"drillId": "stats-ab-test", "answer": "watch it", "solutionRevealed": True},
+        )
+        self.assertIn("solution", revealed.json())
 
     def test_session_routes_preserve_delayed_grading(self) -> None:
         invalid = self.client.post("/api/prep/technical/sessions", json={"durationMinutes": 15})
