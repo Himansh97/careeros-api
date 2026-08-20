@@ -40,11 +40,14 @@ class MigrationTests(unittest.TestCase):
                 "SELECT version, name, checksum FROM schema_migrations"
             ).fetchall()
 
-        self.assertEqual(status.current_version, 1)
+        self.assertEqual(status.current_version, 2)
         self.assertTrue(
             {"applications", "timeline", "approvals", "job_flags"}.issubset(tables)
         )
-        self.assertEqual([(row["version"], row["name"]) for row in ledger], [(1, "baseline")])
+        self.assertEqual(
+            [(row["version"], row["name"]) for row in ledger],
+            [(1, "baseline"), (2, "trust_foundation")],
+        )
         self.assertEqual(len(ledger[0]["checksum"]), 64)
 
     def test_initialize_is_idempotent(self) -> None:
@@ -56,10 +59,10 @@ class MigrationTests(unittest.TestCase):
                 "SELECT COUNT(*) FROM schema_migrations"
             ).fetchone()[0]
 
-        self.assertEqual(first.current_version, 1)
-        self.assertEqual(second.current_version, 1)
+        self.assertEqual(first.current_version, 2)
+        self.assertEqual(second.current_version, 2)
         self.assertEqual(second.applied_versions, ())
-        self.assertEqual(count, 1)
+        self.assertEqual(count, 2)
 
     def test_matching_legacy_database_is_baselined_without_replacing_rows(self) -> None:
         with sqlite3.connect(self.path) as connection:
@@ -91,8 +94,9 @@ class MigrationTests(unittest.TestCase):
     def test_checksum_change_is_refused(self) -> None:
         initialize(path=self.path)
         changed = Migration.build(1, "baseline", "SELECT 1;")
+        trust = load_migrations()[1]
 
-        with mock.patch.object(db, "load_migrations", return_value=(changed,)):
+        with mock.patch.object(db, "load_migrations", return_value=(changed, trust)):
             with self.assertRaises(MigrationChecksumMismatch):
                 initialize(path=self.path)
 
