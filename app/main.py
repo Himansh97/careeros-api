@@ -131,6 +131,37 @@ async def prep_questions(kind: str = "behavioural") -> dict[str, Any]:
     return {"kind": kind, "questions": list(BEHAVIOURAL)}
 
 
+@app.get("/api/prep/questions/{question_id}/model-answer")
+async def prep_model_answer(question_id: str, draft: bool = True) -> dict[str, Any]:
+    """What a strong answer looks like, and what yours could be.
+
+    Two layers that must stay visibly separate. **`shape`** is researched craft
+    knowledge — what the interviewer is assessing, the structure, the traps —
+    carrying the sources it came from, because advice with no provenance is
+    indistinguishable from advice a model invented. **`draft`** is that shape
+    filled with the candidate's own claims, and it is refused outright rather
+    than approximated if the gate finds an unbacked figure in it.
+
+    `draft=false` returns the research alone and costs nothing.
+    """
+    from .interview_practice import BEHAVIOURAL, draft_answer, get_research
+
+    question = next((q for q in BEHAVIOURAL if q["id"] == question_id), None)
+    if question is None:
+        raise HTTPException(status_code=404, detail=f"Unknown question: {question_id}")
+
+    shape = get_research(question_id)
+    built = draft_answer(question, _profile()) if draft else None
+    return {
+        "question": question,
+        "shape": shape,
+        "draft": built,
+        # Said rather than implied. A missing draft means the gate refused it or
+        # no evidence matched -- both worth knowing, and neither is "no advice".
+        "draftAvailable": built is not None,
+    }
+
+
 @app.post("/api/prep/attempts")
 async def prep_attempt(payload: PracticeAttempt) -> dict[str, Any]:
     """Check one answer against the evidence, then coach on it.

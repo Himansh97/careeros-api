@@ -199,6 +199,95 @@ def test_an_empty_answer_does_not_crash() -> None:
     assert out["words"] == 0
 
 
+# --------------------------------------------------------- researched shape
+
+
+def test_research_without_sources_is_refused() -> None:
+    """The shape is the one thing here not drawn from the candidate's own
+    evidence, so it has to carry its provenance. Advice with no source cannot be
+    told apart from advice a model invented, and the whole design rests on being
+    able to tell those apart. Same rule as interview_intel.save_intel."""
+    import tempfile
+    from unittest.mock import patch
+
+    from app import store
+    from app.interview_practice import get_research, save_research
+
+    with tempfile.TemporaryDirectory() as tmp:
+        with patch.object(store, "DB_PATH", pathlib.Path(tmp) / "t.db"):
+            try:
+                save_research("beh-failure", {"assesses": "x"}, [])
+            except ValueError as exc:
+                assert "sources" in str(exc)
+            else:
+                raise AssertionError("research stored with no sources")
+
+            # And with sources it round-trips, provenance intact.
+            save_research(
+                "beh-failure",
+                {"assesses": "accountability", "traps": ["blaming others"]},
+                [{"title": "HBR", "url": "https://hbr.org/example"}],
+            )
+            got = get_research("beh-failure")
+            assert got["assesses"] == "accountability"
+            assert got["sources"][0]["url"] == "https://hbr.org/example"
+            assert got["researchedAt"]
+
+
+def test_research_is_upserted_not_duplicated() -> None:
+    import tempfile
+    from unittest.mock import patch
+
+    from app import store
+    from app.interview_practice import get_research, save_research
+
+    with tempfile.TemporaryDirectory() as tmp:
+        with patch.object(store, "DB_PATH", pathlib.Path(tmp) / "t.db"):
+            src = [{"title": "a", "url": "https://a.test"}]
+            save_research("beh-scale", {"assesses": "first"}, src)
+            save_research("beh-scale", {"assesses": "second"}, src)
+            assert get_research("beh-scale")["assesses"] == "second"
+
+
+def test_missing_research_returns_none_rather_than_an_empty_shape() -> None:
+    """An empty shape would render as a panel with nothing in it, which reads as
+    'no advice' rather than 'not researched yet'."""
+    import tempfile
+    from unittest.mock import patch
+
+    from app import store
+    from app.interview_practice import get_research
+
+    with tempfile.TemporaryDirectory() as tmp:
+        with patch.object(store, "DB_PATH", pathlib.Path(tmp) / "t.db"):
+            assert get_research("beh-conflict") is None
+
+
+def test_claim_selection_never_reaches_for_irrelevant_evidence() -> None:
+    """A question with no matching evidence must return nothing, so the caller
+    says so rather than drafting an answer out of whatever was nearest."""
+    from app.interview_practice import BEHAVIOURAL, _claims_for
+
+    unrelated = _claim(
+        claim_id="x-01",
+        claim="Won the office table tennis tournament.",
+        skills=["table tennis"],
+        employer="Acme Logistics",
+    )
+    question = next(q for q in BEHAVIOURAL if q["id"] == "beh-process")
+    assert _claims_for(_Profile([unrelated]), question) == []
+
+
+def test_claim_selection_excludes_unapproved_and_non_explicit_claims() -> None:
+    from app.interview_practice import BEHAVIOURAL, _claims_for
+
+    question = next(q for q in BEHAVIOURAL if q["id"] == "beh-process")
+    assert _claims_for(_Profile([_claim(approved_for_resume=False)]), question) == []
+    assert _claims_for(
+        _Profile([_claim(classification="IN_PROGRESS_OR_DESIGNED")]), question
+    ) == []
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

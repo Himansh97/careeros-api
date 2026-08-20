@@ -222,6 +222,49 @@ def check_answer(
     }
 
 
+# ---------------------------------------------------------- researched shape
+
+
+def save_research(question_id: str, shape: dict[str, Any], sources: list[dict]) -> None:
+    """What a strong answer to this question looks like, and where that came from.
+
+    **Sources are mandatory**, exactly as in `interview_intel.save_intel`. This is
+    the one part of the practice surface that is not derived from the candidate's
+    own evidence — it is craft knowledge taken from outside — so it has to carry
+    its provenance and be shown with it. Advice with no source is indistinguishable
+    from advice a model invented, and the whole design here rests on being able to
+    tell those apart.
+    """
+    if not sources:
+        raise ValueError(
+            f"refusing to store research for {question_id!r} with no sources"
+        )
+    with _connect() as conn:
+        conn.execute(
+            """INSERT INTO question_research (question_id, shape, sources, researched_at)
+               VALUES (?,?,?,?)
+               ON CONFLICT(question_id) DO UPDATE SET
+                 shape=excluded.shape, sources=excluded.sources,
+                 researched_at=excluded.researched_at""",
+            (question_id, json.dumps(shape), json.dumps(sources), now()),
+        )
+
+
+def get_research(question_id: str) -> dict[str, Any] | None:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM question_research WHERE question_id=?", (question_id,)
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "questionId": row["question_id"],
+        "researchedAt": row["researched_at"],
+        "sources": json.loads(row["sources"]),
+        **json.loads(row["shape"]),
+    }
+
+
 # ------------------------------------------------------------- the coaching
 
 RUBRIC = """You are an interview coach reviewing one spoken answer to one
@@ -409,3 +452,127 @@ def overview() -> dict[str, Any]:
         "streakDays": streak,
         "daysPractised": len(days),
     }
+
+
+# ------------------------------------------------- the answer in your own facts
+
+DRAFT_VOICE = """You are drafting one spoken interview answer for a candidate,
+using only accomplishments they have supplied. This is a script they will say out
+loud, so write it plainly: short sentences, first person, no adjectives that carry
+no information.
+
+Structure it as Situation, Task, Action, Result, without labelling those parts out
+loud. Roughly 60-70% of it must be Action — what they actually did, in order.
+Target 130 to 200 words, which is 60 to 90 seconds spoken.
+
+Hard rules:
+- Use ONLY the accomplishments supplied. Do not invent an employer, a tool, a
+  date, a metric or a job title.
+- Every figure you write must appear verbatim in the accomplishment you cite.
+  Reproduce it EXACTLY as written, including any "+", "%" or decimal — "100+" is
+  not "100", and dropping the plus is treated as a different figure.
+- A figure may only appear in a sentence that cites the accomplishment containing
+  it. Do not carry a number from one accomplishment into a sentence citing
+  another.
+- Do not upgrade their role. If an accomplishment says "supported", you may not
+  write "led" or "owned".
+- Every sentence containing a number or a proper noun must cite the accomplishment
+  it came from.
+
+Return only JSON, no prose around it:
+
+{"answer": "<the full answer as one string>",
+ "sentences": [{"text": "<each sentence of the answer>", "claim_id": "<id, or empty if it asserts nothing checkable>"}]}"""
+
+
+def _claims_for(profile: CandidateProfile, question: dict[str, str], limit: int = 3):
+    """Claims most likely to answer this competency, best first.
+
+    Overlap between the question's own words and the claim, which is crude but
+    honest — and crucially it never *invents* relevance. A question with no
+    matching evidence returns nothing, and the caller says so rather than
+    drafting an answer out of whatever was nearest.
+    """
+    from .compose import _bare, _word_tokens
+
+    wanted = {_bare(w) for w in _word_tokens(
+        f"{question['competency']} {question['prompt']}")} - _STOPWORDS
+    scored = []
+    for claim in profile.evidence:
+        if not claim.approved_for_resume:
+            continue
+        if claim.classification != "PRESENT_AND_EXPLICIT":
+            continue
+        tokens = {_bare(w) for w in _word_tokens(claim.claim)}
+        tokens |= {_bare(w) for s in claim.skills for w in _word_tokens(s)}
+        overlap = len(wanted & tokens)
+        # A claim carrying a metric is worth more here: the commonest failure of
+        # a behavioural answer is having no number in the Result.
+        scored.append((overlap + (2 if claim.metrics else 0), claim))
+    scored.sort(key=lambda t: -t[0])
+    return [c for score, c in scored[:limit] if score > 0]
+
+
+_STOPWORDS = frozenset({
+    "tell", "me", "about", "a", "time", "you", "your", "the", "and", "or", "of",
+    "to", "in", "on", "with", "what", "how", "describe", "is", "was", "were",
+    "have", "has", "had", "it", "that", "this", "for", "from", "at", "by",
+})
+
+
+def draft_answer(
+    question: dict[str, str], profile: CandidateProfile
+) -> dict[str, Any] | None:
+    """A model answer built from this candidate's own claims, or `None`.
+
+    The gate runs at full strength here, unlike `check_answer`. The author is the
+    assistant, not the candidate, so an invented figure is exactly the failure
+    `compose.verify_sentences` exists to stop and the whole draft is discarded
+    rather than the offending sentence — a script with one sentence cut out is
+    not a script. There is no fallback template, because a generic STAR answer
+    with no facts in it would be worse than showing the claims and letting the
+    candidate assemble them.
+    """
+    from .compose import _parse, verify_sentences
+    from .llm import complete
+
+    claims = _claims_for(profile, question)
+    if not claims:
+        return None
+
+    supplied = {c.claim_id: c for c in claims}
+    allowed = frozenset(
+        w.lower() for c in claims for w in (c.employer or "").split()
+    )
+
+    body = "\n".join(
+        [f"QUESTION:\n{question['prompt']}", "",
+         "ACCOMPLISHMENTS YOU MAY WRITE ABOUT (verbatim; do not embellish):"]
+        + [f"[{c.claim_id}] ({c.employer}) {c.claim}" for c in claims]
+    )
+
+    # Three attempts: the gate is strict about exact figure reproduction and a
+    # single dropped "+" costs a whole draft.
+    for _ in range(3):
+        result = complete(
+            body, purpose="interview_draft", system=DRAFT_VOICE, max_tokens=1500
+        )
+        if result is None:
+            return None
+        parsed = _parse(result.text)
+        if not parsed or not parsed.get("answer"):
+            continue
+        rejections, warnings = verify_sentences(
+            parsed.get("sentences") or [], supplied, allowed
+        )
+        if rejections:
+            continue
+        return {
+            "answer": parsed["answer"],
+            "claims": [
+                {"claimId": c.claim_id, "employer": c.employer, "claim": c.claim}
+                for c in claims
+            ],
+            "reviewNotes": warnings,
+        }
+    return None
