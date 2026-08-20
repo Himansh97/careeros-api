@@ -104,6 +104,10 @@ GREENHOUSE_COMPANIES: list[str] = [
     # Verified live against boards-api.greenhouse.io rather than assumed.
     # doordash and wealthsimple were removed: both had been returning HTTP
     # errors, which reads downstream as "no openings" rather than "board gone".
+    # anthropic moved here from Ashby, whose board now 404s. The failure was
+    # logged every morning and read as one dead source among eighty, while 491
+    # open roles stayed invisible.
+    "anthropic",
     "spacex", "databricks", "stripe", "datadog", "mongodb", "cloudflare", "brex",
     "verkada", "samsara", "elastic", "fivetran", "affirm", "gitlab", "lyft",
     "coinbase", "figma", "twilio", "reddit", "flexport", "asana", "robinhood",

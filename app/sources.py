@@ -26,7 +26,10 @@ from .config import GREENHOUSE_COMPANIES, HTTP_TIMEOUT_SECONDS
 # openings. clipboardhealth and runwayml were dropped here for exactly that:
 # both had been erroring silently.
 ASHBY_COMPANIES = [
-    "openai", "anthropic", "harvey", "elevenlabs", "sierra", "ramp", "decagon",
+    # anthropic moved to Greenhouse; its Ashby board 404s and the failure was
+    # logged every morning while 491 open roles stayed invisible. Listed in
+    # GREENHOUSE_COMPANIES instead.
+    "openai", "harvey", "elevenlabs", "sierra", "ramp", "decagon",
     "cursor", "perplexity", "vanta", "replit", "linear", "modal", "browserbase",
 ]
 
