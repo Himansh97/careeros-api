@@ -573,6 +573,67 @@ async def edit_bullet(job_id: str, claim_id: str, body: dict[str, Any]) -> dict[
     return {**result, "original": claim.claim}
 
 
+@app.post("/api/jobs/{job_id}/resume/coach")
+async def resume_coach(job_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Ask for rewrites in plain language; get them back already judged.
+
+    Nothing is written here. Every proposal comes back with the verdict the
+    containment gate would give it, from the same function the write path uses,
+    so what the candidate reads and what would actually be saved cannot
+    disagree. Rejected proposals are returned rather than hidden — a caught
+    fabrication is the most useful thing this endpoint produces.
+    """
+    from .resume_coach import coach
+
+    p = _profile()
+    job = await _job_or_404(job_id)
+    s = score_job(job, p)
+
+    history = body.get("history")
+    return coach(
+        tailor_resume(job, s, p),
+        p,
+        str(body.get("instruction") or ""),
+        score=s,
+        history=history if isinstance(history, list) else [],
+        job_id=job_id,
+    )
+
+
+@app.post("/api/jobs/{job_id}/resume/coach/apply")
+async def apply_coach_proposal(job_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Accept one proposal, stored as `llm` — never as the candidate.
+
+    The author field records who vouches for the claim, and a model cannot
+    vouch for someone's career. Writing this as `user` would launder a
+    generated sentence into the tier that exists for things the candidate knows
+    and the evidence file has not caught up with yet.
+
+    If the candidate wants wording the gate refuses, the manual bullet editor
+    is the honest route: they type it, it saves under their own name, and the
+    resume marks it unverified.
+    """
+    from .overrides import save_override
+
+    text = (body.get("text") or "").strip()
+    claim_id = (body.get("claimId") or "").strip()
+    if not text or not claim_id:
+        raise HTTPException(status_code=400, detail="claimId and text are required")
+
+    p = _profile()
+    claim = next((c for c in p.evidence if c.claim_id == claim_id), None)
+    if claim is None:
+        raise HTTPException(status_code=404, detail=f"no evidence claim '{claim_id}'")
+
+    result = save_override(
+        job_id, claim_id, text, claim.claim,
+        rationale=(body.get("why") or "").strip(),
+        author="llm",
+        seniority_ceiling=claim.seniority_verb,
+    )
+    return {**result, "original": claim.claim}
+
+
 @app.delete("/api/jobs/{job_id}/resume/bullets/{claim_id}")
 async def revert_bullet(job_id: str, claim_id: str) -> dict[str, Any]:
     """Revert one bullet to its generated wording."""

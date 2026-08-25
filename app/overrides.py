@@ -145,6 +145,42 @@ def verdict_for(findings: list[Any]) -> str:
     return "review" if reviews else "pass"
 
 
+def assess_override(text: str, original: str, author: str = "system",
+                    seniority_ceiling: str = "") -> dict[str, Any]:
+    """Judge a rewrite without storing it: verdict, outcome and findings.
+
+    Split out of `save_override` so a proposal can be shown to the candidate
+    with its verdict attached *before* anything is written. The resume coach
+    needs exactly that — it drafts several rewrites at once, and a draft the
+    gate would reject has to be visible as rejected rather than silently
+    dropped or, worse, silently saved.
+
+    `save_override` calls this rather than repeating it. One definition of
+    "is this contained", or the preview and the write will eventually disagree
+    about the same sentence — and the preview is the one the candidate reads.
+    """
+    from .containment import Finding, semantic_findings
+
+    # Lexical checks stay exactly as they were; the semantic ones catch what
+    # set-comparison structurally cannot see.
+    lexical = verify_override(original, text)
+    findings: list[Finding] = [
+        Finding("lexical", "reject", detail) for detail in lexical
+    ]
+    findings += semantic_findings(original, text, seniority_ceiling=seniority_ceiling)
+
+    verdict = verdict_for(findings)
+    outcome = _POLICY.get(author, _POLICY["system"])[
+        {"pass": 0, "review": 1, "reject": 2}[verdict]
+    ]
+    return {
+        "verdict": verdict,
+        "outcome": outcome,
+        "problems": [f.detail for f in findings],
+        "findings": [f.__dict__ for f in findings],
+    }
+
+
 def save_override(job_id: str, claim_id: str, text: str, original: str,
                   rationale: str = "", author: str = "system",
                   seniority_ceiling: str = "") -> dict[str, Any]:
@@ -161,31 +197,27 @@ def save_override(job_id: str, claim_id: str, text: str, original: str,
       resume surfaces the bullet as unverified so it never quietly passes as
       evidence-backed.
 
+    - `llm` — proposed by the resume coach. Stricter than the candidate and
+      looser than the assistant's own generation: a clean rewrite applies, a
+      questionable one is queued for review rather than applied, and a
+      contained failure is refused outright. A model may not vouch for a claim
+      about someone else's career.
+
     Refusing the candidate's own edits would be the wrong call — it is their
     history. Recording that the claim is unbacked is the honest middle.
     """
-    from .containment import Finding, semantic_findings
-
-    # Lexical checks stay exactly as they were; the semantic ones catch what
-    # set-comparison structurally cannot see.
-    lexical = verify_override(original, text)
-    findings: list[Finding] = [
-        Finding("lexical", "reject", detail) for detail in lexical
-    ]
-    findings += semantic_findings(original, text, seniority_ceiling=seniority_ceiling)
-
-    verdict = verdict_for(findings)
-    outcome = _POLICY.get(author, _POLICY["system"])[
-        {"pass": 0, "review": 1, "reject": 2}[verdict]
-    ]
-    problems = [f.detail for f in findings]
+    assessment = assess_override(text, original, author, seniority_ceiling)
+    verdict = assessment["verdict"]
+    outcome = assessment["outcome"]
+    problems = assessment["problems"]
+    findings_json = assessment["findings"]
 
     if outcome == "rejected":
         # Not stored. A row whose only purpose is to be ignored is a row a
         # future `status` bug can ship.
         return {"ok": False, "verdict": verdict, "queued": False,
                 "problems": problems,
-                "findings": [f.__dict__ for f in findings]}
+                "findings": findings_json}
 
     with connect() as conn:
         conn.execute(
