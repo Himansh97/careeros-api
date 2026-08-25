@@ -26,6 +26,7 @@ from .contacts import (
 from .providers import configured_providers
 from .eligibility import _foreign_location, check_eligibility
 from .discovery import add_to_cache, failed_sources, fetch_all_jobs, filter_jobs, source_counts
+from .sources import NOT_COVERED, SOURCE_LABELS
 from .outreach import build_outreach
 from .profile import ProfileNotFound, load_profile
 from .scoring import score_job_cached as score_job
@@ -265,7 +266,9 @@ async def skywatch_feed() -> dict[str, Any]:
 async def health() -> dict[str, Any]:
     return {
         "status": "ok",
-        "sources": ["Greenhouse", "Ashby", "Lever", "The Muse", "Arbeitnow", "RemoteOK"],
+        # Read from sources.py rather than restated here. This list had been
+        # hand-maintained and was two adapters out of date.
+        "sources": list(SOURCE_LABELS),
         "greenhouseCompanies": GREENHOUSE_COMPANIES,
         "lastFetchCounts": source_counts(),
         # Named so a degraded search is visible. A failed source returns no
@@ -280,13 +283,7 @@ async def health() -> dict[str, Any]:
                 "entry always works with no key at all."
             ),
         },
-        "notCovered": {
-            "linkedin": (
-                "No public jobs API; their terms prohibit automated access even "
-                "to publicly rendered pages. Not implemented by choice."
-            ),
-            "indeed": "No free public search API available to a server.",
-        },
+        "notCovered": dict(NOT_COVERED),
     }
 
 

@@ -119,6 +119,48 @@ GREENHOUSE_COMPANIES: list[str] = [
 
 HTTP_TIMEOUT_SECONDS = 20.0
 
+# ── Handshake ────────────────────────────────────────────────────────────────
+#
+# Handshake is the only source here without a search endpoint. What it does
+# publish is a sitemap of its public job pages — advertised in its own
+# robots.txt, which allows `/public` for every user agent — and each of those
+# pages carries a schema.org `JobPosting` block. That is structured data put out
+# deliberately for machines to read, so it is fair game in the same way
+# Greenhouse's board API is.
+#
+# The absence of a search endpoint is the whole cost model. There are ~59,000
+# public postings and no way to ask for the analyst ones, so finding a role
+# means opening the page. Two things keep that bounded:
+#
+#   * IDs are monotonic with `datePosted` — verified against the live feed,
+#     where id 11329267 posted 2026-08-20 and id 11174249 posted 2026-07-01.
+#     Sorting the sitemap descending therefore yields genuinely the newest
+#     postings, so a fixed budget spent from the top is spent on fresh roles.
+#   * `_handshake_seen` memoises every id already opened, so only ids that
+#     appeared since the last crawl cost a request. The first crawl of a
+#     process pays the full budget; the ones after it pay for the delta.
+#
+# The sitemap itself is ~5MB across three files and only changes daily, so it
+# is cached far longer than CACHE_TTL_SECONDS.
+HANDSHAKE_SITEMAP = "https://joinhandshake.com/api/handshake-public-jobs.xml"
+HANDSHAKE_JOB_URL = "https://app.joinhandshake.com/public/jobs/{job_id}"
+HANDSHAKE_INDEX_TTL_SECONDS = 21600.0   # 6h; the sitemap is rebuilt daily
+HANDSHAKE_DETAIL_CAP = 400              # newest ids opened per crawl
+HANDSHAKE_CONCURRENCY = 6               # polite; the host sets no rate limit
+
+# Handshake's public feed is dominated by hourly retail, campus and clinical
+# work — a 400-posting sample of it scored 2.3% on these terms. Every other
+# source narrows server-side (Workday and SmartRecruiters take a query, the ATS
+# boards are one employer each); Handshake cannot, so the narrowing happens on
+# the title here instead. Without it a single crawl would push several hundred
+# warehouse roles into a pool that interleaves one job per source.
+HANDSHAKE_TITLE_TERMS = (
+    "analyst", "analytics", "business intelligence", "data scien",
+    "data engineer", "data warehouse", "reporting", "insights",
+    "business systems", "product manager", "project manager", "program manager",
+    "machine learning", "ai engineer", "data ",
+)
+
 # How many jobs get full evidence-based scoring on a search. Scoring parses a
 # whole description (~3.5ms each), so the ~3,000 jobs the sources return would
 # cost ~11s — too slow for an interactive request. Titles are pre-ranked first

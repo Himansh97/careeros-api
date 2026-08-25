@@ -3,23 +3,49 @@
 Every source here is a real, publicly documented, unauthenticated API. Each
 returns actual open postings with working apply URLs.
 
-Deliberately absent: LinkedIn and Indeed. Neither offers a public jobs API,
-and LinkedIn's terms prohibit automated access even to pages that render
-publicly. Scraping them would risk the candidate's account and breach those
-terms, so they are not implemented — the gap is reported, not papered over.
+Handshake is the one exception to "API": it publishes no search endpoint, but it
+does advertise a sitemap of its public job pages in its own robots.txt and put a
+schema.org `JobPosting` block on each of them. Structured data published for
+machines to read is the same bargain a board API offers, so it is treated the
+same way. See the config.py block for what bounds the cost.
+
+Deliberately absent: LinkedIn, Indeed and Wellfound. None offers a public jobs
+API, and all three forbid automated access to pages that render publicly —
+Wellfound's terms name "automated or non-automated harvesting, collection or
+'scraping'" specifically, and its `/company/*/jobs` pages already answer a
+non-browser client with a bot challenge. Scraping them would risk the
+candidate's account and breach those terms, so they are not implemented — the
+gap is reported, not papered over.
+
+Wellfound is worth a sentence more, because most of what it lists is reachable
+anyway: on a sampled role page, 18 of its 31 postings carried an `atsSource` of
+Greenhouse or Ashby, meaning the same posting is served by the employer's own
+public board. The right response to wanting Wellfound coverage is to add those
+employers to `GREENHOUSE_COMPANIES` / `ASHBY_COMPANIES`, not to crawl Wellfound.
 """
 from __future__ import annotations
 
 import asyncio
 import datetime as _dt
 import html
+import json
 import re
+import time
 from itertools import zip_longest
 from typing import Any
 
 import httpx
 
-from .config import GREENHOUSE_COMPANIES, HTTP_TIMEOUT_SECONDS
+from .config import (
+    GREENHOUSE_COMPANIES,
+    HANDSHAKE_CONCURRENCY,
+    HANDSHAKE_DETAIL_CAP,
+    HANDSHAKE_INDEX_TTL_SECONDS,
+    HANDSHAKE_JOB_URL,
+    HANDSHAKE_SITEMAP,
+    HANDSHAKE_TITLE_TERMS,
+    HTTP_TIMEOUT_SECONDS,
+)
 from .discovery_store import SourceResult, SourceState
 
 # Slugs are verified against each board's live API rather than guessed — a dead
@@ -449,6 +475,242 @@ async def remoteok(client: httpx.AsyncClient) -> list[dict[str, Any]]:
     return out
 
 
+# ── Handshake ────────────────────────────────────────────────────────────────
+#
+# Unlike every other source here, Handshake exposes no search. The config.py
+# block explains why that is workable anyway and what bounds the cost.
+
+_LD_RE = re.compile(
+    r"<script[^>]+type=[\"']application/ld\+json[\"'][^>]*>(.*?)</script>",
+    re.S | re.I,
+)
+_HS_ID_RE = re.compile(r"/public/jobs/(\d+)")
+_SITEMAP_LOC_RE = re.compile(r"<loc>\s*([^<\s]+)\s*</loc>", re.I)
+
+# id -> job dict, or None for "opened, and not a role this candidate wants".
+# Caching the misses is the point: in a 400-posting sample only 9 were analyst
+# work, so re-opening the other 391 on every crawl would be almost the whole
+# bill. Ids are never reused, so a miss stays a miss.
+_handshake_seen: dict[int, dict[str, Any] | None] = {}
+_handshake_index: tuple[float, tuple[int, ...]] = (0.0, ())
+
+
+def _handshake_title(raw: str, company: str) -> str:
+    """Strip the "| Employer | Handshake" suffix the page title carries.
+
+    Split-on-pipe-and-take-the-first is wrong: it survives "Analyst, Risk |
+    Fidelity | Handshake" and mangles "Data | AI Engineer | Acme | Handshake".
+    Only the two known trailing segments are removed.
+    """
+    title = (raw or "").strip()
+    for suffix in (" | Handshake", f" | {company}" if company else ""):
+        if suffix and title.endswith(suffix):
+            title = title[: -len(suffix)].strip()
+    return title
+
+
+def _handshake_place(posting: dict[str, Any]) -> str:
+    """A location string `discovery.us_only` can read.
+
+    `jobLocation` is a dict on most postings and a list on some. That is a real
+    difference in the live feed rather than a hypothetical — calling `.get` on
+    the list form raised AttributeError on the first sample taken.
+    """
+    if posting.get("jobLocationType") == "TELECOMMUTE":
+        return "Remote"
+    place = posting.get("jobLocation")
+    if isinstance(place, list):
+        place = place[0] if place else None
+    if not isinstance(place, dict):
+        return ""
+    address = place.get("address") or {}
+    located = ", ".join(
+        p for p in (address.get("addressLocality"), address.get("addressRegion")) if p
+    )
+    # `us_only` deliberately keeps anything it cannot classify, so a foreign
+    # country has to be named for it to act. A US one is left off: "Dallas,
+    # Texas" is what every other adapter produces.
+    country = address.get("addressCountry") or ""
+    if country in ("United States", "US", "USA"):
+        return located or country
+    if located and country:
+        return f"{located}, {country}"
+    return located or country
+
+
+def _handshake_expired(posting: dict[str, Any], now: _dt.datetime | None = None) -> bool:
+    """Whether the employer's own `validThrough` date has passed.
+
+    Honouring it here means a closed posting never enters the pool at all,
+    rather than being surfaced, scored, tailored against, and only then caught
+    by the liveness check. An unparseable date is treated as no date: a posting
+    is never dropped on the strength of a field we could not read.
+    """
+    raw = posting.get("validThrough") or ""
+    if not raw:
+        return False
+    try:
+        expires = _dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=_dt.timezone.utc)
+    return expires < (now or _dt.datetime.now(_dt.timezone.utc))
+
+
+def _handshake_job(job_id: int, posting: dict[str, Any]) -> dict[str, Any] | None:
+    """One schema.org JobPosting, or None if it should not enter the pool."""
+    if not isinstance(posting, dict) or posting.get("@type") != "JobPosting":
+        return None
+
+    company = ((posting.get("hiringOrganization") or {}).get("name") or "").strip()
+    title = _handshake_title(posting.get("title", ""), company)
+    if not title or not company:
+        return None
+    if not any(term in title.lower() for term in HANDSHAKE_TITLE_TERMS):
+        return None
+    if _handshake_expired(posting):
+        return None
+
+    description = strip_html(posting.get("description", ""))
+    if not description:
+        # Same rule as SmartRecruiters: a posting the scorer cannot read cannot
+        # be assessed, and a meaningless score is worse than an absent one.
+        return None
+
+    return _job(
+        jid=f"hs_{job_id}",
+        title=title,
+        company=company,
+        location=_handshake_place(posting),
+        description=description,
+        apply_url=HANDSHAKE_JOB_URL.format(job_id=job_id),
+        source="Handshake",
+        ats=None,
+        posted=posting.get("datePosted"),
+    )
+
+
+def parse_handshake_page(html_text: str) -> dict[str, Any] | None:
+    """The JobPosting block from a public job page, if it has one."""
+    for raw in _LD_RE.findall(html_text or ""):
+        try:
+            data = json.loads(raw)
+        except ValueError:
+            continue
+        for node in data if isinstance(data, list) else [data]:
+            if isinstance(node, dict) and node.get("@type") == "JobPosting":
+                return node
+    return None
+
+
+async def handshake_ids(client: httpx.AsyncClient) -> tuple[int, ...]:
+    """Every public posting id, newest first. Cached — the sitemap is daily."""
+    global _handshake_index
+
+    cached_at, cached = _handshake_index
+    if cached and time.time() - cached_at < HANDSHAKE_INDEX_TTL_SECONDS:
+        return cached
+
+    index = await client.get(HANDSHAKE_SITEMAP)
+    index.raise_for_status()
+    ids: set[int] = set()
+    for sitemap_url in _SITEMAP_LOC_RE.findall(index.text):
+        page = await client.get(sitemap_url)
+        if page.status_code != 200:
+            continue
+        ids.update(int(m) for m in _HS_ID_RE.findall(page.text))
+
+    if not ids:
+        # Raise rather than cache an empty answer for six hours because the
+        # sitemap format moved. `_safe_result` turns this into a named failure,
+        # which is the whole point of reporting a gap instead of papering it.
+        raise ValueError("handshake sitemap yielded no job ids")
+
+    ordered = tuple(sorted(ids, reverse=True))
+    _handshake_index = (time.time(), ordered)
+    return ordered
+
+
+async def handshake(client: httpx.AsyncClient) -> list[dict[str, Any]]:
+    """Newest public Handshake postings that match the candidate's titles."""
+    ids = await handshake_ids(client)
+    fresh = [i for i in ids if i not in _handshake_seen][:HANDSHAKE_DETAIL_CAP]
+    gate = asyncio.Semaphore(HANDSHAKE_CONCURRENCY)
+
+    async def detail(job_id: int) -> None:
+        async with gate:
+            try:
+                page = await client.get(HANDSHAKE_JOB_URL.format(job_id=job_id))
+            except httpx.HTTPError:
+                # Left unrecorded so the next crawl retries it. A transient
+                # timeout must not blacklist a posting for the life of the
+                # process — that is how a source quietly shrinks over a week.
+                return
+            if page.status_code == 200:
+                posting = parse_handshake_page(page.text)
+                _handshake_seen[job_id] = _handshake_job(job_id, posting) if posting else None
+            elif page.status_code in (404, 410):
+                # Handshake's own answer, not a network blip: never open again.
+                _handshake_seen[job_id] = None
+
+    await asyncio.gather(*(detail(i) for i in fresh))
+
+    # Everything matched so far, not merely what this pass opened. Returning
+    # only the new ones would make the source report a few hundred roles on the
+    # first crawl and a handful on every crawl after it, and the pool would
+    # lose the rest fifteen minutes later.
+    live = [job for job in _handshake_seen.values() if job is not None]
+    live.sort(key=lambda j: j["postedAt"] or "", reverse=True)
+
+    # Bound the memo. Only misses are dropped, and oldest-id first, so the
+    # matched roles and the recent decisions both survive.
+    if len(_handshake_seen) > 20000:
+        for job_id in sorted(_handshake_seen)[:5000]:
+            if _handshake_seen[job_id] is None:
+                del _handshake_seen[job_id]
+    return live
+
+
+# Every label an adapter above stamps onto a job, for the places that report
+# what discovery covers.
+#
+# It is a derived fact and it was maintained by hand, so it drifted: the health
+# endpoint had been claiming six sources since before Workday and SmartRecruiters
+# were written, and a candidate reading it had no way to know their roles were
+# coming from boards the page did not mention. `test_handshake_source` fails if
+# an adapter stamps a label that is not in here.
+SOURCE_LABELS: tuple[str, ...] = (
+    "Greenhouse",
+    "Ashby",
+    "Lever",
+    "Workday",
+    "SmartRecruiters",
+    "The Muse",
+    "Arbeitnow",
+    "RemoteOK",
+    "Handshake",
+)
+
+# Job boards deliberately not implemented, and why. Served to the UI so the gap
+# is stated on the page rather than left to look like an oversight.
+NOT_COVERED: dict[str, str] = {
+    "linkedin": (
+        "No public jobs API; their terms prohibit automated access even to "
+        "publicly rendered pages. Not implemented by choice."
+    ),
+    "indeed": "No free public search API available to a server.",
+    "wellfound": (
+        "Their terms prohibit \"automated or non-automated harvesting, "
+        "collection or 'scraping'\" of listings, and their pages answer a "
+        "non-browser client with a bot challenge. Most of what Wellfound lists "
+        "is reachable anyway — on a sampled page, 18 of 31 postings were served "
+        "from the employer's own Greenhouse or Ashby board — so the way to "
+        "cover it is to add those employers, not to crawl Wellfound."
+    ),
+}
+
+
 async def fetch_source_results() -> tuple[SourceResult, ...]:
     """Fetch each configured adapter independently and preserve its health."""
     async with httpx.AsyncClient(
@@ -469,6 +731,7 @@ async def fetch_source_results() -> tuple[SourceResult, ...]:
                   for c in MUSE_CATEGORIES]
         tasks.append(_safe_result(arbeitnow(client), "arbeitnow"))
         tasks.append(_safe_result(remoteok(client), "remoteok"))
+        tasks.append(_safe_result(handshake(client), "handshake"))
         return tuple(await asyncio.gather(*tasks))
 
 
