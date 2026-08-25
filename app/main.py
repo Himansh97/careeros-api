@@ -329,6 +329,13 @@ class SearchRequest(BaseModel):
     # "fresh" | "fit" | "newest". See the sort in `search` for why fresh is
     # the default rather than newest.
     sort: str = "fresh"
+    # Board names, matching the `source` on a job ("Handshake", "Greenhouse").
+    # Applied before the scoring budget for the same reason `sort` is: a filter
+    # that runs after selection filters the sample, not the pool. Handshake has
+    # 24 postings in a pool of ~7,900 and 11 of them survive into the scored
+    # 600, so a client-side chip would have shown fewer than half of them and
+    # called it all.
+    sources: list[str] | None = None
 
 
 @app.post("/api/jobs/search")
@@ -336,6 +343,19 @@ async def search(req: SearchRequest) -> dict[str, Any]:
     p = _profile()
     all_jobs = await fetch_all_jobs()
     matched = filter_jobs(all_jobs, req.query, req.location, req.workArrangements)
+
+    # Facet counts come from the pool BEFORE the source filter is applied.
+    # Counting after it would zero every board the candidate has not selected,
+    # so choosing "Handshake" would make every other chip read (0) and there
+    # would be no way back except clearing the filter.
+    source_counts: dict[str, int] = {}
+    for job in matched:
+        source_counts[job["source"]] = source_counts.get(job["source"], 0) + 1
+
+    if req.sources:
+        wanted = {s.strip().lower() for s in req.sources if s and s.strip()}
+        if wanted:
+            matched = [j for j in matched if j["source"].lower() in wanted]
 
     stamped = datetime.now(timezone.utc).isoformat()
     # One query for the whole pipeline rather than a lookup per job — search
@@ -440,7 +460,11 @@ async def search(req: SearchRequest) -> dict[str, Any]:
         # it is really "the best of what was looked at" — the UI needs to be
         # able to tell the difference.
         "setAside": set_aside,
-        "sources": sorted({j["source"] for j in matched}) or ["Greenhouse"],
+        "sources": sorted(source_counts) or ["Greenhouse"],
+        # How many the whole pool holds per board, not how many made this page.
+        # The difference is the point: Handshake carries 24 and lands 11 in the
+        # scored set, and a chip that said "11" would be describing the sample.
+        "sourceCounts": source_counts,
         "sort": req.sort,
     }
 
