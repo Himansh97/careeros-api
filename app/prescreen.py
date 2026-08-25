@@ -167,20 +167,79 @@ def prescreen_score(job: dict, terms: ScreenTerms) -> int:
 
 
 def rank_for_scoring(
-    jobs: list[dict], profile: CandidateProfile, budget: int
+    jobs: list[dict],
+    profile: CandidateProfile,
+    budget: int,
+    *,
+    order: str = "fit",
 ) -> tuple[list[dict], int]:
     """Return the jobs worth deep-scoring, plus how many were set aside.
 
     Ties keep their original order, so a job is never reordered arbitrarily —
     within the same prescreen score, fetch order (which interleaves sources)
     still applies.
+
+    `order` exists because **the budget decides what the caller can see, so it
+    has to be spent on the axis the caller is sorting by.** This module already
+    fixed that once for fit: search used to score the first 120 in fetch order,
+    which produced a list sorted by fit but chosen arbitrarily. Sorting the
+    result by date has exactly the same defect — the budget still selects on
+    title fit, so "newest" reorders a fit-shaped subset and calls it recency.
+
+    Measured on the live pool: 517 postings were both from the last day and
+    past the relevance floor, and 441 of them never reached the scorer, so
+    "newest" was showing the newest 76 of the best-fitting 600.
+
+        "fit"     the strongest titles, whatever their age (the default)
+        "newest"  the most recent titles that clear the relevance floor
     """
     if len(jobs) <= budget:
         return jobs, 0
 
     terms = build_terms(profile)
+    if order == "newest":
+        return _newest_for_scoring(jobs, terms, budget)
+
     ranked = sorted(
         enumerate(jobs), key=lambda pair: (-prescreen_score(pair[1], terms), pair[0])
     )
     kept = [job for _, job in ranked[:budget]]
     return kept, len(jobs) - budget
+
+
+def _newest_for_scoring(
+    jobs: list[dict], terms: ScreenTerms, budget: int
+) -> tuple[list[dict], int]:
+    """Spend the budget on the most recent postings that are worth scoring.
+
+    The relevance floor stays. Recency alone would fill the budget with
+    warehouse and sales roles posted this morning, which is precisely what the
+    prescreen exists to keep out — "newest" is a request to reorder the roles
+    this candidate would consider, not to abandon the filter.
+
+    A posting with no date sorts last rather than first. An absent date is not
+    evidence of freshness, and the sources that omit it are the aggregators,
+    which would otherwise take the whole budget.
+    """
+    from .priority import age_days
+
+    def sort_key(pair: tuple[int, dict]) -> tuple[float, int]:
+        index, job = pair
+        age = age_days(job.get("postedAt"))
+        return (float("inf") if age is None else age, index)
+
+    eligible = [(i, j) for i, j in enumerate(jobs) if prescreen_score(j, terms) > 0]
+    kept = [job for _, job in sorted(eligible, key=sort_key)[:budget]]
+
+    # Backfill by fit when too few titles clear the floor — a narrow query, or
+    # a morning before the boards have posted. Leaving the budget unspent would
+    # silently shrink the result rather than making it fresher.
+    if len(kept) < budget:
+        chosen = {id(job) for job in kept}
+        rest = sorted(
+            (pair for pair in enumerate(jobs) if id(pair[1]) not in chosen),
+            key=lambda pair: (-prescreen_score(pair[1], terms), pair[0]),
+        )
+        kept += [job for _, job in rest[: budget - len(kept)]]
+
+    return kept, len(jobs) - len(kept)

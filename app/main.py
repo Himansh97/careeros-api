@@ -355,9 +355,15 @@ async def search(req: SearchRequest) -> dict[str, Any]:
     # meant the result was sorted by fit but chosen arbitrarily — a 98-scoring
     # role at position 452 was invisible while sales roles led the list.
     # Pre-rank on titles first (cheap), then deep-score the best candidates.
+    # The budget has to be spent on the axis the caller is sorting by, or the
+    # sort reorders an arbitrary subset. Sorting by date while selecting by fit
+    # left 441 of the 517 postings from the last day unscored, so "Newest"
+    # showed the newest of the best-fitting rather than the newest.
     from .prescreen import rank_for_scoring
 
-    candidates, set_aside = rank_for_scoring(matched, p, SCORE_BUDGET)
+    candidates, set_aside = rank_for_scoring(
+        matched, p, SCORE_BUDGET, order="newest" if req.sort == "newest" else "fit"
+    )
 
     scored: list[dict[str, Any]] = []
     for job in candidates:

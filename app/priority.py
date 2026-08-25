@@ -130,10 +130,10 @@ def trust(job: dict[str, Any], on_its_board: bool | None = None) -> dict[str, An
         concerns.append("posting text is unusually thin")
 
     posted = job.get("postedAt")
-    age_days = _age_days(posted)
-    if age_days is not None and age_days > 45:
+    age_days_value = age_days(posted)
+    if age_days_value is not None and age_days_value > 45:
         score -= 10
-        concerns.append(f"posted {int(age_days)} days ago")
+        concerns.append(f"posted {int(age_days_value)} days ago")
 
     score = max(0, min(100, score))
     return {
@@ -145,7 +145,12 @@ def trust(job: dict[str, Any], on_its_board: bool | None = None) -> dict[str, An
     }
 
 
-def _age_days(stamp: str | None) -> float | None:
+def age_days(stamp: str | None) -> float | None:
+    """Age of a posting in days, or None when the date is absent or unreadable.
+
+    Public because the prescreen budget needs the same definition of "how old
+    is this posting" that the ranking uses. Two definitions of that would drift.
+    """
     if not stamp:
         return None
     try:
@@ -164,7 +169,7 @@ def freshness(job: dict[str, Any]) -> dict[str, Any]:
     an observation about queue position, not a prediction about outcome, and it
     is stated that way.
     """
-    age = _age_days(job.get("postedAt"))
+    age = age_days(job.get("postedAt"))
     if age is None:
         return {"days": None, "factor": 0.85, "note": "posting date unknown"}
     # One decimal. The raw value carries sub-second precision that renders as
