@@ -180,3 +180,24 @@ CACHE_TTL_SECONDS = 900  # 15 minutes
 # the list marked "Ready" — the score's one job is to say which documents are
 # worth sending, and the status was contradicting it.
 READY_SCORE = 80
+
+
+# Tsenta submits applications to employers on the candidate's behalf. Same
+# absent-means-off contract as `anthropic_key` and `notion_token`, but the
+# consequence of the key being present is categorically different: with it
+# configured, a code path exists that sends an application no one can recall.
+#
+# It is read at call time rather than captured at import so that rotating the
+# key does not require a restart — which is exactly the cost that the invalid
+# ANTHROPIC_API_KEY imposed on 2026-08-25.
+def tsenta_key() -> str | None:
+    """The Tsenta API key, or None when CareerOS cannot submit at all."""
+    return os.getenv("TSENTA_API_KEY") or None
+
+
+# The saved Tsenta profile that applications are filed under. Tsenta holds the
+# candidate's resume and answers; CareerOS holds the decision about where to
+# send them. Without this, submission is off even when the key is present.
+def tsenta_profile_id() -> str | None:
+    """The Tsenta profile id applications are submitted against."""
+    return os.getenv("TSENTA_PROFILE_ID") or None

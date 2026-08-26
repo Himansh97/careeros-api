@@ -864,6 +864,110 @@ async def approve_resume(job_id: str) -> dict[str, Any]:
     }
 
 
+@app.post("/api/jobs/{job_id}/submit")
+async def submit_application(job_id: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Submit this application to the employer through Tsenta.
+
+    This is the one endpoint in CareerOS that sends something irreversible to a
+    third party under the candidate's name. It stamps `submitted_at` only when
+    Tsenta reports `submitted` — an application sitting at `needs_review` or
+    `needs_otp` has not been sent, and recording it as sent would recreate the
+    Notion-mirror failure where two vocabularies for "applied" quietly rewound
+    six real applications.
+
+    `force` in the body is the candidate overriding their own eligibility gate.
+    It exists for a human clicking through a warning and must not be set by
+    automation.
+    """
+    from .config import tsenta_profile_id
+    from .store import get_application
+    from .tsenta import AWAITING_HUMAN, SUBMITTED, submit
+
+    body = body or {}
+    job = await _job_or_404(job_id)
+    profile_id = tsenta_profile_id()
+    if not profile_id:
+        raise HTTPException(400, "no TSENTA_PROFILE_ID configured")
+
+    app_id = f"app_{job_id}"
+    record = get_application(app_id) or {}
+
+    result = submit(
+        job,
+        _profile(),
+        profile_id=profile_id,
+        already_submitted=bool(record.get("submitted_at") or record.get("submittedAt")),
+        force=bool(body.get("force")),
+    )
+
+    if result.sent:
+        advance(app_id, "submitted", f"Submitted via Tsenta ({result.ats or 'ATS'})")
+    elif result.ok and result.status in AWAITING_HUMAN:
+        advance(
+            app_id,
+            "ready",
+            f"Tsenta is holding this at {result.status} — not sent",
+            allow_regression=False,
+        )
+
+    return {
+        "jobId": job_id,
+        "ok": result.ok,
+        "sent": result.sent,
+        "status": result.status,
+        "applicationId": result.application_id,
+        "ats": result.ats,
+        "priceUsd": result.price_usd,
+        "reason": result.reason,
+        # Said plainly because `ok` does not mean sent, and every caller that
+        # confuses the two writes a false date onto a real application.
+        "awaitingHuman": result.ok and result.status in AWAITING_HUMAN,
+        "submittedStatus": SUBMITTED,
+    }
+
+
+@app.get("/api/tsenta/applications/{application_id}")
+async def tsenta_application_status(application_id: str) -> dict[str, Any]:
+    """Where a Tsenta submission has got to. Read-only, sends nothing."""
+    from .tsenta import status
+
+    result = status(application_id)
+    return {
+        "ok": result.ok,
+        "status": result.status,
+        "sent": result.sent,
+        "reason": result.reason,
+        "ats": result.ats,
+        "priceUsd": result.price_usd,
+    }
+
+
+@app.post("/api/tsenta/applications/{application_id}/review")
+async def tsenta_review(application_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Release or kill an application Tsenta is holding at `needs_review`.
+
+    Approving here sends it to the employer. This is as irreversible as
+    submitting, so it takes an explicit decision and never defaults to approve.
+    """
+    from .tsenta import review
+
+    decision = str(body.get("decision") or "").strip().lower()
+    if decision not in {"approve", "reject"}:
+        raise HTTPException(400, "decision must be 'approve' or 'reject'")
+
+    result = review(
+        application_id,
+        approve=decision == "approve",
+        note=str(body.get("note") or ""),
+    )
+    return {
+        "ok": result.ok,
+        "status": result.status,
+        "sent": result.sent,
+        "reason": result.reason,
+    }
+
+
 @app.get("/api/applications")
 async def applications() -> dict[str, Any]:
     return {"applications": list_applications()}
