@@ -931,8 +931,15 @@ async def submit_application(job_id: str, body: dict[str, Any] | None = None) ->
     `force` in the body is the candidate overriding their own eligibility gate.
     It exists for a human clicking through a warning and must not be set by
     automation.
+
+    The resume is rendered here, from the same `build_pdf` call that serves
+    `GET /api/jobs/{id}/resume.pdf`, so the bytes the employer receives are the
+    bytes the candidate previewed. Tsenta attaches them verbatim; without them
+    it would attach its own stored resume and the whole tailoring pipeline would
+    be decorative.
     """
     from .config import tsenta_profile_id
+    from .documents import build_pdf
     from .store import get_application
     from .tsenta import AWAITING_HUMAN, SUBMITTED, submit
 
@@ -945,10 +952,14 @@ async def submit_application(job_id: str, body: dict[str, Any] | None = None) ->
     app_id = f"app_{job_id}"
     record = get_application(app_id) or {}
 
+    p = _profile()
+    resume_pdf = build_pdf(tailor_resume(job, score_job(job, p), p), p)
+
     result = submit(
         job,
-        _profile(),
+        p,
         profile_id=profile_id,
+        resume_pdf=resume_pdf,
         already_submitted=bool(record.get("submitted_at") or record.get("submittedAt")),
         force=bool(body.get("force")),
     )

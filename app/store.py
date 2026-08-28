@@ -366,6 +366,31 @@ def get_application(app_id: str) -> dict[str, Any] | None:
         return _row_to_app(conn, row) if row else None
 
 
+def applied_role_keys() -> set[str]:
+    """Canonical keys for every role this candidate has already applied to.
+
+    The duplicate guard used to be per application row, which is not the unit
+    the mistake happens in. Fivetran posted "Senior Product Manager, Data &
+    Integrations" twice on Greenhouse under two ids; one row is `submitted` and
+    the other still sits at `ready`, so a row-level check sees two different
+    applications and waves the second one through. The employer sees the same
+    person applying to the same req twice.
+
+    Reads every committed status, not just `submitted` — an application at
+    `interview` was obviously also applied to, and dropping it here would offer
+    the role back for a second send at exactly the wrong moment.
+    """
+    from .tsenta import canonical_role_key
+
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT company, title FROM applications WHERE status IN "
+            f"({','.join('?' * len(_COMMITTED_STATUSES))})",
+            _COMMITTED_STATUSES,
+        ).fetchall()
+    return {canonical_role_key(r["company"] or "", r["title"] or "") for r in rows}
+
+
 def add_approval(kind: str, job_id: str, payload: dict[str, Any]) -> str:
     """Raise an approval, without undoing a decision the candidate already made.
 
