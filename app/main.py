@@ -33,6 +33,7 @@ from .scoring import score_job_cached as score_job
 from .store import (
     StatusRegression,
     add_approval,
+    add_timeline,
     advance,
     get_application,
     list_applications,
@@ -938,8 +939,10 @@ async def submit_application(job_id: str, body: dict[str, Any] | None = None) ->
     it would attach its own stored resume and the whole tailoring pipeline would
     be decorative.
     """
+    from .compose import compose_cover_letter
     from .config import tsenta_profile_id
     from .documents import build_pdf
+    from .priority import friction
     from .store import get_application
     from .tsenta import AWAITING_HUMAN, SUBMITTED, submit
 
@@ -953,16 +956,33 @@ async def submit_application(job_id: str, body: dict[str, Any] | None = None) ->
     record = get_application(app_id) or {}
 
     p = _profile()
-    resume_pdf = build_pdf(tailor_resume(job, score_job(job, p), p), p)
+    scored = score_job(job, p)
+    resume_pdf = build_pdf(tailor_resume(job, scored, p), p)
+
+    # Only when the posting asks for one. Tsenta writes its own otherwise, and
+    # a generated letter nobody wanted costs a model call per application.
+    cover_letter = ""
+    wanted = "cover letter" in (friction(job).get("extras") or [])
+    if wanted:
+        cover_letter = compose_cover_letter(job, scored, p) or ""
 
     result = submit(
         job,
         p,
         profile_id=profile_id,
         resume_pdf=resume_pdf,
+        cover_letter=cover_letter,
         already_submitted=bool(record.get("submitted_at") or record.get("submittedAt")),
         force=bool(body.get("force")),
     )
+
+    if wanted and not cover_letter and result.ok:
+        add_timeline(
+            app_id,
+            "cover_letter_absent",
+            "This posting asked for a cover letter and none could be written from "
+            "the evidence, so Tsenta supplied its own.",
+        )
 
     if result.sent:
         advance(app_id, "submitted", f"Submitted via Tsenta ({result.ats or 'ATS'})")

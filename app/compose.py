@@ -747,3 +747,111 @@ def compose_email(
         return composition
 
     return None
+
+
+COVER_VOICE = """You write a cover letter for a job candidate. One letter, plain text.
+
+You are given the posting and two or three accomplishments from the candidate's verified
+record. Write about those accomplishments. You may not add any others, you may not add
+detail to the ones you are given, and you may not describe work that is not there.
+
+A cover letter is read by someone deciding whether to open the resume. It is not the
+resume in prose. Three short paragraphs:
+
+- Why this role, concretely. Name it. Say the thing about the posting that is actually
+  the reason — a product, a problem, a team, a stack. Not "I was excited to see".
+- One accomplishment, told properly: what the situation was, what the candidate did, and
+  the number that came with it. One told well beats three listed.
+- What they would bring to this particular team, in a sentence, and a close. No
+  restating of paragraph one.
+
+Rules that are not stylistic:
+
+- Every factual sentence must name the claim it came from. A sentence carrying a figure,
+  a tool or an employer with no claim behind it is a fabrication, and the whole letter is
+  discarded for it.
+- Never state years of experience, a degree, a certification or an employer that is not
+  in the accomplishments you were given.
+- Never claim enthusiasm as evidence. "Passionate about data" tells a reader nothing and
+  marks the letter as generated.
+- Do not mention an attachment, a resume, or "please find".
+- No greeting line and no sign-off. Both are added afterwards.
+
+Reply with JSON only:
+
+{"paragraphs": ["<para>", "<para>", "<para>"],
+ "sentences": [{"text": "<one factual sentence, verbatim from a paragraph>",
+                "claim_id": "<the claim it came from>"}]}"""
+
+
+def compose_cover_letter(
+    job: dict[str, Any],
+    score: dict[str, Any],
+    profile: CandidateProfile,
+    *,
+    attempts: int = 2,
+) -> str | None:
+    """A cover letter built only from verified claims, or None.
+
+    None is a real answer and the caller must handle it rather than paper over
+    it. Tsenta writes its own letter when none is supplied — which is the same
+    problem the resume had, a document going to an employer under the
+    candidate's name that nothing here checked. So a caller that gets None
+    should say so, not quietly let the rail fill the gap.
+
+    Reuses `select_evidence` and `verify_sentences` deliberately. A cover letter
+    is the easiest place in this system to fabricate — it is prose, about a
+    career, with no fixed schema to violate — and it would be absurd to give it
+    weaker guards than the outreach email. Same rule as there: any rejection
+    discards the whole letter, because removing one sentence from prose written
+    as a unit leaves something that no longer reads as intended.
+    """
+    from .llm import complete
+
+    claims = select_evidence(score, profile)
+    if not claims:
+        # Nothing in the vault speaks to this posting. A letter about nothing is
+        # worse than no letter.
+        return None
+
+    by_id = {c.claim_id: c for c in claims}
+    allowed = _allowed_nouns(job, profile, None)
+
+    for _ in range(attempts):
+        result = complete(
+            _prompt(
+                job, score, profile, claims, None,
+                has_attachment=False, avoid_openings=[],
+            ),
+            purpose="cover_letter",
+            system=COVER_VOICE,
+            job_id=job.get("id"),
+            max_tokens=3000,
+        )
+        if result is None:
+            return None
+
+        parsed = _parse(result.text)
+        if not parsed:
+            logger.info("cover_letter: unparseable response for %s", job.get("id"))
+            continue
+
+        paragraphs = [
+            str(p).strip() for p in (parsed.get("paragraphs") or []) if str(p).strip()
+        ]
+        paragraphs = _drop_signoff(paragraphs, profile)
+        if not paragraphs:
+            continue
+
+        body = "\n\n".join(paragraphs)
+        rejections, _ = verify_sentences(parsed.get("sentences") or [], by_id, allowed)
+        banned = [b for b in BANNED_PHRASES if b in body.lower()]
+
+        if rejections or banned:
+            for problem in rejections + [f"banned phrase: {b}" for b in banned]:
+                logger.info("cover_letter: rejected for %s — %s", job.get("id"), problem)
+            continue
+
+        return body
+
+    return None

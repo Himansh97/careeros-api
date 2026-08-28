@@ -215,7 +215,10 @@ def context(resume: dict[str, Any], profile: CandidateProfile,
     # rather than an error, and the turn simply proceeds without it.
     from .market import named_skill, vocabulary
 
-    known = sorted({s for c in profile.evidence for s in (c.skills or [])})
+    # getattr: a claim with no skills list must not take down a coaching turn.
+    known = sorted({
+        s for c in profile.evidence for s in (getattr(c, "skills", None) or [])
+    })
     skill = named_skill(instruction, known) if instruction else ""
     market = vocabulary(title, skill) if title else {
         "sampled": 0, "titles": [], "skill": skill,
