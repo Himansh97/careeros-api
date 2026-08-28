@@ -103,6 +103,14 @@ class Card:
     employers: list[str] = field(default_factory=list)
     definition: str = ""
     sources: list[str] = field(default_factory=list)
+    # Layers, in the order they are meant to be read: the precise sentence, the
+    # plain one, the same thing in Hindi, where it shows up in practice, and a
+    # picture. A term you have never met is not made familiar by precision.
+    simple: str = ""
+    hindi: str = ""
+    application: str = ""
+    visual: dict[str, Any] | None = None
+    derived: list[str] = field(default_factory=list)
     box: int = 0          # 0 = never reviewed
     due_at: str = ""
     reviewed_at: str = ""
@@ -122,6 +130,16 @@ class Card:
             "definition": self.definition,
             "sources": self.sources,
             "hasDefinition": bool(self.definition),
+            "simple": self.simple,
+            "hindi": self.hindi,
+            "application": self.application,
+            "visual": self.visual,
+            # Which layers a model restated rather than a source asserting them.
+            "derived": self.derived,
+            "layers": sum(
+                1 for v in (self.definition, self.simple, self.hindi,
+                            self.application, self.visual) if v
+            ),
             "box": self.box,
             "maxBox": MAX_BOX,
             "dueAt": self.due_at,
@@ -155,18 +173,83 @@ def _terms_from_evidence(profile: Any) -> dict[str, list[dict[str, str]]]:
     return found
 
 
+# The whole diagram vocabulary. Four shapes cover most technical concepts, and
+# a closed set is the point: a concept has to be understood well enough to say
+# which shape it is, and every card then renders in the app's own type and
+# colours rather than as 158 unrelated pictures.
+VISUAL_KINDS = ("flow", "layers", "compare", "cycle")
+
+# Layers a model wrote, restated from the sourced definition. Named so the UI
+# can label them rather than implying every line carries a citation.
+DERIVABLE = ("simple", "hindi", "application", "visual")
+
+
 def _notes() -> dict[str, dict[str, Any]]:
     with connect() as conn:
         rows = conn.execute(
-            "SELECT term, definition, sources FROM concept_note"
+            "SELECT term, definition, sources, simple, hindi, application, "
+            "visual, derived FROM concept_note"
         ).fetchall()
-    return {
-        r["term"]: {
+    out: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        try:
+            visual = json.loads(r["visual"]) if r["visual"] else None
+        except ValueError:
+            visual = None
+        out[r["term"]] = {
             "definition": r["definition"],
             "sources": json.loads(r["sources"] or "[]"),
+            "simple": r["simple"],
+            "hindi": r["hindi"],
+            "application": r["application"],
+            "visual": visual,
+            "derived": json.loads(r["derived"] or "[]"),
+        }
+    return out
+
+
+def topics() -> list[dict[str, Any]]:
+    """Curated subject areas to study beyond the resume.
+
+    The resume deck answers "can you defend what you wrote". This answers "do
+    you know the field you say you work in" — the questions that do not quote
+    your own bullet back at you.
+
+    Curated rather than generated, for the same reason the technical curriculum
+    is: a syllabus assembled by a model is a plausible-looking syllabus.
+    """
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT slug, title, blurb, terms FROM concept_topic ORDER BY sort_order, title"
+        ).fetchall()
+    return [
+        {
+            "slug": r["slug"],
+            "title": r["title"],
+            "blurb": r["blurb"],
+            "terms": json.loads(r["terms"] or "[]"),
         }
         for r in rows
-    }
+    ]
+
+
+def save_topic(slug: str, title: str, blurb: str, terms: list[str],
+               sort_order: int = 0) -> dict[str, Any]:
+    slug = (slug or "").strip()
+    clean = [t.strip() for t in (terms or []) if t and t.strip()]
+    if not slug or not title.strip():
+        raise ValueError("a topic needs a slug and a title")
+    if not clean:
+        raise ValueError(f"refusing to store topic {slug!r} with no terms")
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO concept_topic (slug, title, blurb, terms, sort_order) "
+            "VALUES (?,?,?,?,?) ON CONFLICT(slug) DO UPDATE SET "
+            "title=excluded.title, blurb=excluded.blurb, terms=excluded.terms, "
+            "sort_order=excluded.sort_order",
+            (slug, title.strip(), blurb.strip(), json.dumps(clean), sort_order),
+        )
+    return {"slug": slug, "title": title, "blurb": blurb, "terms": clean}
 
 
 def _latest_reviews() -> dict[str, dict[str, Any]]:
@@ -199,6 +282,11 @@ def deck(profile: Any) -> list[Card]:
                 employers=seen,
                 definition=note.get("definition", ""),
                 sources=note.get("sources", []),
+                simple=note.get("simple", ""),
+                hindi=note.get("hindi", ""),
+                application=note.get("application", ""),
+                visual=note.get("visual"),
+                derived=note.get("derived", []),
                 box=int(review.get("box") or 0),
                 due_at=str(review.get("due_at") or ""),
                 reviewed_at=str(review.get("reviewed_at") or ""),
@@ -210,6 +298,45 @@ def deck(profile: Any) -> list[Card]:
     # ranking anything. `mentions` is on every card if that changes.
     cards.sort(key=lambda c: c.term.lower())
     return cards
+
+
+def topic_cards(slug: str) -> dict[str, Any]:
+    """Cards for a curated topic. These have no claim behind them, by definition.
+
+    A resume card answers "can you defend what you wrote" and leads with the
+    candidate's own sentence. A topic card answers "do you know this field" and
+    has no such sentence to lead with — so it leads with the plain-English layer
+    instead. The `claims` list is empty and the UI must not pretend otherwise.
+    """
+    topic = next((t for t in topics() if t["slug"] == slug), None)
+    if topic is None:
+        raise KeyError(f"no topic {slug!r}")
+
+    notes = _notes()
+    reviews = _latest_reviews()
+    cards: list[Card] = []
+    for term in topic["terms"]:
+        note = notes.get(term, {})
+        review = reviews.get(term, {})
+        cards.append(
+            Card(
+                term=term,
+                claims=[],
+                employers=[],
+                definition=note.get("definition", ""),
+                sources=note.get("sources", []),
+                simple=note.get("simple", ""),
+                hindi=note.get("hindi", ""),
+                application=note.get("application", ""),
+                visual=note.get("visual"),
+                derived=note.get("derived", []),
+                box=int(review.get("box") or 0),
+                due_at=str(review.get("due_at") or ""),
+                reviewed_at=str(review.get("reviewed_at") or ""),
+            )
+        )
+    # Teaching order, as curated — not alphabetical. A syllabus has a sequence.
+    return {**topic, "cards": [c.as_dict() for c in cards]}
 
 
 def due_cards(profile: Any) -> list[Card]:
@@ -263,12 +390,58 @@ def review(term: str, rating: str, *, now: datetime | None = None) -> dict[str, 
     }
 
 
-def save_note(term: str, definition: str, sources: list[str]) -> dict[str, Any]:
-    """Store the general meaning of a term. Refuses without sources.
+def check_visual(visual: dict[str, Any] | None) -> dict[str, Any] | None:
+    """A diagram spec, or None. Refuses a shape the renderer cannot draw.
+
+    Structured rather than an image so every concept renders in the app's own
+    type and colours, and so a wrong diagram is a data fix rather than an asset
+    to redraw. The closed vocabulary is deliberate: having to say which of four
+    shapes a concept is forces the concept to be understood.
+    """
+    if not visual:
+        return None
+    kind = str(visual.get("kind") or "").strip()
+    if kind not in VISUAL_KINDS:
+        raise ValueError(f"visual kind must be one of {', '.join(VISUAL_KINDS)}")
+    nodes = visual.get("nodes") or []
+    if not isinstance(nodes, list) or not 2 <= len(nodes) <= 6:
+        # One box is not a diagram and seven is a diagram nobody reads.
+        raise ValueError("a visual needs between 2 and 6 nodes")
+    clean_nodes = []
+    for node in nodes:
+        label = str((node or {}).get("label") or "").strip()
+        if not label:
+            raise ValueError("every visual node needs a label")
+        clean_nodes.append({
+            "label": label[:60],
+            "note": str((node or {}).get("note") or "").strip()[:120],
+        })
+    return {"kind": kind, "caption": str(visual.get("caption") or "").strip()[:160],
+            "nodes": clean_nodes}
+
+
+def save_note(
+    term: str,
+    definition: str,
+    sources: list[str],
+    *,
+    simple: str = "",
+    hindi: str = "",
+    application: str = "",
+    visual: dict[str, Any] | None = None,
+    derived: list[str] | None = None,
+) -> dict[str, Any]:
+    """Store what a term means, in layers. Refuses a definition without sources.
 
     The same refusal `save_research` makes, for the same reason: an unsourced
     definition is a guess wearing a citation's clothes, and this one would be
     recited in an interview.
+
+    The other layers are restatements of that definition — plainer, in Hindi, in
+    practice, as a picture — and are recorded in `derived` so the UI can say a
+    model wrote them rather than implying every line carries a citation. They
+    assert nothing the sourced definition does not, which is why they are allowed
+    to be generated at all.
     """
     term = (term or "").strip()
     definition = (definition or "").strip()
@@ -281,16 +454,27 @@ def save_note(term: str, definition: str, sources: list[str]) -> dict[str, Any]:
     if not clean:
         raise ValueError(f"refusing to store a definition for {term!r} with no sources")
 
+    shape = check_visual(visual)
     at = _now().isoformat()
+    marks = json.dumps(sorted(set(derived or [])))
+
     with connect() as conn:
         conn.execute(
-            "INSERT INTO concept_note (term, definition, sources, researched_at) "
-            "VALUES (?,?,?,?) ON CONFLICT(term) DO UPDATE SET "
+            "INSERT INTO concept_note (term, definition, sources, researched_at, "
+            "simple, hindi, application, visual, derived) VALUES (?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(term) DO UPDATE SET "
             "definition=excluded.definition, sources=excluded.sources, "
-            "researched_at=excluded.researched_at",
-            (term, definition, json.dumps(clean), at),
+            "researched_at=excluded.researched_at, simple=excluded.simple, "
+            "hindi=excluded.hindi, application=excluded.application, "
+            "visual=excluded.visual, derived=excluded.derived",
+            (term, definition, json.dumps(clean), at, simple.strip(), hindi.strip(),
+             application.strip(), json.dumps(shape) if shape else "", marks),
         )
-    return {"term": term, "definition": definition, "sources": clean, "researchedAt": at}
+    return {
+        "term": term, "definition": definition, "sources": clean,
+        "simple": simple, "hindi": hindi, "application": application,
+        "visual": shape, "derived": json.loads(marks), "researchedAt": at,
+    }
 
 
 def overview(profile: Any) -> dict[str, Any]:

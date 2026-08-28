@@ -149,6 +149,29 @@ async def prep_concepts() -> dict[str, Any]:
     return {"overview": overview(p), "cards": [c.as_dict() for c in deck(p)]}
 
 
+@app.get("/api/prep/concepts/topics")
+async def prep_concept_topics() -> dict[str, Any]:
+    """Curated subjects to study beyond the resume.
+
+    The resume deck answers "can you defend what you wrote". This answers "do
+    you know the field you say you work in" — the questions that do not quote
+    your own bullet back at you.
+    """
+    from .concepts import topics
+
+    return {"topics": topics()}
+
+
+@app.get("/api/prep/concepts/topics/{slug}")
+async def prep_concept_topic(slug: str) -> dict[str, Any]:
+    from .concepts import topic_cards
+
+    try:
+        return topic_cards(slug)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc).strip("'")) from exc
+
+
 @app.get("/api/prep/concepts/due")
 async def prep_concepts_due() -> dict[str, Any]:
     """Today's queue: overdue first, then never seen."""
