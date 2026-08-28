@@ -134,6 +134,46 @@ async def prep_overview() -> dict[str, Any]:
     return overview()
 
 
+@app.get("/api/prep/concepts")
+async def prep_concepts() -> dict[str, Any]:
+    """Every technical term on the candidate's own resume, with its schedule.
+
+    Derived from `career_evidence.json` on each request rather than stored, so
+    adding or retiring a claim changes the deck with no migration and no list to
+    keep in step. 158 terms today, and 121 of them appear on exactly one claim —
+    which is the whole reason this exists.
+    """
+    from .concepts import deck, overview
+
+    p = _profile()
+    return {"overview": overview(p), "cards": [c.as_dict() for c in deck(p)]}
+
+
+@app.get("/api/prep/concepts/due")
+async def prep_concepts_due() -> dict[str, Any]:
+    """Today's queue: overdue first, then never seen."""
+    from .concepts import due_cards
+
+    return {"cards": [c.as_dict() for c in due_cards(_profile())]}
+
+
+@app.post("/api/prep/concepts/{term}/review")
+async def prep_concept_review(term: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Record one recall attempt and return when the term comes back.
+
+    Self-rated. The graded version — say it aloud, and have `grade_rubric` check
+    you hit the load-bearing ideas while `check_answer` checks you did not
+    overclaim — needs a rubric written per term, which is a great deal of seeding
+    to do before the deck is useful at all.
+    """
+    from .concepts import review
+
+    try:
+        return review(term, str(body.get("rating") or ""))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/prep/questions")
 async def prep_questions(kind: str = "behavioural") -> dict[str, Any]:
     """The question set. Behavioural questions are the interviewer's standard
