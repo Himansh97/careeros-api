@@ -150,6 +150,21 @@ def add_claim(payload: dict[str, Any]) -> dict[str, Any]:
     return record
 
 
+def add_unapproved_claim(payload: dict[str, Any]) -> dict[str, Any]:
+    """Add a claim that cannot be resume-eligible, whatever the caller asked.
+
+    `add_claim` honours `approved_for_resume`, which is right for a person
+    typing into the Evidence Vault — they are approving their own history. It is
+    wrong for anything a model had a hand in drafting, and "the route remembers
+    to pass False" is a guarantee that lasts exactly until someone adds a second
+    route. Written here so the property belongs to the vault rather than to a
+    literal in a caller.
+
+    Recording a fact and deciding a resume may assert it stay two decisions.
+    """
+    return add_claim({**payload, "approved_for_resume": False})
+
+
 def update_claim(claim_id: str, patch: dict[str, Any]) -> dict[str, Any]:
     """Edit a claim, refusing a silent promotion to delivered work."""
     data = _read()

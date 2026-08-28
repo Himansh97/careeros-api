@@ -621,7 +621,60 @@ async def resume_coach(job_id: str, body: dict[str, Any]) -> dict[str, Any]:
         score=s,
         history=history if isinstance(history, list) else [],
         job_id=job_id,
+        # The title drives which live postings the market vocabulary is read
+        # from, so the coach borrows register from roles like this one rather
+        # than from the pipeline at large.
+        title=str(job.get("title") or ""),
     )
+
+
+@app.post("/api/jobs/{job_id}/resume/coach/evidence")
+async def add_coach_evidence(job_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Record something the candidate said about their own career.
+
+    Separate from `POST /api/evidence` for one reason: provenance. A claim that
+    arrived through a coaching conversation is stamped with the candidate's own
+    words that produced it, so a year from now the vault can still answer where
+    a sentence came from. Everything the vault says about a career should be
+    traceable to something the candidate actually stated.
+
+    The quote is re-verified here rather than trusted from the request. The
+    check in `_evidence_drafts` guards the model; this one guards the endpoint,
+    which is reachable without going through a coaching turn at all.
+
+    Written unapproved, always. `tailor` skips unapproved claims, so nothing
+    added here can appear on a resume until the candidate approves it in the
+    Evidence Vault. That gap is deliberate: adding a fact and deciding it may be
+    asserted on a resume are two different decisions.
+    """
+    from .evidence import EvidenceError, add_unapproved_claim
+    from .resume_coach import MIN_QUOTE_CHARS, _spoken
+
+    quote = " ".join(str(body.get("quote") or "").lower().split())
+    history = body.get("history")
+    spoken = _spoken(
+        str(body.get("instruction") or ""),
+        history if isinstance(history, list) else [],
+    )
+    if len(quote) < MIN_QUOTE_CHARS or quote not in spoken:
+        raise HTTPException(
+            status_code=400,
+            detail="a claim added from coaching must quote what the candidate "
+                   "said, and that quote must appear in the conversation",
+        )
+
+    try:
+        return add_unapproved_claim({
+            "claim": body.get("claim"),
+            "employer_or_project": body.get("employer"),
+            "skills": body.get("skills") or [],
+            "classification": body.get("classification"),
+            "evidence_source":
+                f'Stated by candidate while coaching {job_id}: '
+                f'"{str(body.get("quote") or "").strip()[:300]}"',
+        })
+    except EvidenceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/jobs/{job_id}/resume/coach/apply")
