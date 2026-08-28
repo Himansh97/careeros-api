@@ -1932,18 +1932,45 @@ async def interview_pack(job_id: str) -> dict[str, Any]:
     return build_pack(job, s, resume, p, record, messages)
 
 
+# One computed report per discovery generation. The work is a whole-pool
+# rescore, so it costs the same whether one caller wants it or five do.
+_SKILL_GAP_CACHE: dict[tuple[str, int], dict[str, Any]] = {}
+
+
 @app.get("/api/skill-gaps")
 async def skill_gap_report(minimumFit: int = 70) -> dict[str, Any]:
     """Which missing requirement costs the most across the roles worth applying to.
 
     Aggregated rather than per-job: one resume's gap list says what one employer
     wanted; across the whole target set it says what to go and learn.
+
+    Cached against the discovery generation, because this refetches every source
+    and rescores the whole target set — over thirty seconds on a cold cache. The
+    review page already excludes it from its loading gate rather than sit as a
+    grey skeleton waiting on one supplementary sentence, which is a workaround
+    for this endpoint rather than a fix to it. Discovery caches for fifteen
+    minutes, so without this the first page load in each window pays the full
+    cost, whichever page that happens to be.
+
+    Keyed on the generation rather than a clock: the answer only changes when
+    the pool does, and a time-based key would recompute an identical report.
     """
     from .prescreen import rank_for_scoring
     from .priority import skill_gaps
 
     p = _profile()
     jobs = filter_jobs(await fetch_all_jobs())
+
+    from .discovery_store import current_snapshot
+
+    try:
+        generation = str(current_snapshot().generated_at or "")
+    except Exception:  # noqa: BLE001 - no snapshot is not an error, just no key
+        generation = ""
+    key = (generation, minimumFit)
+    if generation and key in _SKILL_GAP_CACHE:
+        return _SKILL_GAP_CACHE[key]
+
     candidates, _ = rank_for_scoring(jobs, p, SCORE_BUDGET)
 
     scored = []
@@ -1952,7 +1979,7 @@ async def skill_gap_report(minimumFit: int = 70) -> dict[str, Any]:
         if s["rawFitScore"] >= minimumFit:
             scored.append((job, s))
 
-    return {
+    report = {
         "gaps": skill_gaps(scored),
         "consideredJobs": len(scored),
         "minimumFit": minimumFit,
@@ -1962,6 +1989,12 @@ async def skill_gap_report(minimumFit: int = 70) -> dict[str, Any]:
             "number would be invented."
         ),
     }
+    if generation:
+        # Bounded by keeping only the current generation: the pool moves every
+        # fifteen minutes and yesterday's report is of no use to anyone.
+        _SKILL_GAP_CACHE.clear()
+        _SKILL_GAP_CACHE[key] = report
+    return report
 
 
 @app.get("/api/alerts")
