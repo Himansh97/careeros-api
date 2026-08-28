@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from .store import connect
@@ -376,11 +377,71 @@ def unconfirmed_applications() -> list[Alert]:
     ]
 
 
+# Matches SNAPSHOT_MAX_AGE_HOURS in scripts/daily_fetch.py, which refuses to
+# reconcile against a mailbox that has moved on.
+SNAPSHOT_MAX_AGE_HOURS = 36
+GMAIL_SNAPSHOT_DIR = Path.home() / "careeros" / "gmail-snapshot"
+
+
+def stale_reply_reconciliation() -> list[Alert]:
+    """Say when nothing has been checking for replies.
+
+    The daily run skips reconciliation when the Gmail snapshot is older than
+    36 hours, which is the right call — reconciling against a stale mailbox
+    writes today's date onto week-old conclusions. But the skip was a log line
+    in a job nobody reads, so the system went quiet in exactly the way that
+    looks identical to "no replies yet".
+
+    Found at 174 hours: the 07:00 run had been skipping for six days and every
+    screen still read as though the pipeline were up to date. A safety check
+    that fails silently is worse than one that fails loudly, which is the whole
+    reason the age limit exists.
+
+    Owned by the candidate because only a session with the Gmail connector can
+    fix it — the API holds no credentials by design.
+    """
+    sent = GMAIL_SNAPSHOT_DIR / "sent.json"
+    if not sent.exists():
+        return [
+            Alert(
+                kind="reply_reconciliation_never_ran",
+                severity="high",
+                title="Replies have never been checked",
+                detail=(
+                    "No Gmail snapshot exists, so nothing has ever reconciled "
+                    "what was sent or what came back."
+                ),
+                action="Run an agent session with the Gmail connector to capture one",
+            )
+        ]
+
+    age = (datetime.now(timezone.utc).timestamp() - sent.stat().st_mtime) / 3600
+    if age <= SNAPSHOT_MAX_AGE_HOURS:
+        return []
+
+    return [
+        Alert(
+            kind="reply_reconciliation_stale",
+            # Past a week, silence is not a gap in the data, it is the data
+            # being wrong on every screen that shows a pipeline.
+            severity="high" if age > SNAPSHOT_MAX_AGE_HOURS * 3 else "medium",
+            title="Nothing has checked for replies",
+            detail=(
+                f"The Gmail snapshot is {_humanise(age)} old and the daily run "
+                f"skips reconciliation past {SNAPSHOT_MAX_AGE_HOURS}h, so no "
+                "reply, rejection or interview request has been read into the "
+                "pipeline since then."
+            ),
+            action="Run an agent session with the Gmail connector to refresh it",
+        )
+    ]
+
+
 def build_alerts() -> list[dict[str, Any]]:
     """Everything outstanding, most urgent first."""
     alerts = (failed_reply_drafts() + unsent_recruiter_replies()
               + blocked_applications() + unsent_outreach() + aging_applications()
-              + unconfirmed_applications())
+              + unconfirmed_applications() + stale_reply_reconciliation())
     order = {"high": 0, "medium": 1}
     alerts.sort(key=lambda a: (order.get(a.severity, 9), a.kind))
     return [a.as_dict() for a in alerts]
