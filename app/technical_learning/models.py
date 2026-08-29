@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class HintSet(BaseModel):
@@ -91,6 +91,18 @@ class VisualNode(BaseModel):
     # Drives the visual channel where there is one: opacity in a heatmap,
     # length in a bar. Absent means the shape carries no magnitude.
     value: float | None = None
+
+    @field_validator("tone", mode="before")
+    @classmethod
+    def blank_tone_is_neutral(cls, value: Any) -> Any:
+        """An empty tone means none was specified, not an invalid one.
+
+        Authoring these by hand, "" is what you type when a node needs no
+        emphasis, and rejecting the whole curriculum for it took the entire
+        lesson file down twice. Coercing is right here because the meaning is
+        unambiguous — unlike a wrong tone, which should still fail.
+        """
+        return "neutral" if value in ("", None) else value
 
 
 class VisualSeries(BaseModel):

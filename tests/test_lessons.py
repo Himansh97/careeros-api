@@ -71,6 +71,32 @@ def main() -> int:
             # Zero rows is a valid query and a useless demonstration.
             check(f"{lesson.id} example returns rows", len(result.rows) > 0, True)
 
+    # --- every lesson is illustrated ---
+    # Seventeen of forty-one shipped without one, so the Learn section showed a
+    # diagram on four tracks and nothing on five, which reads as broken rather
+    # than as sparse. A lesson with no picture is allowed to be a decision; it
+    # is not allowed to be an oversight.
+    undrawn = [l.id for l in lessons if not l.visual]
+    check("every lesson has a diagram", undrawn, [])
+
+    for lesson in lessons:
+        if not lesson.visual:
+            continue
+        v = lesson.visual
+        if v.kind == "bars":
+            # Length is the encoding, so a bar with nothing to encode is a box.
+            check(f"{lesson.id} bars all carry a value",
+                  all(n.value is not None for n in v.nodes), True)
+        if v.kind == "heatmap":
+            check(f"{lesson.id} heatmap grid is complete",
+                  len(v.cells), len(v.rows) * len(v.cols))
+        if v.kind == "curve":
+            inside = all(
+                0.0 <= x <= 1.0 and 0.0 <= y <= 1.0
+                for s in v.series for x, y in s.points
+            )
+            check(f"{lesson.id} curve points are unit space", inside, True)
+
     # --- the lesson graph is sane ---
     ids = {lesson.id for lesson in lessons}
     for lesson in lessons:

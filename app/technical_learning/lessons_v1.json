@@ -1971,7 +1971,67 @@
     "https://en.wikipedia.org/wiki/Time_complexity",
     "https://en.wikipedia.org/wiki/Big_O_notation",
     "https://en.wikipedia.org/wiki/Hash_table"
-   ]
+   ],
+   "visual": {
+    "kind": "curve",
+    "caption": "The same code, two shapes \u2014 they only diverge at scale",
+    "x_label": "rows",
+    "y_label": "work done",
+    "series": [
+     {
+      "label": "O(n\u00b2) \u2014 scan inside a loop",
+      "points": [
+       [
+        0,
+        0
+       ],
+       [
+        0.3,
+        0.09
+       ],
+       [
+        0.6,
+        0.36
+       ],
+       [
+        0.85,
+        0.72
+       ],
+       [
+        1,
+        1
+       ]
+      ],
+      "tone": "bad"
+     },
+     {
+      "label": "O(n) \u2014 set lookup",
+      "points": [
+       [
+        0,
+        0
+       ],
+       [
+        0.3,
+        0.03
+       ],
+       [
+        0.6,
+        0.06
+       ],
+       [
+        0.85,
+        0.085
+       ],
+       [
+        1,
+        0.1
+       ]
+      ],
+      "tone": "good"
+     }
+    ]
+   }
   },
   {
    "id": "py-pandas",
@@ -2016,7 +2076,34 @@
    "interview_angle": "Take-homes are usually pandas. The reviewable signal is whether you checked shape after a merge and handled nulls deliberately.",
    "sources": [
     "https://en.wikipedia.org/wiki/Pandas_(software)"
-   ]
+   ],
+   "visual": {
+    "kind": "fanout",
+    "factor": 3,
+    "caption": "merge fans out exactly like a SQL join \u2014 same bug, different language",
+    "nodes": [
+     {
+      "label": "one loan row",
+      "note": "",
+      "tone": "neutral"
+     },
+     {
+      "label": "+ payment 1",
+      "note": "",
+      "tone": "neutral"
+     },
+     {
+      "label": "+ payment 2",
+      "note": "",
+      "tone": "neutral"
+     },
+     {
+      "label": "+ payment 3",
+      "note": "",
+      "tone": "neutral"
+     }
+    ]
+   }
   },
   {
    "id": "py-vectorise",
@@ -2062,7 +2149,32 @@
    "sources": [
     "https://en.wikipedia.org/wiki/Array_programming",
     "https://en.wikipedia.org/wiki/Pandas_(software)"
-   ]
+   ],
+   "visual": {
+    "kind": "bars",
+    "unit": "x",
+    "caption": "Relative time for the same operation over a million rows",
+    "nodes": [
+     {
+      "label": "iterrows",
+      "note": "builds a Series per row",
+      "tone": "bad",
+      "value": 100
+     },
+     {
+      "label": "apply",
+      "note": "a Python call per row",
+      "tone": "bad",
+      "value": 30
+     },
+     {
+      "label": "vectorised",
+      "note": "one compiled pass",
+      "tone": "good",
+      "value": 1
+     }
+    ]
+   }
   },
   {
    "id": "py-quality",
@@ -2108,7 +2220,28 @@
    "sources": [
     "https://en.wikipedia.org/wiki/Unit_testing",
     "https://en.wikipedia.org/wiki/Data_validation"
-   ]
+   ],
+   "visual": {
+    "kind": "compare",
+    "caption": "Two kinds of failure, and only one of them shouts",
+    "nodes": [
+     {
+      "label": "exception",
+      "note": "loud, immediate, easy",
+      "tone": "good"
+     },
+     {
+      "label": "wrong number",
+      "note": "silent, plausible, shipped",
+      "tone": "bad"
+     },
+     {
+      "label": "an assertion",
+      "note": "turns the second into the first",
+      "tone": "good"
+     }
+    ]
+   }
   },
   {
    "id": "dm-normalisation",
@@ -2152,7 +2285,28 @@
    "sources": [
     "https://en.wikipedia.org/wiki/Database_normalization",
     "https://www.ibm.com/think/topics/data-modeling"
-   ]
+   ],
+   "visual": {
+    "kind": "compare",
+    "caption": "One fact stored once, or stored where it is read",
+    "nodes": [
+     {
+      "label": "normalised",
+      "note": "write-safe: one place to update",
+      "tone": "good"
+     },
+     {
+      "label": "denormalised",
+      "note": "read-fast: no join at query time",
+      "tone": "good"
+     },
+     {
+      "label": "the danger",
+      "note": "two copies that can disagree",
+      "tone": "bad"
+     }
+    ]
+   }
   },
   {
    "id": "dm-dimensional",
@@ -2198,7 +2352,39 @@
    "sources": [
     "https://en.wikipedia.org/wiki/Star_schema",
     "https://www.ibm.com/think/topics/data-modeling"
-   ]
+   ],
+   "visual": {
+    "kind": "fanout",
+    "factor": 4,
+    "caption": "One fact table, dimensions one join away \u2014 the star",
+    "nodes": [
+     {
+      "label": "fact: payments",
+      "note": "",
+      "tone": "neutral"
+     },
+     {
+      "label": "dim: borrower",
+      "note": "",
+      "tone": "neutral"
+     },
+     {
+      "label": "dim: loan",
+      "note": "",
+      "tone": "neutral"
+     },
+     {
+      "label": "dim: date",
+      "note": "",
+      "tone": "neutral"
+     },
+     {
+      "label": "dim: product",
+      "note": "",
+      "tone": "neutral"
+     }
+    ]
+   }
   },
   {
    "id": "dm-scd",
@@ -2244,7 +2430,58 @@
    "sources": [
     "https://en.wikipedia.org/wiki/Slowly_changing_dimension",
     "https://en.wikipedia.org/wiki/Star_schema"
-   ]
+   ],
+   "visual": {
+    "kind": "heatmap",
+    "caption": "A borrower moves city \u2014 what each type does to last year's report",
+    "rows": [
+     "Type 1",
+     "Type 2"
+    ],
+    "cols": [
+     "old value",
+     "new value",
+     "old report"
+    ],
+    "cells": [
+     {
+      "label": "overwritten",
+      "note": "gone forever",
+      "tone": "bad",
+      "value": 1.0
+     },
+     {
+      "label": "stored",
+      "note": "",
+      "tone": "neutral",
+      "value": 0.3
+     },
+     {
+      "label": "CHANGED",
+      "note": "silently rewritten",
+      "tone": "bad",
+      "value": 1.0
+     },
+     {
+      "label": "kept",
+      "note": "valid_to set",
+      "tone": "good",
+      "value": 1.0
+     },
+     {
+      "label": "stored",
+      "note": "valid_from set",
+      "tone": "good",
+      "value": 1.0
+     },
+     {
+      "label": "reproduces",
+      "note": "",
+      "tone": "good",
+      "value": 1.0
+     }
+    ]
+   }
   },
   {
    "id": "dm-metrics",
@@ -2290,7 +2527,32 @@
    "sources": [
     "https://en.wikipedia.org/wiki/Semantic_layer",
     "https://www.ibm.com/think/topics/business-intelligence"
-   ]
+   ],
+   "visual": {
+    "kind": "bars",
+    "unit": "k",
+    "caption": "One month, three definitions, all defensible",
+    "nodes": [
+     {
+      "label": "booked (sales)",
+      "note": "when the deal signed",
+      "tone": "neutral",
+      "value": 1180
+     },
+     {
+      "label": "recognised (finance)",
+      "note": "when the service ran",
+      "tone": "neutral",
+      "value": 940
+     },
+     {
+      "label": "collected (ops)",
+      "note": "when cash arrived",
+      "tone": "neutral",
+      "value": 760
+     }
+    ]
+   }
   },
   {
    "id": "pipe-shapes",
@@ -2334,7 +2596,28 @@
    "sources": [
     "https://en.wikipedia.org/wiki/Extract,_transform,_load",
     "https://www.ibm.com/think/topics/etl"
-   ]
+   ],
+   "visual": {
+    "kind": "compare",
+    "caption": "The transform is in a different place, so a bug costs differently",
+    "nodes": [
+     {
+      "label": "ETL",
+      "note": "raw never lands \u2014 bug is permanent",
+      "tone": "bad"
+     },
+     {
+      "label": "ELT",
+      "note": "raw kept in staging \u2014 bug is re-runnable",
+      "tone": "good"
+     },
+     {
+      "label": "when ETL still wins",
+      "note": "raw must not land at all",
+      "tone": "neutral"
+     }
+    ]
+   }
   },
   {
    "id": "pipe-idempotence",
@@ -2380,7 +2663,32 @@
    "sources": [
     "https://en.wikipedia.org/wiki/Idempotence",
     "https://www.ibm.com/think/topics/etl"
-   ]
+   ],
+   "visual": {
+    "kind": "bars",
+    "unit": " rows",
+    "caption": "Rows in the table after the scheduler retries a half-finished run",
+    "nodes": [
+     {
+      "label": "append",
+      "note": "the day counted twice",
+      "tone": "bad",
+      "value": 190
+     },
+     {
+      "label": "upsert by key",
+      "note": "second run overwrites",
+      "tone": "good",
+      "value": 100
+     },
+     {
+      "label": "replace partition",
+      "note": "second run is a no-op",
+      "tone": "good",
+      "value": 100
+     }
+    ]
+   }
   },
   {
    "id": "pipe-quality",
@@ -2426,7 +2734,77 @@
    "sources": [
     "https://en.wikipedia.org/wiki/Data_validation",
     "https://www.ibm.com/think/topics/data-quality"
-   ]
+   ],
+   "visual": {
+    "kind": "heatmap",
+    "caption": "Which check catches which failure",
+    "rows": [
+     "schema test",
+     "distribution test",
+     "freshness test"
+    ],
+    "cols": [
+     "column dropped",
+     "default flipped",
+     "load stopped"
+    ],
+    "cells": [
+     {
+      "label": "catches",
+      "note": "",
+      "tone": "good",
+      "value": 1.0
+     },
+     {
+      "label": "misses",
+      "note": "every row still valid",
+      "tone": "bad",
+      "value": 1.0
+     },
+     {
+      "label": "misses",
+      "note": "",
+      "tone": "bad",
+      "value": 1.0
+     },
+     {
+      "label": "catches",
+      "note": "",
+      "tone": "good",
+      "value": 1.0
+     },
+     {
+      "label": "catches",
+      "note": "the mean moves",
+      "tone": "good",
+      "value": 1.0
+     },
+     {
+      "label": "misses",
+      "note": "",
+      "tone": "bad",
+      "value": 1.0
+     },
+     {
+      "label": "misses",
+      "note": "",
+      "tone": "bad",
+      "value": 1.0
+     },
+     {
+      "label": "misses",
+      "note": "",
+      "tone": "bad",
+      "value": 1.0
+     },
+     {
+      "label": "catches",
+      "note": "",
+      "tone": "good",
+      "value": 1.0
+     }
+    ]
+   }
   },
   {
    "id": "pipe-incremental",
@@ -2472,7 +2850,28 @@
    "sources": [
     "https://en.wikipedia.org/wiki/Change_data_capture",
     "https://en.wikipedia.org/wiki/Extract,_transform,_load"
-   ]
+   ],
+   "visual": {
+    "kind": "compare",
+    "caption": "A row is deleted at the source. Who notices?",
+    "nodes": [
+     {
+      "label": "watermark",
+      "note": "never sees it \u2014 no updated_at to find",
+      "tone": "bad"
+     },
+     {
+      "label": "soft delete",
+      "note": "sees it, if the source cooperates",
+      "tone": "neutral"
+     },
+     {
+      "label": "CDC",
+      "note": "reads the log, so the delete is an event",
+      "tone": "good"
+     }
+    ]
+   }
   },
   {
    "id": "bi-charts",
@@ -2517,7 +2916,44 @@
    "sources": [
     "https://en.wikipedia.org/wiki/Data_visualization",
     "https://www.ibm.com/think/topics/data-visualization"
-   ]
+   ],
+   "visual": {
+    "kind": "bars",
+    "unit": "",
+    "caption": "How accurately people read each channel \u2014 encode the main comparison highest",
+    "nodes": [
+     {
+      "label": "position on a scale",
+      "note": "bar and line charts",
+      "tone": "good",
+      "value": 100
+     },
+     {
+      "label": "length",
+      "note": "bars from a shared baseline",
+      "tone": "good",
+      "value": 88
+     },
+     {
+      "label": "angle",
+      "note": "pie slices",
+      "tone": "bad",
+      "value": 62
+     },
+     {
+      "label": "area",
+      "note": "bubbles, treemaps",
+      "tone": "bad",
+      "value": 48
+     },
+     {
+      "label": "colour intensity",
+      "note": "heatmaps \u2014 good for pattern, poor for value",
+      "tone": "bad",
+      "value": 34
+     }
+    ]
+   }
   },
   {
    "id": "bi-dashboards",
@@ -2564,7 +3000,33 @@
    "sources": [
     "https://en.wikipedia.org/wiki/Dashboard_(business)",
     "https://www.ibm.com/think/topics/dashboard"
-   ]
+   ],
+   "visual": {
+    "kind": "layers",
+    "caption": "Design downward. Every layer is answerable only if the one above it is.",
+    "nodes": [
+     {
+      "label": "the decision",
+      "note": "what will someone do differently?",
+      "tone": "good"
+     },
+     {
+      "label": "the measures",
+      "note": "the few that move that decision",
+      "tone": "neutral"
+     },
+     {
+      "label": "the charts",
+      "note": "chosen to make those readable",
+      "tone": "neutral"
+     },
+     {
+      "label": "the refresh",
+      "note": "so it is trusted without asking",
+      "tone": "neutral"
+     }
+    ]
+   }
   },
   {
    "id": "bi-communicating",
@@ -2610,7 +3072,33 @@
    "sources": [
     "https://en.wikipedia.org/wiki/Data_visualization",
     "https://www.ibm.com/think/topics/business-intelligence"
-   ]
+   ],
+   "visual": {
+    "kind": "flow",
+    "caption": "The order that gets a decision rather than a follow-up meeting",
+    "nodes": [
+     {
+      "label": "the finding",
+      "note": "lead with it",
+      "tone": "good"
+     },
+     {
+      "label": "the so-what",
+      "note": "in units someone acts on",
+      "tone": "neutral"
+     },
+     {
+      "label": "the recommendation",
+      "note": "what you would do",
+      "tone": "neutral"
+     },
+     {
+      "label": "the method",
+      "note": "available, not first",
+      "tone": ""
+     }
+    ]
+   }
   },
   {
    "id": "cs-structures",
@@ -2655,7 +3143,77 @@
     "https://en.wikipedia.org/wiki/Hash_table",
     "https://en.wikipedia.org/wiki/Binary_search_algorithm",
     "https://en.wikipedia.org/wiki/Sorting_algorithm"
-   ]
+   ],
+   "visual": {
+    "kind": "heatmap",
+    "caption": "Cost of each operation \u2014 pick the structure from the row you need fast",
+    "rows": [
+     "list",
+     "set / dict",
+     "sorted array"
+    ],
+    "cols": [
+     "find by value",
+     "insert",
+     "in order"
+    ],
+    "cells": [
+     {
+      "label": "O(n)",
+      "note": "scans",
+      "tone": "bad",
+      "value": 1.0
+     },
+     {
+      "label": "O(1)",
+      "note": "amortised",
+      "tone": "good",
+      "value": 1.0
+     },
+     {
+      "label": "yes",
+      "note": "",
+      "tone": "good",
+      "value": 1.0
+     },
+     {
+      "label": "O(1)",
+      "note": "hashes",
+      "tone": "good",
+      "value": 1.0
+     },
+     {
+      "label": "O(1)",
+      "note": "",
+      "tone": "good",
+      "value": 1.0
+     },
+     {
+      "label": "no",
+      "note": "hashing destroys order",
+      "tone": "bad",
+      "value": 1.0
+     },
+     {
+      "label": "O(log n)",
+      "note": "binary search",
+      "tone": "good",
+      "value": 1.0
+     },
+     {
+      "label": "O(n)",
+      "note": "shifts",
+      "tone": "bad",
+      "value": 1.0
+     },
+     {
+      "label": "yes",
+      "note": "",
+      "tone": "good",
+      "value": 1.0
+     }
+    ]
+   }
   },
   {
    "id": "cs-systems",
@@ -2703,7 +3261,28 @@
     "https://en.wikipedia.org/wiki/Cache_(computing)",
     "https://en.wikipedia.org/wiki/Message_queue",
     "https://en.wikipedia.org/wiki/Concurrency_(computer_science)"
-   ]
+   ],
+   "visual": {
+    "kind": "compare",
+    "caption": "Both buy speed with a second copy of the truth",
+    "nodes": [
+     {
+      "label": "cache",
+      "note": "fast reads, paid for in staleness",
+      "tone": "bad"
+     },
+     {
+      "label": "queue",
+      "note": "fast writes, paid for in delay",
+      "tone": "bad"
+     },
+     {
+      "label": "both",
+      "note": "need idempotent consumers",
+      "tone": "good"
+     }
+    ]
+   }
   }
  ]
 }
