@@ -151,6 +151,7 @@ def detail(lesson_id: str) -> dict[str, Any]:
         "interviewAngle": lesson.interview_angle,
         "sources": lesson.sources,
         "example": example,
+        "visual": lesson.visual.model_dump(mode="json", by_alias=True) if lesson.visual else None,
         "practiceDrillId": lesson.practice_drill_id,
         "status": status(lesson, states, _cleared_drills()),
         # Deliberately absent: key_points. They are the tutor's boundary, not a

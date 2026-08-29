@@ -81,6 +81,88 @@ class LessonExample(BaseModel):
     sql: str | None = None
 
 
+class VisualNode(BaseModel):
+    label: str
+    note: str = ""
+    # "good" | "bad" | "neutral" — semantic emphasis, not decoration. A cell in
+    # a confusion matrix means something; colouring it arbitrarily would teach
+    # the wrong thing.
+    tone: Literal["good", "bad", "neutral"] = "neutral"
+    # Drives the visual channel where there is one: opacity in a heatmap,
+    # length in a bar. Absent means the shape carries no magnitude.
+    value: float | None = None
+
+
+class VisualSeries(BaseModel):
+    label: str
+    # Points in unit space, 0..1 on both axes. Unit space rather than data
+    # values because these curves are shapes to recognise — the bias-variance
+    # tradeoff has no units — and a renderer that never has to scale cannot
+    # mis-scale.
+    points: list[tuple[float, float]] = Field(min_length=2)
+    tone: Literal["good", "bad", "neutral"] = "neutral"
+
+
+class LessonVisual(BaseModel):
+    """A diagram, from a closed vocabulary the renderer knows how to draw.
+
+    Six shapes, added only when a lesson genuinely could not be drawn with the
+    existing ones. `matrix` exists because a confusion matrix is the clearest
+    thing in classification and cannot be a list of boxes; `curve` exists
+    because bias-variance and complexity growth are shapes, and describing a
+    shape in prose is the exact failure a diagram fixes.
+
+    Structured rather than an image so it renders in the app's own type and
+    colours, stays readable in both themes, and can be corrected with an edit
+    rather than redrawn.
+    """
+
+    kind: Literal["flow", "layers", "compare", "cycle",
+                  "fanout", "heatmap", "curve", "bars"]
+    caption: str = ""
+    # flow | layers | compare | cycle
+    nodes: list[VisualNode] = Field(default_factory=list)
+    # matrix
+    rows: list[str] = Field(default_factory=list)
+    cols: list[str] = Field(default_factory=list)
+    cells: list[VisualNode] = Field(default_factory=list)
+    # curve. Aliased to the camelCase the renderer expects, so the JSON crosses
+    # the wire in the shape the component already reads rather than needing a
+    # translation layer that could drift.
+    x_label: str = Field(default="", serialization_alias="xLabel")
+    y_label: str = Field(default="", serialization_alias="yLabel")
+    shade_gap: bool = Field(default=False, serialization_alias="shadeGap")
+    series: list[VisualSeries] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def drawable(self) -> "LessonVisual":
+        if self.kind in ("flow", "layers", "compare", "cycle", "fanout", "bars"):
+            if not 2 <= len(self.nodes) <= 6:
+                # One box is not a diagram; seven is one nobody reads.
+                raise ValueError(f"{self.kind} needs between 2 and 6 nodes")
+            if self.kind == "bars" and any(n.value is None for n in self.nodes):
+                # Length is the encoding; a bar with no value is just a box.
+                raise ValueError("every bar needs a value")
+        elif self.kind == "heatmap":
+            if not (self.rows and self.cols):
+                raise ValueError("a heatmap needs row and column labels")
+            if len(self.cells) != len(self.rows) * len(self.cols):
+                raise ValueError(
+                    f"a {len(self.rows)}x{len(self.cols)} heatmap needs "
+                    f"{len(self.rows) * len(self.cols)} cells, got {len(self.cells)}"
+                )
+        elif self.kind == "curve":
+            if not self.series:
+                raise ValueError("a curve needs at least one series")
+            for line in self.series:
+                for x, y in line.points:
+                    if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
+                        raise ValueError(
+                            f"curve points are unit space; {line.label} has ({x}, {y})"
+                        )
+        return self
+
+
 class Misconception(BaseModel):
     claim: str        # what people believe
     correction: str   # and why it is wrong
@@ -118,6 +200,7 @@ class Lesson(BaseModel):
     objectives: list[str] = Field(default_factory=list)
     key_points: list[str] = Field(min_length=1)
     example: LessonExample | None = None
+    visual: LessonVisual | None = None
     misconceptions: list[Misconception] = Field(default_factory=list)
     interview_angle: str = ""
     sources: list[str] = Field(default_factory=list)

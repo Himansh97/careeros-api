@@ -173,11 +173,21 @@ def _terms_from_evidence(profile: Any) -> dict[str, list[dict[str, str]]]:
     return found
 
 
-# The whole diagram vocabulary. Four shapes cover most technical concepts, and
-# a closed set is the point: a concept has to be understood well enough to say
-# which shape it is, and every card then renders in the app's own type and
-# colours rather than as 158 unrelated pictures.
-VISUAL_KINDS = ("flow", "layers", "compare", "cycle")
+# The diagram vocabulary. The first four draw boxes, which is honest only when
+# the content really is a sequence or a set of alternatives — and the first
+# version of this used them for everything, which produced lists laid out
+# sideways with the meaning still entirely in the text.
+#
+# The last four earn their place by carrying meaning in a visual channel:
+# `fanout` diverging lines, `heatmap` opacity as value, `curve` plotted paths
+# with the gap between them shaded, `bars` length as quantity. A diagram is only
+# worth the space when the picture says something the words could not.
+VISUAL_KINDS = ("flow", "layers", "compare", "cycle",
+                "fanout", "heatmap", "curve", "bars")
+
+# Kinds whose payload is a list of nodes, as opposed to the ones that carry
+# their own structure.
+_NODE_KINDS = ("flow", "layers", "compare", "cycle", "fanout", "bars")
 
 # Layers a model wrote, restated from the sourced definition. Named so the UI
 # can label them rather than implying every line carries a citation.
@@ -403,21 +413,88 @@ def check_visual(visual: dict[str, Any] | None) -> dict[str, Any] | None:
     kind = str(visual.get("kind") or "").strip()
     if kind not in VISUAL_KINDS:
         raise ValueError(f"visual kind must be one of {', '.join(VISUAL_KINDS)}")
-    nodes = visual.get("nodes") or []
-    if not isinstance(nodes, list) or not 2 <= len(nodes) <= 6:
+
+    out: dict[str, Any] = {
+        "kind": kind,
+        "caption": str(visual.get("caption") or "").strip()[:160],
+    }
+
+    def nodes_from(raw: Any, *, low: int, high: int, what: str) -> list[dict[str, Any]]:
+        if not isinstance(raw, list) or not low <= len(raw) <= high:
+            raise ValueError(f"{what} needs between {low} and {high} entries")
+        cleaned = []
+        for node in raw:
+            label = str((node or {}).get("label") or "").strip()
+            if not label:
+                raise ValueError(f"every {what} entry needs a label")
+            entry: dict[str, Any] = {
+                "label": label[:60],
+                "note": str((node or {}).get("note") or "").strip()[:120],
+            }
+            tone = str((node or {}).get("tone") or "neutral")
+            if tone not in ("good", "bad", "neutral"):
+                raise ValueError("tone must be good, bad or neutral")
+            entry["tone"] = tone
+            if (node or {}).get("value") is not None:
+                entry["value"] = float(node["value"])
+            cleaned.append(entry)
+        return cleaned
+
+    if kind in _NODE_KINDS:
         # One box is not a diagram and seven is a diagram nobody reads.
-        raise ValueError("a visual needs between 2 and 6 nodes")
-    clean_nodes = []
-    for node in nodes:
-        label = str((node or {}).get("label") or "").strip()
-        if not label:
-            raise ValueError("every visual node needs a label")
-        clean_nodes.append({
-            "label": label[:60],
-            "note": str((node or {}).get("note") or "").strip()[:120],
+        out["nodes"] = nodes_from(visual.get("nodes"), low=2, high=6, what="nodes")
+        if kind == "bars":
+            if any("value" not in n for n in out["nodes"]):
+                # Length is the encoding, so a bar without a number is a box.
+                raise ValueError("every bar needs a value")
+            out["unit"] = str(visual.get("unit") or "")[:8]
+        if kind == "fanout":
+            out["factor"] = max(2, min(6, int(visual.get("factor") or 3)))
+
+    elif kind == "heatmap":
+        rows = [str(r).strip() for r in (visual.get("rows") or []) if str(r).strip()]
+        cols = [str(c).strip() for c in (visual.get("cols") or []) if str(c).strip()]
+        if not rows or not cols:
+            raise ValueError("a heatmap needs row and column labels")
+        cells = nodes_from(visual.get("cells"), low=2, high=36, what="cells")
+        if len(cells) != len(rows) * len(cols):
+            raise ValueError(
+                f"a {len(rows)}x{len(cols)} heatmap needs {len(rows) * len(cols)} "
+                f"cells, got {len(cells)}"
+            )
+        out.update({"rows": rows, "cols": cols, "cells": cells})
+
+    elif kind == "curve":
+        series = visual.get("series") or []
+        if not series:
+            raise ValueError("a curve needs at least one series")
+        clean_series = []
+        for line in series:
+            points = [(float(x), float(y)) for x, y in (line or {}).get("points") or []]
+            if len(points) < 2:
+                raise ValueError("a curve series needs at least two points")
+            for x, y in points:
+                # Unit space, because these are shapes to recognise rather than
+                # measurements — the bias-variance tradeoff has no units, and a
+                # renderer that never scales cannot mis-scale.
+                if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
+                    raise ValueError("curve points must be within 0..1 on both axes")
+            tone = str((line or {}).get("tone") or "neutral")
+            if tone not in ("good", "bad", "neutral"):
+                raise ValueError("tone must be good, bad or neutral")
+            clean_series.append({
+                "label": str((line or {}).get("label") or "").strip()[:40],
+                "points": points,
+                "tone": tone,
+            })
+        out.update({
+            "series": clean_series,
+            "xLabel": str(visual.get("xLabel") or "")[:40],
+            "yLabel": str(visual.get("yLabel") or "")[:40],
+            "shadeGap": bool(visual.get("shadeGap")),
         })
-    return {"kind": kind, "caption": str(visual.get("caption") or "").strip()[:160],
-            "nodes": clean_nodes}
+
+    return out
 
 
 def save_note(

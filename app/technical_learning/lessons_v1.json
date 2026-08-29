@@ -49,7 +49,33 @@
    "sources": [
     "https://en.wikipedia.org/wiki/Granularity",
     "https://en.wikipedia.org/wiki/Join_(SQL)"
-   ]
+   ],
+   "visual": {
+    "kind": "flow",
+    "caption": "Each join step, and what one row means after it",
+    "nodes": [
+     {
+      "label": "loans",
+      "note": "24 rows \u2014 one per loan",
+      "tone": "good"
+     },
+     {
+      "label": "JOIN payments",
+      "note": "one row per payment now",
+      "tone": "bad"
+     },
+     {
+      "label": "72 rows",
+      "note": "principal repeated 3x on average",
+      "tone": "bad"
+     },
+     {
+      "label": "GROUP BY loan_id",
+      "note": "grain restored deliberately",
+      "tone": "good"
+     }
+    ]
+   }
   },
   {
    "id": "sql-null-logic",
@@ -101,7 +127,77 @@
    "sources": [
     "https://en.wikipedia.org/wiki/Null_(SQL)",
     "https://en.wikipedia.org/wiki/Three-valued_logic"
-   ]
+   ],
+   "visual": {
+    "kind": "heatmap",
+    "caption": "Three-valued logic: what WHERE keeps",
+    "rows": [
+     "x = 5",
+     "x != 5",
+     "x IS NULL"
+    ],
+    "cols": [
+     "x = 5",
+     "x = 9",
+     "x IS NULL"
+    ],
+    "cells": [
+     {
+      "label": "TRUE",
+      "note": "kept",
+      "tone": "good",
+      "value": 1.0
+     },
+     {
+      "label": "FALSE",
+      "note": "dropped",
+      "tone": "bad",
+      "value": 1.0
+     },
+     {
+      "label": "UNKNOWN",
+      "note": "dropped",
+      "tone": "bad",
+      "value": 1.0
+     },
+     {
+      "label": "FALSE",
+      "note": "dropped",
+      "tone": "bad",
+      "value": 1.0
+     },
+     {
+      "label": "TRUE",
+      "note": "kept",
+      "tone": "good",
+      "value": 1.0
+     },
+     {
+      "label": "UNKNOWN",
+      "note": "dropped",
+      "tone": "bad",
+      "value": 1.0
+     },
+     {
+      "label": "FALSE",
+      "note": "dropped",
+      "tone": "bad",
+      "value": 1.0
+     },
+     {
+      "label": "FALSE",
+      "note": "dropped",
+      "tone": "bad",
+      "value": 1.0
+     },
+     {
+      "label": "TRUE",
+      "note": "kept",
+      "tone": "good",
+      "value": 1.0
+     }
+    ]
+   }
   },
   {
    "id": "sql-joins",
@@ -149,7 +245,33 @@
    "sources": [
     "https://en.wikipedia.org/wiki/Join_(SQL)",
     "https://en.wikipedia.org/wiki/Relational_algebra"
-   ]
+   ],
+   "visual": {
+    "kind": "compare",
+    "caption": "Four questions, four joins",
+    "nodes": [
+     {
+      "label": "INNER",
+      "note": "rows matching on both sides",
+      "tone": "neutral"
+     },
+     {
+      "label": "LEFT",
+      "note": "all left rows, right filled with NULL",
+      "tone": "neutral"
+     },
+     {
+      "label": "SEMI / EXISTS",
+      "note": "left rows that have a match \u2014 cannot duplicate",
+      "tone": "good"
+     },
+     {
+      "label": "ANTI / NOT EXISTS",
+      "note": "left rows with no match",
+      "tone": "good"
+     }
+    ]
+   }
   },
   {
    "id": "sql-aggregation",
@@ -196,7 +318,38 @@
    "sources": [
     "https://en.wikipedia.org/wiki/SQL",
     "https://en.wikipedia.org/wiki/Aggregate_function"
-   ]
+   ],
+   "visual": {
+    "kind": "flow",
+    "caption": "Where each clause runs, and why HAVING is not WHERE",
+    "nodes": [
+     {
+      "label": "FROM / JOIN",
+      "note": "rows assembled",
+      "tone": "neutral"
+     },
+     {
+      "label": "WHERE",
+      "note": "filters rows \u2014 cheap, before grouping",
+      "tone": "good"
+     },
+     {
+      "label": "GROUP BY",
+      "note": "grain changes here",
+      "tone": "neutral"
+     },
+     {
+      "label": "HAVING",
+      "note": "filters groups \u2014 can see aggregates",
+      "tone": "neutral"
+     },
+     {
+      "label": "SELECT",
+      "note": "aggregates computed",
+      "tone": "neutral"
+     }
+    ]
+   }
   },
   {
    "id": "sql-windows",
@@ -247,7 +400,28 @@
    "interview_angle": "'Top 3 per category' and 'month-over-month change' are the two most common SQL screening questions above the beginner level, and both are one window function. Being able to say why the filter has to move to an outer query is the part that separates answers.",
    "sources": [
     "https://en.wikipedia.org/wiki/Window_function_(SQL)"
-   ]
+   ],
+   "visual": {
+    "kind": "compare",
+    "caption": "Same aggregate, two behaviours",
+    "nodes": [
+     {
+      "label": "GROUP BY",
+      "note": "collapses many rows into one",
+      "tone": "neutral"
+     },
+     {
+      "label": "OVER ()",
+      "note": "computes across rows and keeps every one",
+      "tone": "good"
+     },
+     {
+      "label": "The consequence",
+      "note": "filtering a window needs an outer query",
+      "tone": "neutral"
+     }
+    ]
+   }
   },
   {
    "id": "sql-indexes",
@@ -297,7 +471,59 @@
     "https://en.wikipedia.org/wiki/Database_index",
     "https://en.wikipedia.org/wiki/Query_plan",
     "https://en.wikipedia.org/wiki/Query_optimization"
-   ]
+   ],
+   "visual": {
+    "kind": "curve",
+    "caption": "Why the shape matters only at scale",
+    "x_label": "rows in the table",
+    "y_label": "time to answer",
+    "series": [
+     {
+      "label": "full scan",
+      "points": [
+       [
+        0,
+        0.02
+       ],
+       [
+        0.3,
+        0.3
+       ],
+       [
+        0.6,
+        0.6
+       ],
+       [
+        1,
+        1
+       ]
+      ],
+      "tone": "bad"
+     },
+     {
+      "label": "index seek",
+      "points": [
+       [
+        0,
+        0.02
+       ],
+       [
+        0.3,
+        0.07
+       ],
+       [
+        0.6,
+        0.1
+       ],
+       [
+        1,
+        0.13
+       ]
+      ],
+      "tone": "good"
+     }
+    ]
+   }
   },
   {
    "id": "llm-tokens",
@@ -345,7 +571,33 @@
    "sources": [
     "https://en.wikipedia.org/wiki/Byte_pair_encoding",
     "https://www.ibm.com/think/topics/tokenization"
-   ]
+   ],
+   "visual": {
+    "kind": "flow",
+    "caption": "What the model actually receives",
+    "nodes": [
+     {
+      "label": "characters",
+      "note": "s-t-r-a-w-b-e-r-r-y",
+      "tone": "neutral"
+     },
+     {
+      "label": "tokenizer",
+      "note": "merges frequent pairs",
+      "tone": "neutral"
+     },
+     {
+      "label": "tokens",
+      "note": "'straw' + 'berry' \u2014 two units",
+      "tone": "good"
+     },
+     {
+      "label": "the model",
+      "note": "never sees the letters",
+      "tone": "bad"
+     }
+    ]
+   }
   },
   {
    "id": "llm-embeddings",
@@ -396,7 +648,28 @@
     "https://en.wikipedia.org/wiki/Word_embedding",
     "https://www.ibm.com/think/topics/embedding",
     "https://en.wikipedia.org/wiki/Cosine_similarity"
-   ]
+   ],
+   "visual": {
+    "kind": "compare",
+    "caption": "Two searches, opposite strengths",
+    "nodes": [
+     {
+      "label": "semantic",
+      "note": "'cancel' finds 'terminate' \u2014 paraphrase",
+      "tone": "good"
+     },
+     {
+      "label": "keyword",
+      "note": "finds 'BX-4471' exactly",
+      "tone": "good"
+     },
+     {
+      "label": "hybrid",
+      "note": "both, which is what production uses",
+      "tone": "neutral"
+     }
+    ]
+   }
   },
   {
    "id": "llm-attention",
@@ -448,7 +721,60 @@
     "https://www.ibm.com/think/topics/attention-mechanism",
     "https://www.ibm.com/think/topics/transformer-model",
     "https://arxiv.org/abs/1706.03762"
-   ]
+   ],
+   "visual": {
+    "kind": "heatmap",
+    "caption": "Where 'it' looks \u2014 a self-attention row",
+    "rows": [
+     "query: 'it'"
+    ],
+    "cols": [
+     "The",
+     "loan",
+     "was",
+     "denied",
+     "because",
+     "it"
+    ],
+    "cells": [
+     {
+      "label": "0.02",
+      "note": "",
+      "tone": "neutral",
+      "value": 0.15
+     },
+     {
+      "label": "0.71",
+      "note": "resolves the reference",
+      "tone": "good",
+      "value": 1.0
+     },
+     {
+      "label": "0.03",
+      "note": "",
+      "tone": "neutral",
+      "value": 0.15
+     },
+     {
+      "label": "0.09",
+      "note": "",
+      "tone": "neutral",
+      "value": 0.15
+     },
+     {
+      "label": "0.04",
+      "note": "",
+      "tone": "neutral",
+      "value": 0.15
+     },
+     {
+      "label": "0.11",
+      "note": "itself",
+      "tone": "neutral",
+      "value": 0.15
+     }
+    ]
+   }
   },
   {
    "id": "llm-prompting",
@@ -499,7 +825,28 @@
    "sources": [
     "https://www.ibm.com/think/topics/prompt-engineering",
     "https://en.wikipedia.org/wiki/Prompt_engineering"
-   ]
+   ],
+   "visual": {
+    "kind": "layers",
+    "caption": "Three levers, cheapest first",
+    "nodes": [
+     {
+      "label": "prompt",
+      "note": "change the input \u2014 instant, reversible",
+      "tone": "good"
+     },
+     {
+      "label": "retrieval",
+      "note": "change what it can see",
+      "tone": "neutral"
+     },
+     {
+      "label": "fine-tune",
+      "note": "change the weights \u2014 slow, sticky",
+      "tone": "bad"
+     }
+    ]
+   }
   },
   {
    "id": "llm-rag",
@@ -552,7 +899,33 @@
     "https://www.ibm.com/think/topics/retrieval-augmented-generation",
     "https://arxiv.org/abs/2005.11401",
     "https://www.ibm.com/think/topics/chunking"
-   ]
+   ],
+   "visual": {
+    "kind": "flow",
+    "caption": "Retrieve, then write \u2014 and where it goes wrong",
+    "nodes": [
+     {
+      "label": "question",
+      "note": "",
+      "tone": "neutral"
+     },
+     {
+      "label": "retrieve",
+      "note": "the step that fails silently",
+      "tone": "bad"
+     },
+     {
+      "label": "augment",
+      "note": "passages into the prompt",
+      "tone": "neutral"
+     },
+     {
+      "label": "generate",
+      "note": "answers faithfully from whatever it was handed",
+      "tone": "neutral"
+     }
+    ]
+   }
   },
   {
    "id": "llm-evals",
@@ -603,7 +976,33 @@
    "sources": [
     "https://www.ibm.com/think/topics/llm-evaluation",
     "https://www.ibm.com/think/topics/ai-hallucinations"
-   ]
+   ],
+   "visual": {
+    "kind": "cycle",
+    "caption": "A failure becomes a case, permanently",
+    "nodes": [
+     {
+      "label": "ship",
+      "note": "",
+      "tone": "neutral"
+     },
+     {
+      "label": "observe a failure",
+      "note": "in production",
+      "tone": "bad"
+     },
+     {
+      "label": "add it as a case",
+      "note": "the suite grows where you are weak",
+      "tone": "good"
+     },
+     {
+      "label": "run the suite",
+      "note": "before every change",
+      "tone": "neutral"
+     }
+    ]
+   }
   },
   {
    "id": "stats-sampling",
@@ -652,7 +1051,41 @@
     "https://en.wikipedia.org/wiki/Sampling_(statistics)",
     "https://en.wikipedia.org/wiki/Central_limit_theorem",
     "https://en.wikipedia.org/wiki/Standard_error"
-   ]
+   ],
+   "visual": {
+    "kind": "curve",
+    "caption": "Precision gets expensive: error falls with the square root of n",
+    "x_label": "sample size",
+    "y_label": "standard error",
+    "series": [
+     {
+      "label": "standard error",
+      "points": [
+       [
+        0.02,
+        1.0
+       ],
+       [
+        0.1,
+        0.45
+       ],
+       [
+        0.25,
+        0.29
+       ],
+       [
+        0.5,
+        0.2
+       ],
+       [
+        1,
+        0.14
+       ]
+      ],
+      "tone": "neutral"
+     }
+    ]
+   }
   },
   {
    "id": "stats-intervals",
@@ -698,7 +1131,28 @@
    "sources": [
     "https://en.wikipedia.org/wiki/Confidence_interval",
     "https://en.wikipedia.org/wiki/Statistical_inference"
-   ]
+   ],
+   "visual": {
+    "kind": "compare",
+    "caption": "Same point estimate, different answers",
+    "nodes": [
+     {
+      "label": "1,150 \u2013 1,250",
+      "note": "narrow \u2014 supports a staffing decision",
+      "tone": "good"
+     },
+     {
+      "label": "point: 1,200",
+      "note": "identical in both",
+      "tone": "neutral"
+     },
+     {
+      "label": "600 \u2013 1,800",
+      "note": "wide \u2014 says you do not know yet",
+      "tone": "bad"
+     }
+    ]
+   }
   },
   {
    "id": "stats-testing",
@@ -749,7 +1203,45 @@
    "sources": [
     "https://en.wikipedia.org/wiki/Statistical_hypothesis_test",
     "https://en.wikipedia.org/wiki/Statistical_power"
-   ]
+   ],
+   "visual": {
+    "kind": "heatmap",
+    "caption": "The two errors, and which one you chose",
+    "rows": [
+     "reject null",
+     "fail to reject"
+    ],
+    "cols": [
+     "null is true",
+     "null is false"
+    ],
+    "cells": [
+     {
+      "label": "Type I",
+      "note": "false alarm \u2014 the rate you set",
+      "tone": "bad",
+      "value": 1.0
+     },
+     {
+      "label": "correct",
+      "note": "the effect was detected",
+      "tone": "good",
+      "value": 1.0
+     },
+     {
+      "label": "correct",
+      "note": "no effect, none claimed",
+      "tone": "good",
+      "value": 1.0
+     },
+     {
+      "label": "Type II",
+      "note": "missed a real effect \u2014 power",
+      "tone": "bad",
+      "value": 1.0
+     }
+    ]
+   }
   },
   {
    "id": "stats-regression",
@@ -800,7 +1292,33 @@
    "sources": [
     "https://en.wikipedia.org/wiki/Linear_regression",
     "https://en.wikipedia.org/wiki/Logistic_regression"
-   ]
+   ],
+   "visual": {
+    "kind": "flow",
+    "caption": "Why a coefficient moves when you add a variable",
+    "nodes": [
+     {
+      "label": "FICO alone",
+      "note": "large coefficient",
+      "tone": "bad"
+     },
+     {
+      "label": "+ loan-to-value",
+      "note": "shrinks \u2014 LTV was in there",
+      "tone": "neutral"
+     },
+     {
+      "label": "+ product",
+      "note": "moves again",
+      "tone": "neutral"
+     },
+     {
+      "label": "'holding others fixed'",
+      "note": "a claim about this model, not the world",
+      "tone": "good"
+     }
+    ]
+   }
   },
   {
    "id": "stats-experiments",
@@ -848,7 +1366,33 @@
     "https://en.wikipedia.org/wiki/Design_of_experiments",
     "https://en.wikipedia.org/wiki/A/B_testing",
     "https://en.wikipedia.org/wiki/Statistical_power"
-   ]
+   ],
+   "visual": {
+    "kind": "flow",
+    "caption": "Decide everything before the data arrives",
+    "nodes": [
+     {
+      "label": "metric",
+      "note": "fixed in advance",
+      "tone": "good"
+     },
+     {
+      "label": "unit",
+      "note": "match it to the interference",
+      "tone": "neutral"
+     },
+     {
+      "label": "sample size",
+      "note": "from the effect worth detecting",
+      "tone": "neutral"
+     },
+     {
+      "label": "horizon",
+      "note": "fixed \u2014 stopping early inflates false positives",
+      "tone": "bad"
+     }
+    ]
+   }
   },
   {
    "id": "stats-causality",
@@ -896,7 +1440,28 @@
     "https://en.wikipedia.org/wiki/Causal_inference",
     "https://en.wikipedia.org/wiki/Confounding",
     "https://en.wikipedia.org/wiki/Survivorship_bias"
-   ]
+   ],
+   "visual": {
+    "kind": "compare",
+    "caption": "Three variables, three opposite actions",
+    "nodes": [
+     {
+      "label": "confounder",
+      "note": "causes both \u2014 adjust for it",
+      "tone": "good"
+     },
+     {
+      "label": "mediator",
+      "note": "on the path \u2014 adjusting removes the effect",
+      "tone": "bad"
+     },
+     {
+      "label": "collider",
+      "note": "caused by both \u2014 adjusting invents an effect",
+      "tone": "bad"
+     }
+    ]
+   }
   },
   {
    "id": "ml-framing",
@@ -941,7 +1506,33 @@
     "https://en.wikipedia.org/wiki/Supervised_learning",
     "https://en.wikipedia.org/wiki/Leakage_(machine_learning)",
     "https://en.wikipedia.org/wiki/Training,_validation,_and_test_data_sets"
-   ]
+   ],
+   "visual": {
+    "kind": "flow",
+    "caption": "The moment that defines every feature",
+    "nodes": [
+     {
+      "label": "prediction time",
+      "note": "what is knowable now",
+      "tone": "good"
+     },
+     {
+      "label": "features",
+      "note": "must all exist at that moment",
+      "tone": "neutral"
+     },
+     {
+      "label": "outcome",
+      "note": "observed later",
+      "tone": "neutral"
+     },
+     {
+      "label": "leak",
+      "note": "a feature updated after the outcome",
+      "tone": "bad"
+     }
+    ]
+   }
   },
   {
    "id": "ml-fit",
@@ -987,7 +1578,63 @@
    "sources": [
     "https://en.wikipedia.org/wiki/Overfitting",
     "https://www.ibm.com/think/topics/overfitting"
-   ]
+   ],
+   "visual": {
+    "kind": "curve",
+    "caption": "The gap between the two lines is the diagnosis",
+    "x_label": "model capacity",
+    "y_label": "error",
+    "series": [
+     {
+      "label": "training error",
+      "points": [
+       [
+        0,
+        0.9
+       ],
+       [
+        0.3,
+        0.45
+       ],
+       [
+        0.6,
+        0.2
+       ],
+       [
+        1,
+        0.04
+       ]
+      ],
+      "tone": "neutral"
+     },
+     {
+      "label": "validation error",
+      "points": [
+       [
+        0,
+        0.92
+       ],
+       [
+        0.3,
+        0.5
+       ],
+       [
+        0.55,
+        0.35
+       ],
+       [
+        0.75,
+        0.5
+       ],
+       [
+        1,
+        0.8
+       ]
+      ],
+      "tone": "bad"
+     }
+    ]
+   }
   },
   {
    "id": "ml-metrics",
@@ -1033,7 +1680,45 @@
    "sources": [
     "https://en.wikipedia.org/wiki/Precision_and_recall",
     "https://en.wikipedia.org/wiki/Receiver_operating_characteristic"
-   ]
+   ],
+   "visual": {
+    "kind": "heatmap",
+    "caption": "Everything else is a summary of this",
+    "rows": [
+     "predicted positive",
+     "predicted negative"
+    ],
+    "cols": [
+     "actually positive",
+     "actually negative"
+    ],
+    "cells": [
+     {
+      "label": "true positive",
+      "note": "caught it",
+      "tone": "good",
+      "value": 1.0
+     },
+     {
+      "label": "false positive",
+      "note": "false alarm \u2014 costs precision",
+      "tone": "bad",
+      "value": 1.0
+     },
+     {
+      "label": "false negative",
+      "note": "missed it \u2014 costs recall",
+      "tone": "bad",
+      "value": 1.0
+     },
+     {
+      "label": "true negative",
+      "note": "correctly ignored",
+      "tone": "good",
+      "value": 1.0
+     }
+    ]
+   }
   },
   {
    "id": "ml-trees",
@@ -1081,7 +1766,28 @@
     "https://en.wikipedia.org/wiki/Decision_tree_learning",
     "https://en.wikipedia.org/wiki/Random_forest",
     "https://en.wikipedia.org/wiki/Gradient_boosting"
-   ]
+   ],
+   "visual": {
+    "kind": "compare",
+    "caption": "Two ways to combine many trees",
+    "nodes": [
+     {
+      "label": "bagging",
+      "note": "independent trees, averaged \u2014 cuts variance",
+      "tone": "neutral"
+     },
+     {
+      "label": "boosting",
+      "note": "each fits the last one's errors \u2014 cuts bias too",
+      "tone": "good"
+     },
+     {
+      "label": "either way",
+      "note": "no scaling needed, interactions found automatically",
+      "tone": "neutral"
+     }
+    ]
+   }
   },
   {
    "id": "ml-imbalance",
@@ -1127,7 +1833,28 @@
    "sources": [
     "https://en.wikipedia.org/wiki/Oversampling_and_undersampling_in_data_analysis",
     "https://en.wikipedia.org/wiki/Precision_and_recall"
-   ]
+   ],
+   "visual": {
+    "kind": "compare",
+    "caption": "What each fix costs you",
+    "nodes": [
+     {
+      "label": "class weights",
+      "note": "nothing invented or discarded",
+      "tone": "good"
+     },
+     {
+      "label": "oversampling",
+      "note": "risks memorising the few positives",
+      "tone": "bad"
+     },
+     {
+      "label": "any resampling",
+      "note": "breaks probability calibration",
+      "tone": "bad"
+     }
+    ]
+   }
   },
   {
    "id": "ml-production",
@@ -1173,7 +1900,33 @@
    "sources": [
     "https://en.wikipedia.org/wiki/Concept_drift",
     "https://www.ibm.com/think/topics/data-drift"
-   ]
+   ],
+   "visual": {
+    "kind": "cycle",
+    "caption": "Monitoring inputs, because labels arrive late",
+    "nodes": [
+     {
+      "label": "serve",
+      "note": "",
+      "tone": "neutral"
+     },
+     {
+      "label": "watch inputs",
+      "note": "drift shows here first",
+      "tone": "good"
+     },
+     {
+      "label": "watch outputs",
+      "note": "score distribution shifts",
+      "tone": "neutral"
+     },
+     {
+      "label": "labels arrive",
+      "note": "months later \u2014 too late to be the alarm",
+      "tone": "bad"
+     }
+    ]
+   }
   },
   {
    "id": "py-complexity",
