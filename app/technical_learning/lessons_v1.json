@@ -298,6 +298,312 @@
     "https://en.wikipedia.org/wiki/Query_plan",
     "https://en.wikipedia.org/wiki/Query_optimization"
    ]
+  },
+  {
+   "id": "llm-tokens",
+   "title": "Tokens: the unit the model actually sees",
+   "track": "llm",
+   "skill": "llm",
+   "concept": "tokenization",
+   "level": "foundation",
+   "order": 1,
+   "prerequisites": [],
+   "hook": "A model does not read characters and does not read words. It reads tokens, and almost every surprising behaviour \u2014 the cost of a call, why it miscounts letters, why some languages cost triple \u2014 falls out of that one fact.",
+   "objectives": [
+    "Explain what a token is and why it is neither a character nor a word",
+    "Predict roughly what a piece of text costs before sending it",
+    "Say why a model struggles with character-level tasks"
+   ],
+   "key_points": [
+    "A token is a chunk of text from a fixed vocabulary learned before training. Common words are usually one token; rare words split into several.",
+    "Modern models use subword tokenisation, typically byte-pair encoding or a variant: start from characters and repeatedly merge the most frequent adjacent pair until the vocabulary is full.",
+    "Subword tokenisation exists to solve two problems at once \u2014 a fixed vocabulary that never meets an unknown word, and a sequence length short enough to be tractable.",
+    "For English prose a token is roughly four characters, so about 0.75 words. That ratio is a rule of thumb, not a rule: code, JSON, names and non-Latin scripts all tokenise worse.",
+    "Billing, rate limits and the context window are all counted in tokens, not words \u2014 so the same paragraph in Hindi or Japanese can cost several times what it costs in English.",
+    "The model never sees the letters inside a token. That is why counting the r's in a word is genuinely hard for it, and why it is not a sign of poor reasoning.",
+    "Tokenisation is fixed at training time. You cannot change it with a prompt, and the same string always produces the same tokens for a given model."
+   ],
+   "example": {
+    "caption": "Why 'strawberry' is hard and 'the' is easy",
+    "body": "A frequent word like 'the' is one token \u2014 the model has a single vector for it. 'strawberry' typically splits into pieces such as 'straw' and 'berry'. The model sees two chunks, not ten letters, so asking how many r's it contains is asking it to report on something it never received. Meanwhile a JSON blob full of braces, quotes and field names tokenises far worse than the same information in prose, which is a real and often-overlooked cost."
+   },
+   "misconceptions": [
+    {
+     "claim": "A token is a word.",
+     "correction": "Only for common words. Rare words, names, code and any non-English script routinely split into several tokens each."
+    },
+    {
+     "claim": "The model is bad at spelling because it is not smart enough.",
+     "correction": "It is a representation problem, not a reasoning one. Character-level detail is discarded before the model ever sees the input."
+    },
+    {
+     "claim": "Token counts are the same across models.",
+     "correction": "Each model family has its own vocabulary, so the same text can differ substantially in token count between them."
+    }
+   ],
+   "interview_angle": "'Why is this API call expensive' and 'why can't it count letters' are both tokenisation questions. Knowing the ~4-characters rule of thumb and that non-English costs more is the practical half.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Byte_pair_encoding",
+    "https://www.ibm.com/think/topics/tokenization"
+   ]
+  },
+  {
+   "id": "llm-embeddings",
+   "title": "Embeddings: meaning as coordinates",
+   "track": "llm",
+   "skill": "llm",
+   "concept": "embeddings",
+   "level": "foundation",
+   "order": 2,
+   "prerequisites": [
+    "llm-tokens"
+   ],
+   "hook": "Once text is a list of numbers positioned so that similar meanings sit close together, 'do these two sentences mean the same thing' becomes 'how far apart are they' \u2014 a question a computer can answer exactly.",
+   "objectives": [
+    "Explain what an embedding is and what the distance between two of them means",
+    "Say why cosine similarity is the usual measure",
+    "Recognise when semantic search beats keyword search, and when it does not"
+   ],
+   "key_points": [
+    "An embedding is a fixed-length vector representing a piece of text, produced by a model trained so that semantically similar inputs land near each other.",
+    "Similarity is usually measured by cosine similarity \u2014 the angle between two vectors \u2014 rather than straight-line distance, because it compares direction and ignores magnitude.",
+    "The dimensions are learned, not designed. No single dimension means 'formality' or 'topic'; meaning is distributed across all of them, which is why an embedding cannot be read.",
+    "Embeddings are model-specific. Vectors from two different models are not comparable, and re-embedding an entire corpus is the real cost of changing model.",
+    "Semantic search finds text that means the same thing in different words; keyword search finds exact terms. Each fails where the other works \u2014 an exact product code is a keyword problem.",
+    "Hybrid retrieval combines both, and in practice usually beats either alone.",
+    "An embedding of a long document is an average of everything in it, so distinct topics blur together. That is the argument for chunking before embedding."
+   ],
+   "example": {
+    "caption": "Why 'how do I cancel' matches 'terminating your subscription'",
+    "body": "Neither phrase shares a content word with the other, so keyword search scores them at zero. Their embeddings sit close because the training data contained enough examples of the two being used in the same situations. Now flip it: search for the part number 'BX-4471'. Semantic search returns a spread of plausible-looking part numbers, all wrong, with high confidence \u2014 because to an embedding model those strings genuinely are similar. Keyword search finds it instantly."
+   },
+   "misconceptions": [
+    {
+     "claim": "A high cosine similarity means the two texts say the same thing.",
+     "correction": "It means they are used in similar contexts. 'I loved it' and 'I hated it' can score high, because opposites appear in near-identical surroundings."
+    },
+    {
+     "claim": "You can compare embeddings from different models.",
+     "correction": "The vector spaces are unrelated. Distances between them are meaningless."
+    },
+    {
+     "claim": "Embeddings replace keyword search.",
+     "correction": "They are worse at exact identifiers, codes, names and rare terms \u2014 which is why serious systems run both."
+    }
+   ],
+   "interview_angle": "Usually reached through RAG: 'how would you find the relevant documents'. Naming the failure mode \u2014 exact identifiers \u2014 is what shows you have actually run one.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Word_embedding",
+    "https://www.ibm.com/think/topics/embedding",
+    "https://en.wikipedia.org/wiki/Cosine_similarity"
+   ]
+  },
+  {
+   "id": "llm-attention",
+   "title": "Attention: how a model decides what matters",
+   "track": "llm",
+   "skill": "llm",
+   "concept": "attention",
+   "level": "working",
+   "order": 3,
+   "prerequisites": [
+    "llm-embeddings"
+   ],
+   "hook": "When you read 'it' in a sentence, you look back to work out what it refers to. Attention is the model doing that for every position at once, and learning how hard to look at each one. It is the mechanism the whole transformer is built around.",
+   "objectives": [
+    "Explain self-attention in terms of queries, keys and values",
+    "Say why attention replaced recurrence for long sequences",
+    "Explain where the quadratic cost comes from and what it implies"
+   ],
+   "key_points": [
+    "Attention lets every position in a sequence look at every other position and weight how relevant each one is to it, rather than compressing the past into a single fixed-size state.",
+    "Each position produces three vectors: a query \u2014 what am I looking for, a key \u2014 what do I offer, and a value \u2014 what I pass on if attended to.",
+    "A position's output is a weighted sum of all the values, where the weights come from comparing its query against every key and normalising through a softmax so they sum to one.",
+    "Self-attention means the queries, keys and values all come from the same sequence \u2014 the sentence attending to itself. That is what resolves 'it' to a noun forty words earlier.",
+    "Multi-head attention runs several attention operations in parallel on different learned projections, so one head can track syntax while another tracks reference.",
+    "Because every position compares against every other, cost grows with the square of sequence length. Doubling the context quadruples the work.",
+    "Attention has no inherent notion of order \u2014 it sees a set, not a sequence \u2014 so position must be added separately through positional encoding.",
+    "This replaced recurrent models, which had to carry information forward step by step and lost it over distance. The 2017 paper introducing the transformer is titled 'Attention Is All You Need' for that reason."
+   ],
+   "example": {
+    "caption": "'The loan was denied because it was incomplete' \u2014 what does 'it' attend to?",
+    "body": "A recurrent model reads left to right, compressing everything seen so far into one state; by the time it reaches 'it', 'loan' and 'application' are blurred together in that state. Self-attention instead lets the position holding 'it' compare directly against every earlier position and put most of its weight on the one that resolves the reference. Nothing was compressed and nothing had to survive a journey \u2014 which is exactly why long-range dependencies stopped being the hard case."
+   },
+   "misconceptions": [
+    {
+     "claim": "Attention weights are an explanation of the model's reasoning.",
+     "correction": "They show where information was drawn from, not why an output was produced. Treating them as explanations is a well-known overreach."
+    },
+    {
+     "claim": "Transformers process text sequentially like earlier models.",
+     "correction": "All positions are processed in parallel. That parallelism is what made training at this scale practical, and it is why order has to be injected separately."
+    },
+    {
+     "claim": "A bigger context window is free.",
+     "correction": "Attention cost is quadratic in length, which is why long context is expensive and why most efficiency research targets exactly this."
+    }
+   ],
+   "interview_angle": "'Explain attention' is a standard opener for any AI-adjacent role. Queries, keys and values plus the quadratic cost is a complete answer; reciting the softmax formula without the intuition is not.",
+   "sources": [
+    "https://www.ibm.com/think/topics/attention-mechanism",
+    "https://www.ibm.com/think/topics/transformer-model",
+    "https://arxiv.org/abs/1706.03762"
+   ]
+  },
+  {
+   "id": "llm-prompting",
+   "title": "Prompting: the cheapest place to change behaviour",
+   "track": "llm",
+   "skill": "llm",
+   "concept": "prompting",
+   "level": "working",
+   "order": 4,
+   "prerequisites": [
+    "llm-tokens"
+   ],
+   "hook": "There are three ways to change what a model does \u2014 change the input, change what it can see, or change its weights. Prompting is the first, and it is instant, reversible and free, which is why it should almost always be tried first.",
+   "objectives": [
+    "Structure a prompt so the important instruction is actually followed",
+    "Choose between zero-shot, few-shot and decomposition",
+    "Say what a prompt fundamentally cannot fix"
+   ],
+   "key_points": [
+    "Prompting shapes behaviour through the input alone, leaving the weights untouched. It is the cheapest of the three levers and the only one that is instantly reversible.",
+    "Being specific about the task, the format and the audience does more than any phrasing trick. Most apparent capability gaps are underspecified requests.",
+    "Few-shot prompting \u2014 showing worked examples in the prompt \u2014 teaches format and edge-case handling far more reliably than describing them in prose.",
+    "Asking for reasoning before the answer improves multi-step tasks, because the model conditions each token on what it has already produced; an answer given first cannot be reasoned toward.",
+    "Decomposing a hard task into several calls usually beats one elaborate prompt, and each step becomes separately testable.",
+    "Constraining the output shape \u2014 a schema, an enum, a strict JSON format \u2014 removes a whole class of parsing failure and makes the result checkable.",
+    "A prompt cannot supply a fact the model was never given. If the answer depends on current or private information, no rewording produces it \u2014 that is what retrieval is for.",
+    "Prompts are brittle across models and across versions. What works on one model is a starting point on another, not a solution."
+   ],
+   "example": {
+    "caption": "The same request, twice",
+    "body": "'Summarise this document' gives you an unpredictable length in an unpredictable register. 'In three bullet points, each under twenty words, summarise what this loan file says about the borrower's income \u2014 for a credit analyst deciding whether to request more documentation' gives you something usable. Nothing clever happened. The task, the format, the audience and the decision were named, and each one removed a degree of freedom the model would otherwise have guessed at."
+   },
+   "misconceptions": [
+    {
+     "claim": "There are magic phrases that unlock better performance.",
+     "correction": "Specificity, examples and structure do the work. Incantations mostly move results within noise."
+    },
+    {
+     "claim": "A longer prompt is a better prompt.",
+     "correction": "Filling the window dilutes the material that matters; relevant content competes with everything else for attention."
+    },
+    {
+     "claim": "If prompting fails, fine-tune.",
+     "correction": "Usually the next step is retrieval. Fine-tuning teaches form and style; it is a poor and expensive way to teach facts."
+    }
+   ],
+   "interview_angle": "Often 'how would you improve this output'. The strong answer names the ladder \u2014 prompt, then retrieval, then fine-tuning \u2014 and explains why you climb it in that order.",
+   "sources": [
+    "https://www.ibm.com/think/topics/prompt-engineering",
+    "https://en.wikipedia.org/wiki/Prompt_engineering"
+   ]
+  },
+  {
+   "id": "llm-rag",
+   "title": "RAG: giving the model the page before it answers",
+   "track": "llm",
+   "skill": "llm",
+   "concept": "rag",
+   "level": "interview",
+   "order": 5,
+   "prerequisites": [
+    "llm-embeddings",
+    "llm-prompting"
+   ],
+   "hook": "A model's weights are frozen at training time and carry no citation. Retrieval puts a search step in front of generation so the answer is written from documents you chose \u2014 which changes where the failure lives rather than removing it.",
+   "objectives": [
+    "Describe the retrieval pipeline end to end",
+    "Explain why chunking strategy decides retrieval quality",
+    "Say how you would evaluate a RAG system, and what you would measure separately"
+   ],
+   "key_points": [
+    "Retrieval-augmented generation retrieves relevant documents for a query and places them in the prompt, so the answer is grounded in supplied text rather than in memorised weights.",
+    "It addresses three limits at once: knowledge frozen at training time, no access to private data, and no citation for what is asserted.",
+    "Documents are split into chunks before embedding, because an embedding of a long document averages everything in it and blurs distinct topics together.",
+    "Chunking strategy is the highest-leverage decision in the pipeline. Too small and a chunk loses the context that made it meaningful; too large and retrieval returns mostly irrelevant text. Overlapping chunks reduce the risk of splitting an answer in half.",
+    "Reranking is a second, more expensive pass over the top candidates from cheap vector search. It substantially improves precision and is often the difference between a demo and something usable.",
+    "Hybrid retrieval \u2014 vector plus keyword \u2014 beats either alone, because embeddings are weak on exact identifiers and keyword search is weak on paraphrase.",
+    "The failure mode moves rather than disappearing: retrieve the wrong passage and the model will answer confidently and fluently from it.",
+    "Retrieval and generation must be evaluated separately. If you only measure the final answer you cannot tell whether a bad answer came from bad retrieval or bad generation, and they have completely different fixes."
+   ],
+   "example": {
+    "caption": "Where a RAG answer actually goes wrong",
+    "body": "A user asks about the escrow policy. The retriever returns a chunk from last year's version of the policy document, because it is textually near-identical to this year's. The generator does its job perfectly: it answers accurately from the passage it was handed. The output is fluent, confident, cites a real document, and is wrong. No amount of prompt work fixes it \u2014 the defect is upstream, in retrieval, which is precisely why the two halves get measured separately."
+   },
+   "misconceptions": [
+    {
+     "claim": "RAG stops hallucination.",
+     "correction": "It reduces invention from nothing and introduces confident answers from the wrong source. Grounding is only as good as retrieval."
+    },
+    {
+     "claim": "Bigger context windows make RAG unnecessary.",
+     "correction": "Retrieval still decides what is worth putting in the window, and stuffing everything in raises cost and dilutes attention across irrelevant material."
+    },
+    {
+     "claim": "Chunk size is a tuning detail.",
+     "correction": "It is the decision that most determines whether the right passage can be retrieved at all. Nothing downstream recovers from a chunk that split the answer."
+    }
+   ],
+   "interview_angle": "'How would you build a chatbot over our documentation' is a RAG question. The answers that stand out talk about chunking, hybrid retrieval, and evaluating retrieval separately from generation.",
+   "sources": [
+    "https://www.ibm.com/think/topics/retrieval-augmented-generation",
+    "https://arxiv.org/abs/2005.11401",
+    "https://www.ibm.com/think/topics/chunking"
+   ]
+  },
+  {
+   "id": "llm-evals",
+   "title": "Evals: knowing whether a change made it better",
+   "track": "llm",
+   "skill": "llm",
+   "concept": "evaluation",
+   "level": "advanced",
+   "order": 6,
+   "prerequisites": [
+    "llm-rag"
+   ],
+   "hook": "An LLM system has no unit tests in the ordinary sense \u2014 the same input can produce different valid outputs. Without a way to measure, every change is a guess, and 'it seems better' is how systems quietly get worse.",
+   "objectives": [
+    "Design an eval set for a specific task",
+    "Choose between exact match, human judgement and model-as-judge",
+    "Say what a model-as-judge grader is bad at"
+   ],
+   "key_points": [
+    "An eval is a fixed set of inputs with a way to score outputs, run repeatedly so that a change can be compared against a known baseline rather than against an impression.",
+    "Build it from real failures. Every bug worth fixing becomes a case, which turns the suite into a regression test that grows where the system is actually weak.",
+    "Scoring methods trade off: exact match and structural checks are cheap, objective and only work for constrained outputs; human judgement is the gold standard and does not scale; a model grading a model scales and carries its own biases.",
+    "LLM-as-judge is standard practice with documented failure modes \u2014 it favours longer answers, prefers its own family's style, and is sensitive to option order in pairwise comparisons.",
+    "A judge must be validated against human labels on a sample before its scores are trusted. Without that you are measuring agreement with a model, not quality.",
+    "Component evals beat end-to-end ones for diagnosis. In a retrieval system, measure retrieval and generation separately or a regression tells you nothing about where it came from.",
+    "Non-determinism means a single run is not evidence. Fix the seed and temperature where possible, and otherwise run repeatedly and compare distributions.",
+    "Cost and latency belong in the eval alongside quality, because a change that improves answers and triples the bill is a trade-off someone has to make deliberately."
+   ],
+   "example": {
+    "caption": "Why the containment gate in this very app is an eval",
+    "body": "CareerOS generates outreach email and refuses any sentence carrying a figure with no evidence claim behind it. That check runs on every generation, has a fixed pass condition, and rejects the whole message on failure. It caught the model attributing a figure of 97 to a claim that does not contain it \u2014 automatically, on a real generation, with no human reading it. That is an eval doing its job: a measurable property, checked every time, that fails loudly rather than degrading quietly."
+   },
+   "misconceptions": [
+    {
+     "claim": "Eyeballing a few outputs is enough.",
+     "correction": "It cannot detect a regression on cases you did not think to try, and it is exactly how systems get slowly worse while feeling fine."
+    },
+    {
+     "claim": "A model-as-judge score is objective because it is a number.",
+     "correction": "It is a model's opinion rendered as a number, with known biases toward length and its own style. Validate it against human labels before trusting it."
+    },
+    {
+     "claim": "A passing eval means the system is good.",
+     "correction": "It means the system is good on the cases you wrote. Coverage is the whole game, which is why failures should become cases."
+    }
+   ],
+   "interview_angle": "'How do you know your LLM feature works' separates people who have shipped one from people who have demoed one. Naming a real eval set, built from real failures, with retrieval measured separately, is the answer.",
+   "sources": [
+    "https://www.ibm.com/think/topics/llm-evaluation",
+    "https://www.ibm.com/think/topics/ai-hallucinations"
+   ]
   }
  ]
 }
