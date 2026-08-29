@@ -134,6 +134,70 @@ async def prep_overview() -> dict[str, Any]:
     return overview()
 
 
+@app.get("/api/learn/lessons")
+async def learn_lessons(track: str | None = None) -> dict[str, Any]:
+    """The curriculum, in teaching order, with how far through you are."""
+    from .technical_learning.curriculum import lessons_for
+    from .lessons import overview
+
+    return overview(track)
+
+
+@app.get("/api/learn/lessons/{lesson_id}")
+async def learn_lesson(lesson_id: str) -> dict[str, Any]:
+    """One lesson's spine, plus its worked example already executed.
+
+    The example is run rather than described. A lesson that claims a query
+    returns 72 rows, on a page where it is not shown returning 72 rows, is
+    asking to be believed about the one thing it could simply demonstrate.
+    """
+    from .lessons import detail
+
+    try:
+        return detail(lesson_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc).strip("'")) from exc
+
+
+@app.post("/api/learn/lessons/{lesson_id}/teach")
+async def learn_teach(lesson_id: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Teach it, or answer an interruption.
+
+    `teach` is generated once and served from storage afterwards, so re-reading a
+    lesson is free. Only the interruptions — simpler, deeper, example, stuck —
+    spend anything, which puts the money where a person actually needs something
+    they were not already given.
+    """
+    from .technical_learning.curriculum import get_lesson
+    from .tutor import teach
+
+    body = body or {}
+    try:
+        lesson = get_lesson(lesson_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc).strip("'")) from exc
+
+    history = body.get("history")
+    try:
+        return teach(
+            lesson,
+            str(body.get("mode") or "teach"),
+            message=str(body.get("message") or ""),
+            history=history if isinstance(history, list) else [],
+            profile=_profile(),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/learn/lessons/{lesson_id}/explained")
+async def learn_explained(lesson_id: str) -> dict[str, Any]:
+    """Record that it was said back in their own words."""
+    from .lessons import mark_explained
+
+    return mark_explained(lesson_id)
+
+
 @app.get("/api/prep/round")
 async def prep_round() -> dict[str, Any]:
     """Today's three, drawn from what the staged pipeline is asking for.

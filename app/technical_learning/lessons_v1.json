@@ -1,0 +1,303 @@
+{
+ "lessons": [
+  {
+   "id": "sql-grain",
+   "title": "Grain: what one row means",
+   "track": "sql",
+   "skill": "sql",
+   "concept": "grain",
+   "level": "foundation",
+   "order": 1,
+   "prerequisites": [],
+   "practice_drill_id": "sql-revenue-by-segment",
+   "hook": "Almost every wrong number in SQL comes from the same mistake, and it is not a syntax error. It is joining two tables that count different things and never deciding which one a row is supposed to be.",
+   "objectives": [
+    "State the grain of a table in one sentence before writing a query against it",
+    "Predict what a join does to the grain before running it",
+    "Recognise the symptom of a grain mistake in a result set"
+   ],
+   "key_points": [
+    "The grain of a table is what exactly one row represents \u2014 'one loan', 'one scheduled payment', 'one borrower'.",
+    "In the lending dataset: borrowers is one row per borrower, loans is one row per loan, payments is one row per scheduled payment on a loan.",
+    "A join changes the grain whenever the right-hand side has more than one matching row. Joining loans to payments produces one row per payment, not per loan.",
+    "Once the grain has changed, any column from the left table repeats. Summing it counts the same value once per matching row on the right.",
+    "The classic symptom is a total that is too large by roughly the average number of child rows \u2014 not a random wrong number, an inflated one.",
+    "The fix is to aggregate to the grain you want before joining, or to aggregate after joining using a key that is unique at the target grain (COUNT DISTINCT, or SUM over a pre-aggregated subquery).",
+    "Saying the grain out loud before writing the query is the single habit that prevents this class of error."
+   ],
+   "example": {
+    "caption": "loans has 24 rows. Joining it to payments returns 72 \u2014 one per payment. Watch what that does to a sum of principal.",
+    "dataset_id": "lending",
+    "sql": "SELECT COUNT(*) AS rows_returned, ROUND(SUM(l.principal), 2) AS principal_sum FROM loans l JOIN payments p ON p.loan_id = l.loan_id",
+    "body": "Compare that principal_sum against the honest one: SELECT ROUND(SUM(principal),2) FROM loans. The join version is inflated because each loan's principal is counted once per payment attached to it."
+   },
+   "misconceptions": [
+    {
+     "claim": "A LEFT JOIN is safe because it keeps all the left rows.",
+     "correction": "LEFT JOIN protects you from losing rows, not from gaining them. If the right table has three matches, the left row appears three times."
+    },
+    {
+     "claim": "SELECT DISTINCT will fix a duplicated join.",
+     "correction": "It removes identical rows, which hides the symptom without fixing the grain. If two payments differ, the loan row still appears twice with different payment columns."
+    },
+    {
+     "claim": "COUNT(*) tells you how many loans there are.",
+     "correction": "It tells you how many rows the query produced. After a fan-out join those are different numbers."
+    }
+   ],
+   "interview_angle": "Usually arrives as 'this revenue number looks too high, what would you check'. The answer that lands is naming the grain of each table and where the join changed it \u2014 before touching the query.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Granularity",
+    "https://en.wikipedia.org/wiki/Join_(SQL)"
+   ]
+  },
+  {
+   "id": "sql-null-logic",
+   "title": "NULL is not a value",
+   "track": "sql",
+   "skill": "sql",
+   "concept": "null-logic",
+   "level": "foundation",
+   "order": 2,
+   "prerequisites": [
+    "sql-grain"
+   ],
+   "hook": "NULL means 'unknown', and unknown behaves differently from every other value in SQL. Filters silently drop rows, comparisons return neither true nor false, and aggregate functions quietly disagree with each other.",
+   "objectives": [
+    "Predict which rows a WHERE clause drops when a column is nullable",
+    "Choose between COUNT(*), COUNT(col) and SUM(CASE...) deliberately",
+    "Write a null-safe comparison"
+   ],
+   "key_points": [
+    "SQL uses three-valued logic: TRUE, FALSE and UNKNOWN. Any comparison with NULL returns UNKNOWN.",
+    "WHERE keeps only rows where the predicate is TRUE. UNKNOWN rows are dropped, so `WHERE paid_at != '2024-01-01'` excludes rows where paid_at is NULL.",
+    "NULL = NULL is UNKNOWN, not TRUE. Use IS NULL and IS NOT NULL, which are the only operators that test for it.",
+    "COUNT(*) counts rows. COUNT(column) counts non-null values in that column. The gap between them is the number of NULLs.",
+    "SUM, AVG and MAX skip NULLs. AVG in particular divides by the count of non-null values, not by the row count \u2014 so AVG is not SUM/COUNT(*).",
+    "In the lending dataset, payments.paid_at is NULL for a payment that has not been made. That single column is how you find delinquency.",
+    "NOT IN with a subquery that can return NULL returns no rows at all, because the comparison is UNKNOWN for every candidate. NOT EXISTS does not have this problem."
+   ],
+   "example": {
+    "caption": "Three ways of counting payments that disagree, and the NULL that explains why.",
+    "dataset_id": "lending",
+    "sql": "SELECT COUNT(*) AS all_payments, COUNT(paid_at) AS paid, COUNT(*) - COUNT(paid_at) AS unpaid FROM payments",
+    "body": "COUNT(*) counts every scheduled payment; COUNT(paid_at) counts only the ones actually made. The difference is the delinquency, and it exists only because paid_at is nullable."
+   },
+   "misconceptions": [
+    {
+     "claim": "`WHERE status != 'closed'` returns everything that is not closed.",
+     "correction": "It returns everything not closed AND not null. Rows with a null status vanish, which is usually not what was meant."
+    },
+    {
+     "claim": "AVG(x) is the same as SUM(x)/COUNT(*).",
+     "correction": "AVG divides by COUNT(x), which excludes nulls. If a fifth of your values are null, the two differ by a fifth."
+    },
+    {
+     "claim": "NULL = NULL is true, because they are both null.",
+     "correction": "It is UNKNOWN. Two unknowns are not known to be equal \u2014 that is what unknown means."
+    }
+   ],
+   "interview_angle": "Often a trap inside a larger question: a filter on a nullable column that quietly changes the population. Saying 'this drops the nulls, is that intended' is the whole answer.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Null_(SQL)",
+    "https://en.wikipedia.org/wiki/Three-valued_logic"
+   ]
+  },
+  {
+   "id": "sql-joins",
+   "title": "Joins, and what each one is for",
+   "track": "sql",
+   "skill": "sql",
+   "concept": "joins",
+   "level": "working",
+   "order": 3,
+   "prerequisites": [
+    "sql-grain",
+    "sql-null-logic"
+   ],
+   "hook": "There are four joins worth knowing and two patterns built out of them. Most people know INNER and LEFT and reach for them for everything, which is why semi-join and anti-join questions separate candidates.",
+   "objectives": [
+    "Choose the join that matches the question being asked",
+    "Write a semi-join and an anti-join without duplicating rows",
+    "Explain why a filter in ON differs from the same filter in WHERE"
+   ],
+   "key_points": [
+    "INNER JOIN keeps rows that match on both sides. LEFT JOIN keeps every left row and fills the right with NULLs when there is no match.",
+    "A semi-join answers 'which left rows have at least one match' without bringing the right columns across. EXISTS is the direct way to write it and it cannot change the grain.",
+    "An anti-join answers 'which left rows have no match'. NOT EXISTS is the safe form; LEFT JOIN ... WHERE right.key IS NULL is the same thing written longer.",
+    "A filter on the right table placed in the ON clause of a LEFT JOIN is applied before the join, so non-matching left rows survive with NULLs. The same filter in WHERE is applied after, which silently turns the LEFT JOIN into an INNER JOIN.",
+    "CROSS JOIN produces every combination. It is occasionally what you want \u2014 generating a date spine, for instance \u2014 and is otherwise a missing join condition.",
+    "Joining on a non-unique key on both sides multiplies rows: three matches on the left and two on the right produce six rows."
+   ],
+   "example": {
+    "caption": "Anti-join: borrowers who have never missed a payment. Six of the sixteen, and not one of them can be duplicated by the query.",
+    "dataset_id": "lending",
+    "sql": "SELECT b.borrower_id, b.fico_band, b.state_code FROM borrowers b WHERE NOT EXISTS (SELECT 1 FROM loans l JOIN payments p ON p.loan_id = l.loan_id WHERE l.borrower_id = b.borrower_id AND p.paid_at IS NULL)",
+    "body": "Note what NOT EXISTS buys here. The inner query joins loans to payments and fans out to many rows per borrower \u2014 but because the outer query only asks whether any exist, the borrower appears once or not at all. Writing this as a LEFT JOIN would need a DISTINCT to undo the fan-out, and NOT IN would return nothing at all if any borrower_id in the subquery were NULL."
+   },
+   "misconceptions": [
+    {
+     "claim": "LEFT JOIN with a WHERE on the right table still keeps all left rows.",
+     "correction": "It does not. WHERE runs after the join, and NULL fails almost every predicate, so unmatched left rows are filtered out. Put the condition in ON instead."
+    },
+    {
+     "claim": "NOT IN and NOT EXISTS are interchangeable.",
+     "correction": "If the subquery returns even one NULL, NOT IN returns nothing at all, because every comparison becomes UNKNOWN. NOT EXISTS is unaffected."
+    }
+   ],
+   "interview_angle": "'Find the customers who did X but not Y' is an anti-join question and is extremely common. Reaching for NOT EXISTS rather than a LEFT JOIN with an IS NULL filter reads as fluency.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Join_(SQL)",
+    "https://en.wikipedia.org/wiki/Relational_algebra"
+   ]
+  },
+  {
+   "id": "sql-aggregation",
+   "title": "Aggregation changes the grain on purpose",
+   "track": "sql",
+   "skill": "sql",
+   "concept": "aggregation",
+   "level": "working",
+   "order": 4,
+   "prerequisites": [
+    "sql-grain"
+   ],
+   "hook": "GROUP BY is the one operation that changes grain deliberately. Understanding it as a grain change rather than as 'grouping' makes HAVING, filtered aggregates and double-counting all obvious.",
+   "objectives": [
+    "Describe what GROUP BY does to the grain of a result",
+    "Choose between WHERE and HAVING correctly",
+    "Aggregate conditionally without a subquery"
+   ],
+   "key_points": [
+    "GROUP BY collapses many rows into one per distinct combination of the grouping columns. The output grain is exactly those columns.",
+    "Every selected column must either be in the GROUP BY or inside an aggregate, because anything else has no single value at the new grain.",
+    "WHERE filters rows before grouping. HAVING filters groups after. A filter that mentions an aggregate can only go in HAVING; a filter on a raw column belongs in WHERE, where it is cheaper.",
+    "SUM(CASE WHEN condition THEN value END) is conditional aggregation \u2014 it computes a filtered measure alongside an unfiltered one in a single pass, with no subquery.",
+    "COUNT(DISTINCT x) counts unique values and is the usual repair when a join has already fanned the rows out.",
+    "Aggregating after a fan-out join double-counts. Aggregate to the target grain first, then join, whenever the measure comes from the parent table."
+   ],
+   "example": {
+    "caption": "Paid and unpaid amounts per loan, in one pass, using conditional aggregation.",
+    "dataset_id": "lending",
+    "sql": "SELECT l.loan_id, l.product, ROUND(SUM(CASE WHEN p.paid_at IS NOT NULL THEN p.amount ELSE 0 END), 2) AS paid, ROUND(SUM(CASE WHEN p.paid_at IS NULL THEN p.amount ELSE 0 END), 2) AS outstanding FROM loans l JOIN payments p ON p.loan_id = l.loan_id GROUP BY l.loan_id, l.product ORDER BY outstanding DESC LIMIT 8",
+    "body": "The grain of the result is one row per loan, restored by the GROUP BY after the join fanned it out to one row per payment."
+   },
+   "misconceptions": [
+    {
+     "claim": "HAVING is just WHERE for GROUP BY queries.",
+     "correction": "HAVING runs after aggregation and can see aggregates; WHERE runs before and cannot. Putting a raw-column filter in HAVING works but scans more rows than it needs to."
+    },
+    {
+     "claim": "COUNT(DISTINCT id) is a good way to fix double counting.",
+     "correction": "It fixes counts, not sums. If a join duplicated rows, SUM(amount) is still wrong and no DISTINCT will repair it \u2014 you have to fix the grain."
+    }
+   ],
+   "interview_angle": "Conditional aggregation is the thing to reach for when asked for 'paid vs unpaid in one result'. Writing it as two subqueries joined together works and reads as less fluent.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/SQL",
+    "https://en.wikipedia.org/wiki/Aggregate_function"
+   ]
+  },
+  {
+   "id": "sql-windows",
+   "title": "Window functions: aggregate without collapsing",
+   "track": "sql",
+   "skill": "sql",
+   "concept": "window-functions",
+   "level": "interview",
+   "order": 5,
+   "prerequisites": [
+    "sql-aggregation"
+   ],
+   "hook": "A window function computes across a set of rows and keeps every row. That single property answers running totals, rankings, per-group comparisons and period-over-period change \u2014 the questions GROUP BY cannot answer without a self-join.",
+   "objectives": [
+    "Use OVER (PARTITION BY ... ORDER BY ...) correctly",
+    "Choose between ROW_NUMBER, RANK and DENSE_RANK",
+    "Explain what a frame is and when the default one bites"
+   ],
+   "key_points": [
+    "A window function is computed over a set of rows related to the current row, and does not reduce the number of rows returned.",
+    "PARTITION BY divides the rows into independent groups. ORDER BY inside OVER decides the order within each partition, which is what makes running totals and lag possible.",
+    "ROW_NUMBER always produces distinct consecutive integers. RANK leaves gaps after ties. DENSE_RANK does not leave gaps. Choosing the wrong one is a common silent bug in 'top N per group'.",
+    "The frame defines which rows of the partition the function sees. With ORDER BY present the default frame is RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW \u2014 a running total. Without ORDER BY it is the whole partition.",
+    "That default frame with RANGE treats tied ORDER BY values as one unit, which can include rows you expected to be excluded. ROWS BETWEEN is the explicit and usually intended form.",
+    "LAG and LEAD read the previous or next row in the partition, which is how period-over-period change is written without a self-join.",
+    "Window functions run after WHERE and GROUP BY, so you cannot filter on one in WHERE. Wrap it in a subquery or CTE and filter outside \u2014 that is the standard 'top N per group' shape."
+   ],
+   "example": {
+    "caption": "Running paid total per loan, in payment order \u2014 a window function keeping every row.",
+    "dataset_id": "lending",
+    "sql": "SELECT loan_id, due_at, amount, ROUND(SUM(amount) OVER (PARTITION BY loan_id ORDER BY due_at ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW), 2) AS running_total FROM payments ORDER BY loan_id, due_at LIMIT 10",
+    "body": "PARTITION BY restarts the total for each loan; ORDER BY makes 'running' meaningful; ROWS BETWEEN states the frame rather than relying on the default."
+   },
+   "misconceptions": [
+    {
+     "claim": "You can filter on a window function in the WHERE clause.",
+     "correction": "Window functions are evaluated after WHERE, so the column does not exist yet. Compute it in a CTE and filter in the outer query."
+    },
+    {
+     "claim": "RANK and ROW_NUMBER are interchangeable for top-N.",
+     "correction": "With ties, RANK returns more than N rows and skips numbers. ROW_NUMBER always returns exactly N but breaks ties arbitrarily unless you order deterministically."
+    },
+    {
+     "claim": "The default frame does not matter.",
+     "correction": "With ORDER BY the default is a running frame, not the whole partition \u2014 so AVG(x) OVER (ORDER BY d) is a running average, not the partition average, which surprises people constantly."
+    }
+   ],
+   "interview_angle": "'Top 3 per category' and 'month-over-month change' are the two most common SQL screening questions above the beginner level, and both are one window function. Being able to say why the filter has to move to an outer query is the part that separates answers.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Window_function_(SQL)"
+   ]
+  },
+  {
+   "id": "sql-indexes",
+   "title": "Why a query is slow: indexes and the planner",
+   "track": "sql",
+   "skill": "sql",
+   "concept": "query-planning",
+   "level": "advanced",
+   "order": 6,
+   "prerequisites": [
+    "sql-joins",
+    "sql-aggregation"
+   ],
+   "hook": "A database does not run your query, it runs a plan it chose. Knowing roughly how it chooses turns 'this is slow' from a mystery into a short list of causes.",
+   "objectives": [
+    "Read a query plan well enough to find the expensive step",
+    "Say why an index helps, and when it cannot",
+    "Recognise the query shapes that defeat an index"
+   ],
+   "key_points": [
+    "An index is a sorted structure mapping column values to row locations, so the engine can find matching rows without reading the whole table. It costs storage and slows writes.",
+    "The planner estimates the cost of alternative plans using statistics about the data, and picks the cheapest estimate. A bad plan is usually a bad estimate, not a bad optimiser.",
+    "A full scan is not automatically wrong. When a query touches most of the table, scanning is cheaper than jumping through an index for every row.",
+    "Wrapping an indexed column in a function defeats the index: WHERE date(originated_at) = '2024-01-01' cannot use an index on originated_at, while a range condition on the raw column can.",
+    "Leading-column order matters in a composite index. An index on (a, b) helps a query filtering on a, or on a and b, but generally not one filtering on b alone.",
+    "A covering index contains every column the query needs, so the engine never touches the table itself.",
+    "EXPLAIN shows the chosen plan. The steps to look for are the ones that scan the most rows and the joins whose estimated row counts look wrong."
+   ],
+   "example": {
+    "caption": "The shape that defeats an index: a function wrapped around the filtered column. Both queries return the same rows; only one of them could use an index on originated_at.",
+    "dataset_id": "lending",
+    "sql": "SELECT COUNT(*) AS matched FROM loans WHERE originated_at >= '2024-01-01' AND originated_at < '2025-01-01'",
+    "body": "Written as substr(originated_at, 1, 4) = '2024' it returns the same count and cannot use an index, because the engine would have to compute the function for every row before it could compare. The range form leaves the column bare, so an index on it can be scanned directly. This dataset is 24 rows and will be scanned either way \u2014 the point is the shape, which is what stops being free at a million rows."
+   },
+   "misconceptions": [
+    {
+     "claim": "Adding an index makes queries faster.",
+     "correction": "It makes some reads faster and all writes slower, and only helps when the query filters or joins on the indexed column in a form the planner can use."
+    },
+    {
+     "claim": "A slow query means a missing index.",
+     "correction": "It often means a fan-out join, a function on a filtered column, or statistics that are stale enough for the planner to pick badly."
+    }
+   ],
+   "interview_angle": "Usually 'this dashboard query takes 40 seconds, what do you do'. The strong answer starts with reading the plan and the row counts rather than guessing at an index.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Database_index",
+    "https://en.wikipedia.org/wiki/Query_plan",
+    "https://en.wikipedia.org/wiki/Query_optimization"
+   ]
+  }
+ ]
+}

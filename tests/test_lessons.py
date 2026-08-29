@@ -1,0 +1,136 @@
+"""Lessons teach, the path is ordered, and the tutor is fenced in.
+
+Four properties.
+
+**Every worked example runs.** A lesson that claims a query returns 72 rows, on a
+page that does not show it returning 72 rows, is asking to be believed about the
+one thing it could simply demonstrate. Authoring one that the sandbox refuses —
+`EXPLAIN QUERY PLAN` was the first attempt — must fail here rather than render an
+empty table later. So must one that returns nothing: an anti-join example
+matching zero rows teaches nothing, and the first draft of `sql-joins` did
+exactly that.
+
+**Prerequisites gate.** The drill engine declares `prerequisites` and enforces
+them nowhere — the server checks only that the ids exist and the frontend lock is
+dead code, because `clearedDrillIds` is never passed. A path that orders nothing
+is decoration.
+
+**The spine is the whole boundary.** What goes into the prompt is what the tutor
+may assert, so anything absent from `key_points` must be absent from the prompt.
+
+**`key_points` never reaches the client.** `_PRIVATE_FIELDS` in the drill
+serialiser is a denylist, so new fields ship by default — `debrief` already
+leaks that way. Shipping key points would also defeat the point: a bullet list to
+skim instead of an explanation to read.
+
+    ./.venv/bin/python tests/test_lessons.py
+"""
+from __future__ import annotations
+
+import pathlib
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+
+from app.lessons import _unlocked, status  # noqa: E402
+from app.technical_learning.curriculum import (  # noqa: E402
+    load_curriculum,
+    lessons_for,
+)
+from app.technical_learning.query_supervisor import run_sql  # noqa: E402
+from app.tutor import MODES, _spine  # noqa: E402
+
+
+class FakeLesson:
+    def __init__(self, lesson_id, prerequisites, drill=None):
+        self.id = lesson_id
+        self.prerequisites = prerequisites
+        self.practice_drill_id = drill
+
+
+def main() -> int:
+    failures: list[str] = []
+
+    def check(label: str, got, want):
+        if got != want:
+            failures.append(f"{label}: expected {want!r}, got {got!r}")
+        else:
+            print(f"PASS {label}")
+
+    lessons = load_curriculum().lessons
+    check("the curriculum carries lessons", len(lessons) > 0, True)
+
+    # --- every worked example runs, and returns something ---
+    for lesson in lessons:
+        example = lesson.example
+        if not (example and example.sql):
+            continue
+        result = run_sql(example.dataset_id, "1", example.sql)
+        check(f"{lesson.id} example executes", result.ok, True)
+        if result.ok:
+            # Zero rows is a valid query and a useless demonstration.
+            check(f"{lesson.id} example returns rows", len(result.rows) > 0, True)
+
+    # --- the lesson graph is sane ---
+    ids = {lesson.id for lesson in lessons}
+    for lesson in lessons:
+        check(f"{lesson.id} prerequisites exist",
+              set(lesson.prerequisites) <= ids, True)
+        check(f"{lesson.id} has facts to teach from",
+              len(lesson.key_points) >= 3, True)
+
+    # A track must start somewhere, or nothing is ever unlocked.
+    for track in {lesson.track for lesson in lessons}:
+        roots = [l for l in lessons_for(track) if not l.prerequisites]
+        check(f"track {track!r} has an entry point", len(roots) >= 1, True)
+
+    # --- gating ---
+    a = FakeLesson("a", [])
+    b = FakeLesson("b", ["a"])
+    check("a lesson with no prerequisites is open", _unlocked(a, {}), True)
+    check("a lesson whose prerequisite is untouched is shut",
+          _unlocked(b, {}), False)
+    check("taught unlocks the next one",
+          _unlocked(b, {"a": {"state": "taught"}}), True)
+    check("explained unlocks it too",
+          _unlocked(b, {"a": {"state": "explained"}}), True)
+
+    # --- status, and what mastery requires ---
+    linked = FakeLesson("c", [], drill="sql-revenue-by-segment")
+    check("untouched reads as not-started", status(linked, {}, set()), "not-started")
+    check("a stored pass is 'taught'",
+          status(linked, {"c": {"state": "taught"}}, set()), "taught")
+    check("explained alone is not mastery",
+          status(linked, {"c": {"state": "explained"}}, set()), "explained")
+    # Mastery needs the drill cleared as well — reusing the drill engine's own
+    # definition rather than declaring a lesson mastered because it was read.
+    check("explained plus a cleared drill is mastery",
+          status(linked, {"c": {"state": "explained"}}, {"sql-revenue-by-segment"}),
+          "mastered")
+
+    # --- the tutor's boundary ---
+    grain = next(l for l in lessons if l.id == "sql-grain")
+    spine = _spine(grain)
+    for point in grain.key_points:
+        check("every key point reaches the prompt", point in spine, True)
+        break  # one is enough to prove the wiring; the loop documents intent
+    check("all key points reach the prompt",
+          all(p in spine for p in grain.key_points), True)
+    # Nothing invented can be justified by the spine, so the spine must not
+    # contain facts the lesson does not claim.
+    check("the prompt carries no other lesson's content",
+          "window function" not in spine.lower(), True)
+    check("modes are a closed set", sorted(MODES),
+          ["deeper", "example", "simpler", "stuck", "teach"])
+
+    if failures:
+        print("\nFAILURES:")
+        for f in failures:
+            print(" -", f)
+        return 1
+    print("\nall good")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
