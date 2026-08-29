@@ -51,31 +51,77 @@
     "https://en.wikipedia.org/wiki/Join_(SQL)"
    ],
    "visual": {
-    "kind": "flow",
-    "caption": "Each join step, and what one row means after it",
+    "kind": "sequence",
+    "caption": "Watch the grain change, and the total go wrong",
     "nodes": [
      {
       "label": "loans",
-      "note": "24 rows \u2014 one per loan",
-      "tone": "good"
+      "note": "24 rows"
      },
      {
       "label": "JOIN payments",
-      "note": "one row per payment now",
-      "tone": "bad"
+      "note": "3 per loan"
      },
      {
       "label": "72 rows",
-      "note": "principal repeated 3x on average",
-      "tone": "bad"
+      "note": "one per payment"
      },
      {
-      "label": "GROUP BY loan_id",
-      "note": "grain restored deliberately",
-      "tone": "good"
+      "label": "SUM(principal)",
+      "note": ""
+     }
+    ],
+    "steps": [
+     {
+      "active": [
+       0
+      ],
+      "say": "Start with loans. One row is one loan \u2014 24 of them. If someone asks for total principal, this table can answer it.",
+      "bad": []
+     },
+     {
+      "active": [
+       0,
+       1
+      ],
+      "say": "Now join to payments. Each loan has roughly three scheduled payments, and the join has to produce a row for every match.",
+      "bad": []
+     },
+     {
+      "active": [
+       0,
+       1,
+       2
+      ],
+      "say": "So you get 72 rows. Nothing errored. But one row no longer means one loan \u2014 it means one payment.",
+      "bad": [
+       2
+      ]
+     },
+     {
+      "active": [
+       2,
+       3
+      ],
+      "say": "Sum principal now and each loan's principal is added once per payment. The total is about three times too big.",
+      "bad": [
+       3
+      ]
+     },
+     {
+      "active": [
+       0,
+       3
+      ],
+      "say": "The fix is not DISTINCT. Aggregate to loan grain first, or count with a key that is unique at the grain you want.",
+      "bad": []
      }
     ]
-   }
+   },
+   "teaches": [
+    "SQL",
+    "Data analysis"
+   ]
   },
   {
    "id": "sql-null-logic",
@@ -271,7 +317,10 @@
       "tone": "good"
      }
     ]
-   }
+   },
+   "teaches": [
+    "Joins"
+   ]
   },
   {
    "id": "sql-aggregation",
@@ -421,7 +470,10 @@
       "tone": "neutral"
      }
     ]
-   }
+   },
+   "teaches": [
+    "Window functions"
+   ]
   },
   {
    "id": "sql-indexes",
@@ -523,7 +575,11 @@
       "tone": "good"
      }
     ]
-   }
+   },
+   "teaches": [
+    "Query optimization",
+    "Performance tuning"
+   ]
   },
   {
    "id": "llm-tokens",
@@ -597,7 +653,14 @@
       "tone": "bad"
      }
     ]
-   }
+   },
+   "teaches": [
+    "LLM",
+    "Large language models",
+    "Generative AI",
+    "GenAI",
+    "AI"
+   ]
   },
   {
    "id": "llm-embeddings",
@@ -669,7 +732,13 @@
       "tone": "neutral"
      }
     ]
-   }
+   },
+   "teaches": [
+    "Embeddings",
+    "Vector search",
+    "Vector databases",
+    "Semantic search"
+   ]
   },
   {
    "id": "llm-attention",
@@ -774,7 +843,12 @@
       "value": 0.15
      }
     ]
-   }
+   },
+   "teaches": [
+    "Transformers",
+    "Deep learning",
+    "Neural networks"
+   ]
   },
   {
    "id": "llm-prompting",
@@ -846,7 +920,11 @@
       "tone": "bad"
      }
     ]
-   }
+   },
+   "teaches": [
+    "Prompt engineering",
+    "Prompting"
+   ]
   },
   {
    "id": "llm-rag",
@@ -901,31 +979,75 @@
     "https://www.ibm.com/think/topics/chunking"
    ],
    "visual": {
-    "kind": "flow",
-    "caption": "Retrieve, then write \u2014 and where it goes wrong",
+    "kind": "sequence",
+    "caption": "Retrieval-augmented generation, and where it actually fails",
     "nodes": [
      {
       "label": "question",
-      "note": "",
-      "tone": "neutral"
+      "note": ""
      },
      {
       "label": "retrieve",
-      "note": "the step that fails silently",
-      "tone": "bad"
+      "note": "search the corpus"
      },
      {
       "label": "augment",
-      "note": "passages into the prompt",
-      "tone": "neutral"
+      "note": "passages into the prompt"
      },
      {
       "label": "generate",
-      "note": "answers faithfully from whatever it was handed",
-      "tone": "neutral"
+      "note": "answer written from them"
+     }
+    ],
+    "steps": [
+     {
+      "active": [
+       0
+      ],
+      "say": "Someone asks about the escrow policy. The model's weights were frozen at training time and contain nothing about your company.",
+      "bad": []
+     },
+     {
+      "active": [
+       0,
+       1
+      ],
+      "say": "So first you search. The question is embedded, and the nearest chunks come back from the index.",
+      "bad": []
+     },
+     {
+      "active": [
+       1,
+       2
+      ],
+      "say": "Those passages go into the prompt. The model is now answering from text you chose rather than from memory.",
+      "bad": []
+     },
+     {
+      "active": [
+       2,
+       3
+      ],
+      "say": "It writes a fluent, confident, correctly cited answer \u2014 from whatever it was handed.",
+      "bad": []
+     },
+     {
+      "active": [
+       1,
+       3
+      ],
+      "say": "Which is the catch. Retrieve last year's version of the policy and the generator does its job perfectly on the wrong document. The failure moved upstream; it did not go away.",
+      "bad": [
+       1
+      ]
      }
     ]
-   }
+   },
+   "teaches": [
+    "RAG",
+    "Retrieval-augmented generation",
+    "Retrieval augmented generation"
+   ]
   },
   {
    "id": "llm-evals",
@@ -1002,7 +1124,12 @@
       "tone": "neutral"
      }
     ]
-   }
+   },
+   "teaches": [
+    "Evals",
+    "LLM evaluation",
+    "Model evaluation"
+   ]
   },
   {
    "id": "stats-sampling",
@@ -1085,7 +1212,11 @@
       "tone": "neutral"
      }
     ]
-   }
+   },
+   "teaches": [
+    "Statistics",
+    "Quantitative analysis"
+   ]
   },
   {
    "id": "stats-intervals",
@@ -1241,7 +1372,11 @@
       "value": 1.0
      }
     ]
-   }
+   },
+   "teaches": [
+    "Hypothesis testing",
+    "Significance testing"
+   ]
   },
   {
    "id": "stats-regression",
@@ -1318,7 +1453,12 @@
       "tone": "good"
      }
     ]
-   }
+   },
+   "teaches": [
+    "Regression",
+    "Regression analysis",
+    "Statistical modeling"
+   ]
   },
   {
    "id": "stats-experiments",
@@ -1368,31 +1508,74 @@
     "https://en.wikipedia.org/wiki/Statistical_power"
    ],
    "visual": {
-    "kind": "flow",
-    "caption": "Decide everything before the data arrives",
+    "kind": "sequence",
+    "caption": "Why peeking inflates false positives",
     "nodes": [
      {
-      "label": "metric",
-      "note": "fixed in advance",
-      "tone": "good"
+      "label": "day 2",
+      "note": "no difference"
      },
      {
-      "label": "unit",
-      "note": "match it to the interference",
-      "tone": "neutral"
+      "label": "day 5",
+      "note": "looks significant"
      },
      {
-      "label": "sample size",
-      "note": "from the effect worth detecting",
-      "tone": "neutral"
+      "label": "day 9",
+      "note": "gone again"
      },
      {
-      "label": "horizon",
-      "note": "fixed \u2014 stopping early inflates false positives",
-      "tone": "bad"
+      "label": "the decision",
+      "note": ""
+     }
+    ],
+    "steps": [
+     {
+      "active": [
+       0
+      ],
+      "say": "You launch the test. Two days in, the arms look the same. Nothing to report.",
+      "bad": []
+     },
+     {
+      "active": [
+       0,
+       1
+      ],
+      "say": "Day five, the variant is ahead and it crosses your threshold. It is very tempting to call it.",
+      "bad": []
+     },
+     {
+      "active": [
+       1,
+       2
+      ],
+      "say": "Day nine, the gap has closed. It was noise \u2014 with enough looks, random variation crosses any line eventually.",
+      "bad": []
+     },
+     {
+      "active": [
+       1,
+       3
+      ],
+      "say": "Had you stopped on day five you would have shipped it, and been confident, and been wrong.",
+      "bad": [
+       3
+      ]
+     },
+     {
+      "active": [
+       3
+      ],
+      "say": "Which is why the horizon is fixed before the test starts. The alternative is a search for a result rather than a test of one.",
+      "bad": []
      }
     ]
-   }
+   },
+   "teaches": [
+    "A/B testing",
+    "Experimentation",
+    "Experiment design"
+   ]
   },
   {
    "id": "stats-causality",
@@ -1461,7 +1644,10 @@
       "tone": "bad"
      }
     ]
-   }
+   },
+   "teaches": [
+    "Causal inference"
+   ]
   },
   {
    "id": "ml-framing",
@@ -1508,31 +1694,78 @@
     "https://en.wikipedia.org/wiki/Training,_validation,_and_test_data_sets"
    ],
    "visual": {
-    "kind": "flow",
-    "caption": "The moment that defines every feature",
+    "kind": "sequence",
+    "caption": "How a leak produces a perfect score and a useless model",
     "nodes": [
      {
-      "label": "prediction time",
-      "note": "what is knowable now",
-      "tone": "good"
+      "label": "training data",
+      "note": "includes collection calls"
      },
      {
-      "label": "features",
-      "note": "must all exist at that moment",
-      "tone": "neutral"
+      "label": "model",
+      "note": "scores brilliantly"
      },
      {
-      "label": "outcome",
-      "note": "observed later",
-      "tone": "neutral"
+      "label": "test set",
+      "note": "same leaked field"
      },
      {
-      "label": "leak",
-      "note": "a feature updated after the outcome",
-      "tone": "bad"
+      "label": "production",
+      "note": "field is empty"
+     }
+    ],
+    "steps": [
+     {
+      "active": [
+       0
+      ],
+      "say": "You train a delinquency model. One of the features is 'number of collection calls'.",
+      "bad": []
+     },
+     {
+      "active": [
+       0,
+       1
+      ],
+      "say": "It scores beautifully. Better than anything else you have tried, by a wide margin.",
+      "bad": []
+     },
+     {
+      "active": [
+       1,
+       2
+      ],
+      "say": "The test set agrees, because it was split from the same data and carries the same field.",
+      "bad": []
+     },
+     {
+      "active": [
+       2,
+       3
+      ],
+      "say": "Then it runs on current loans \u2014 and collection calls is zero for every one of them, because calls happen after a loan goes bad.",
+      "bad": [
+       3
+      ]
+     },
+     {
+      "active": [
+       0,
+       3
+      ],
+      "say": "The feature encoded the answer. The score was measuring how well the model could read a future you had handed it.",
+      "bad": [
+       0
+      ]
      }
     ]
-   }
+   },
+   "teaches": [
+    "Machine learning",
+    "ML",
+    "Predictive modeling",
+    "Data science"
+   ]
   },
   {
    "id": "ml-fit",
@@ -1634,7 +1867,12 @@
       "tone": "bad"
      }
     ]
-   }
+   },
+   "teaches": [
+    "Model tuning",
+    "Cross-validation",
+    "Regularization"
+   ]
   },
   {
    "id": "ml-metrics",
@@ -1718,7 +1956,11 @@
       "value": 1.0
      }
     ]
-   }
+   },
+   "teaches": [
+    "Classification metrics",
+    "Model performance"
+   ]
   },
   {
    "id": "ml-trees",
@@ -1787,7 +2029,13 @@
       "tone": "neutral"
      }
     ]
-   }
+   },
+   "teaches": [
+    "XGBoost",
+    "Random forest",
+    "Gradient boosting",
+    "Ensemble methods"
+   ]
   },
   {
    "id": "ml-imbalance",
@@ -1854,7 +2102,11 @@
       "tone": "bad"
      }
     ]
-   }
+   },
+   "teaches": [
+    "Class imbalance",
+    "Fraud detection"
+   ]
   },
   {
    "id": "ml-production",
@@ -1926,7 +2178,13 @@
       "tone": "bad"
      }
     ]
-   }
+   },
+   "teaches": [
+    "MLOps",
+    "Model deployment",
+    "Model monitoring",
+    "Model drift"
+   ]
   },
   {
    "id": "py-complexity",
@@ -2031,7 +2289,12 @@
       "tone": "good"
      }
     ]
-   }
+   },
+   "teaches": [
+    "Python",
+    "Programming",
+    "Scripting"
+   ]
   },
   {
    "id": "py-pandas",
@@ -2103,7 +2366,13 @@
       "tone": "neutral"
      }
     ]
-   }
+   },
+   "teaches": [
+    "Pandas",
+    "NumPy",
+    "Data wrangling",
+    "Data manipulation"
+   ]
   },
   {
    "id": "py-vectorise",
@@ -2174,7 +2443,11 @@
       "value": 1
      }
     ]
-   }
+   },
+   "teaches": [
+    "Vectorization",
+    "Performance optimization"
+   ]
   },
   {
    "id": "py-quality",
@@ -2241,7 +2514,13 @@
       "tone": "good"
      }
     ]
-   }
+   },
+   "teaches": [
+    "Automated testing",
+    "Unit testing",
+    "Code quality",
+    "Reproducibility"
+   ]
   },
   {
    "id": "dm-normalisation",
@@ -2306,7 +2585,12 @@
       "tone": "bad"
      }
     ]
-   }
+   },
+   "teaches": [
+    "Database design",
+    "Relational databases",
+    "Normalization"
+   ]
   },
   {
    "id": "dm-dimensional",
@@ -2384,7 +2668,16 @@
       "tone": "neutral"
      }
     ]
-   }
+   },
+   "teaches": [
+    "Data modeling",
+    "Dimensional modeling",
+    "Star schema",
+    "Data warehousing",
+    "Snowflake",
+    "BigQuery",
+    "Redshift"
+   ]
   },
   {
    "id": "dm-scd",
@@ -2481,7 +2774,11 @@
       "value": 1.0
      }
     ]
-   }
+   },
+   "teaches": [
+    "Slowly changing dimensions",
+    "Historical tracking"
+   ]
   },
   {
    "id": "dm-metrics",
@@ -2552,7 +2849,13 @@
       "value": 760
      }
     ]
-   }
+   },
+   "teaches": [
+    "Semantic layer",
+    "Metrics layer",
+    "Metric definitions",
+    "KPI definition"
+   ]
   },
   {
    "id": "pipe-shapes",
@@ -2617,7 +2920,24 @@
       "tone": "neutral"
      }
     ]
-   }
+   },
+   "teaches": [
+    "Data pipelines",
+    "ETL",
+    "ELT",
+    "Airflow",
+    "dbt",
+    "Data engineering",
+    "Workflow orchestration",
+    "Batch processing",
+    "Streaming",
+    "Spark",
+    "PySpark",
+    "Hive",
+    "Databricks",
+    "Hadoop",
+    "Kafka"
+   ]
   },
   {
    "id": "pipe-idempotence",
@@ -2665,30 +2985,75 @@
     "https://www.ibm.com/think/topics/etl"
    ],
    "visual": {
-    "kind": "bars",
-    "unit": " rows",
-    "caption": "Rows in the table after the scheduler retries a half-finished run",
+    "kind": "sequence",
+    "caption": "A retry, and why append is the wrong verb",
     "nodes": [
      {
-      "label": "append",
-      "note": "the day counted twice",
-      "tone": "bad",
-      "value": 190
+      "label": "run 1",
+      "note": "writes 90% then dies"
      },
      {
-      "label": "upsert by key",
-      "note": "second run overwrites",
-      "tone": "good",
-      "value": 100
+      "label": "scheduler",
+      "note": "retries automatically"
      },
      {
-      "label": "replace partition",
-      "note": "second run is a no-op",
-      "tone": "good",
-      "value": 100
+      "label": "run 2",
+      "note": "writes the day again"
+     },
+     {
+      "label": "the table",
+      "note": ""
+     }
+    ],
+    "steps": [
+     {
+      "active": [
+       0
+      ],
+      "say": "The nightly job starts appending yesterday's payments. It gets through about 90% and times out.",
+      "bad": []
+     },
+     {
+      "active": [
+       0,
+       1
+      ],
+      "say": "The scheduler does what every scheduler does: it retries. Nothing about this is exceptional \u2014 it is normal operation.",
+      "bad": []
+     },
+     {
+      "active": [
+       1,
+       2
+      ],
+      "say": "Run two appends the whole day again. It has no idea run one existed, and append has no memory.",
+      "bad": []
+     },
+     {
+      "active": [
+       2,
+       3
+      ],
+      "say": "Now 90% of yesterday exists twice, every downstream total is inflated, and no error was raised anywhere.",
+      "bad": [
+       3
+      ]
+     },
+     {
+      "active": [
+       2,
+       3
+      ],
+      "say": "Replace the partition instead \u2014 delete the day, then insert. Now the retry converges to the same state no matter where the first run died.",
+      "bad": []
      }
     ]
-   }
+   },
+   "teaches": [
+    "Idempotence",
+    "Backfills",
+    "Data reliability"
+   ]
   },
   {
    "id": "pipe-quality",
@@ -2804,7 +3169,12 @@
       "value": 1.0
      }
     ]
-   }
+   },
+   "teaches": [
+    "Data quality",
+    "Data validation",
+    "Data governance"
+   ]
   },
   {
    "id": "pipe-incremental",
@@ -2871,7 +3241,12 @@
       "tone": "good"
      }
     ]
-   }
+   },
+   "teaches": [
+    "Incremental processing",
+    "Change data capture",
+    "CDC"
+   ]
   },
   {
    "id": "bi-charts",
@@ -2953,7 +3328,12 @@
       "value": 34
      }
     ]
-   }
+   },
+   "teaches": [
+    "Data visualization",
+    "Visualization",
+    "Charting"
+   ]
   },
   {
    "id": "bi-dashboards",
@@ -3026,7 +3406,17 @@
       "tone": "neutral"
      }
     ]
-   }
+   },
+   "teaches": [
+    "Dashboarding",
+    "Dashboards",
+    "Tableau",
+    "Power BI",
+    "Looker",
+    "Business intelligence",
+    "BI",
+    "Reporting"
+   ]
   },
   {
    "id": "bi-communicating",
@@ -3098,7 +3488,14 @@
       "tone": ""
      }
     ]
-   }
+   },
+   "teaches": [
+    "Stakeholder management",
+    "Communication",
+    "Cross-functional collaboration",
+    "Executive communication",
+    "Storytelling"
+   ]
   },
   {
    "id": "cs-structures",
@@ -3213,7 +3610,12 @@
       "value": 1.0
      }
     ]
-   }
+   },
+   "teaches": [
+    "Data structures",
+    "Algorithms",
+    "Computer science"
+   ]
   },
   {
    "id": "cs-systems",
@@ -3282,7 +3684,13 @@
       "tone": "good"
      }
     ]
-   }
+   },
+   "teaches": [
+    "System design",
+    "Distributed systems",
+    "Databases",
+    "Caching"
+   ]
   }
  ]
 }

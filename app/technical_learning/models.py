@@ -115,6 +115,14 @@ class VisualSeries(BaseModel):
     tone: Literal["good", "bad", "neutral"] = "neutral"
 
 
+class SequenceStep(BaseModel):
+    """One stage of a played explainer: what is lit, and the line said over it."""
+
+    active: list[int] = Field(default_factory=list)
+    bad: list[int] = Field(default_factory=list)
+    say: str
+
+
 class LessonVisual(BaseModel):
     """A diagram, from a closed vocabulary the renderer knows how to draw.
 
@@ -130,7 +138,7 @@ class LessonVisual(BaseModel):
     """
 
     kind: Literal["flow", "layers", "compare", "cycle",
-                  "fanout", "heatmap", "curve", "bars"]
+                  "fanout", "heatmap", "curve", "bars", "sequence"]
     caption: str = ""
     # flow | layers | compare | cycle
     nodes: list[VisualNode] = Field(default_factory=list)
@@ -141,6 +149,8 @@ class LessonVisual(BaseModel):
     # curve. Aliased to the camelCase the renderer expects, so the JSON crosses
     # the wire in the shape the component already reads rather than needing a
     # translation layer that could drift.
+    # sequence
+    steps: list[SequenceStep] = Field(default_factory=list)
     x_label: str = Field(default="", serialization_alias="xLabel")
     y_label: str = Field(default="", serialization_alias="yLabel")
     shade_gap: bool = Field(default=False, serialization_alias="shadeGap")
@@ -163,6 +173,22 @@ class LessonVisual(BaseModel):
                     f"a {len(self.rows)}x{len(self.cols)} heatmap needs "
                     f"{len(self.rows) * len(self.cols)} cells, got {len(self.cells)}"
                 )
+        elif self.kind == "sequence":
+            if not 2 <= len(self.nodes) <= 6:
+                raise ValueError("a sequence needs between 2 and 6 nodes")
+            if len(self.steps) < 2:
+                # One stage is a still picture wearing a play button.
+                raise ValueError("a sequence needs at least two stages")
+            for i, step in enumerate(self.steps):
+                for idx in [*step.active, *step.bad]:
+                    if not 0 <= idx < len(self.nodes):
+                        raise ValueError(
+                            f"stage {i + 1} refers to node {idx}, which does not exist"
+                        )
+                if not step.say.strip():
+                    # The narration is the explanation; a silent stage is just
+                    # a flicker.
+                    raise ValueError(f"stage {i + 1} has nothing to say")
         elif self.kind == "curve":
             if not self.series:
                 raise ValueError("a curve needs at least one series")
@@ -207,6 +233,12 @@ class Lesson(BaseModel):
     level: Literal["foundation", "working", "interview", "advanced"]
     order: int = 0
     prerequisites: list[str] = Field(default_factory=list)
+    # The phrasings a job posting uses for what this lesson teaches, so a
+    # requirement read off a job page can find it. Authored rather than
+    # inferred: "data pipelines" reaching the pipelines track is a claim about
+    # the content, and a wrong one sends someone to the wrong lesson at the one
+    # moment they were willing to be taught.
+    teaches: list[str] = Field(default_factory=list)
 
     hook: str                     # why this matters, in one or two sentences
     objectives: list[str] = Field(default_factory=list)

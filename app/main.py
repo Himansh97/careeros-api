@@ -235,6 +235,21 @@ async def prep_concepts() -> dict[str, Any]:
     return {"overview": overview(p), "cards": [c.as_dict() for c in deck(p)]}
 
 
+@app.get("/api/learn/explain")
+async def learn_explain(term: str) -> dict[str, Any]:
+    """What teaches this requirement — read from a job page, not the Learn tab.
+
+    The point of the endpoint is that studying should not need a decision. A
+    requirement is already on screen at the moment the candidate is wondering
+    whether they can defend it, so the term itself is the door. Returns nulls
+    rather than a 404 when nothing is written: a requirement with no material is
+    a normal state, and the caller renders plain text.
+    """
+    from .explain import explain
+
+    return explain(term, _profile())
+
+
 @app.get("/api/prep/concepts/topics")
 async def prep_concept_topics() -> dict[str, Any]:
     """Curated subjects to study beyond the resume.

@@ -97,6 +97,49 @@ def main() -> int:
             )
             check(f"{lesson.id} curve points are unit space", inside, True)
 
+    # --- requirements read off a job page reach a lesson ---
+    # This is the "learn while applying" path. It matched on track name and
+    # title substring at first, which resolved "SQL" and almost nothing else —
+    # a posting says "ETL", "Airflow" or "A/B testing", none of which is any
+    # lesson's title. `teaches` is the authored answer, so it has to stay
+    # unambiguous: two lessons claiming the same phrasing means the router
+    # silently picks by track order rather than by meaning.
+    from app.explain import _norm, explain  # noqa: PLC0415
+
+    claimed: dict[str, str] = {}
+    collisions: list[str] = []
+    for lesson in lessons:
+        for phrase in lesson.teaches:
+            key = _norm(phrase)
+            if key in claimed and claimed[key] != lesson.id:
+                collisions.append(f"{phrase!r}: {claimed[key]} and {lesson.id}")
+            claimed[key] = lesson.id
+    check("no two lessons claim the same phrasing", collisions, [])
+
+    class FakeProfile:
+        # No claims, so the card half of the lookup finds nothing and the
+        # assertions below are about lesson routing alone.
+        evidence: list = []
+
+    routed = {
+        "ETL": "pipe-shapes",
+        "Airflow": "pipe-shapes",
+        "A/B testing": "stats-experiments",
+        "RAG": "llm-rag",
+        "Tableau": "bi-dashboards",
+        "XGBoost": "ml-trees",
+        "prompt engineering": "llm-prompting",
+    }
+    for term, expected in routed.items():
+        found = explain(term, FakeProfile())["lesson"]
+        check(f"{term!r} reaches a lesson", found and found["id"], expected)
+
+    # And a requirement nothing teaches must stay silent. A door onto an
+    # apology is worse than plain text.
+    for absent in ("Anticipated Weekly Hours", "SOX", "xyzzy"):
+        result = explain(absent, FakeProfile())
+        check(f"{absent!r} routes nowhere", result["lesson"], None)
+
     # --- the lesson graph is sane ---
     ids = {lesson.id for lesson in lessons}
     for lesson in lessons:
