@@ -604,6 +604,1353 @@
     "https://www.ibm.com/think/topics/llm-evaluation",
     "https://www.ibm.com/think/topics/ai-hallucinations"
    ]
+  },
+  {
+   "id": "stats-sampling",
+   "title": "Sampling: why a sample can speak for a population",
+   "track": "stats",
+   "skill": "statistics",
+   "concept": "sampling",
+   "level": "foundation",
+   "order": 1,
+   "prerequisites": [],
+   "hook": "Every number you report is computed from a sample, including the ones that feel like the whole population. Knowing what that costs you is the difference between a figure and a figure you can defend.",
+   "objectives": [
+    "Say what a sampling distribution is",
+    "Explain why the standard error shrinks with n",
+    "Spot the sampling problem in a business metric"
+   ],
+   "key_points": [
+    "A statistic computed from a sample is itself a random quantity: draw a different sample and you get a different value.",
+    "The distribution of that statistic across all possible samples is the sampling distribution, and it is what all of inference is about.",
+    "The central limit theorem says the sampling distribution of a mean approaches a normal shape as the sample grows, whatever the shape of the underlying data. That is why normal-based methods work on data that is not normal.",
+    "The standard error is the standard deviation of the sampling distribution. For a mean it shrinks with the square root of n, so quadrupling the sample halves the error \u2014 precision gets expensive fast.",
+    "Sample size fixes noise, not bias. A biased sampling process gives you a precisely wrong answer, and a bigger sample makes it more precisely wrong.",
+    "Survivorship bias is the most common business version: measuring only the customers who stayed, the loans that completed, the applications that got a response.",
+    "'We used all the data' is usually false. All the data you have is a sample of all the data there could be, drawn by a process you did not design."
+   ],
+   "example": {
+    "caption": "Why last month's delinquency rate is a sample",
+    "body": "Take every loan in the book and compute the share that missed a payment. That feels like a population, not a sample \u2014 you used all the rows. But the question being asked is almost never 'what happened in these rows'; it is 'what is our delinquency rate', which is about a process that will keep generating loans. This month's book is one draw from that process. It has a standard error, it will move next month without anything changing, and a swing of half a point on 200 loans is noise you should expect rather than a trend to explain."
+   },
+   "misconceptions": [
+    {
+     "claim": "If I have all the data, there is no sampling error.",
+     "correction": "Only if the question is about exactly those rows. Any question about an ongoing process treats what you have as one draw from it."
+    },
+    {
+     "claim": "A bigger sample fixes a bad sample.",
+     "correction": "It shrinks the noise around a biased estimate. The bias is unchanged, so you converge confidently on the wrong number."
+    },
+    {
+     "claim": "The central limit theorem means my data is normal.",
+     "correction": "It says the sampling distribution of the mean tends to normal. The data itself can be as skewed as it likes."
+    }
+   ],
+   "interview_angle": "Usually arrives as 'this metric moved 3% week over week, is that real'. The answer that lands starts with how many observations it is computed from.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Sampling_(statistics)",
+    "https://en.wikipedia.org/wiki/Central_limit_theorem",
+    "https://en.wikipedia.org/wiki/Standard_error"
+   ]
+  },
+  {
+   "id": "stats-intervals",
+   "title": "Estimation: a number with its uncertainty attached",
+   "track": "stats",
+   "skill": "statistics",
+   "concept": "estimation",
+   "level": "foundation",
+   "order": 2,
+   "prerequisites": [
+    "stats-sampling"
+   ],
+   "hook": "A point estimate on its own hides the only thing a decision-maker needs: how much it could move. An interval says both.",
+   "objectives": [
+    "Interpret a confidence interval correctly",
+    "Choose an interval over a point estimate",
+    "Say what a wide interval is telling you"
+   ],
+   "key_points": [
+    "A confidence interval is built by a procedure such that, across repeated samples, a stated share of the intervals it produces would contain the true value.",
+    "The 95% refers to the procedure's long-run behaviour, not to a probability about the one interval in front of you \u2014 that interval either contains the truth or it does not.",
+    "Interval width is driven by the variability in the data and by the sample size, so a wide interval is a statement about how little the data settles the question.",
+    "An interval spanning zero, for a difference, means the data do not settle the direction of the effect. Reporting that honestly is a finding, not a failure.",
+    "Intervals answer the decision question better than p-values, because they carry the size of the effect as well as whether it is distinguishable from nothing.",
+    "Bootstrapping estimates an interval by resampling the data with replacement, which works for statistics with no clean formula \u2014 medians, ratios, custom metrics.",
+    "Always report the interval alongside the estimate. A number without one invites a precision the data does not have."
+   ],
+   "example": {
+    "caption": "Two forecasts, same point estimate",
+    "body": "Two models both forecast next quarter's volume at 1,200. One says 1,150 to 1,250; the other says 600 to 1,800. The point estimate is identical and the two are not remotely the same answer \u2014 the first supports a staffing decision and the second says you do not know yet. Reporting only 1,200 makes those indistinguishable, which is how a forecast gets trusted more than it deserves."
+   },
+   "misconceptions": [
+    {
+     "claim": "There is a 95% chance the true value is in this interval.",
+     "correction": "The true value is fixed. The 95% describes how often the procedure captures it across repeated samples, which is a statement about the method."
+    },
+    {
+     "claim": "Overlapping intervals mean no significant difference.",
+     "correction": "Not reliably. Two intervals can overlap while the interval for their difference excludes zero \u2014 test the difference directly."
+    }
+   ],
+   "interview_angle": "'How confident are you in that number' is an invitation to talk about intervals. Answering with a feeling rather than a range is the tell.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Confidence_interval",
+    "https://en.wikipedia.org/wiki/Statistical_inference"
+   ]
+  },
+  {
+   "id": "stats-testing",
+   "title": "Hypothesis testing, and the errors it trades",
+   "track": "stats",
+   "skill": "statistics",
+   "concept": "hypothesis-testing",
+   "level": "working",
+   "order": 3,
+   "prerequisites": [
+    "stats-intervals"
+   ],
+   "hook": "A test is a decision rule with a known false-alarm rate. Everything confusing about p-values dissolves once you see it as a rule you set in advance rather than a measurement you take afterwards.",
+   "objectives": [
+    "State a null hypothesis precisely",
+    "Explain type I and type II error and what trades between them",
+    "Name why testing many things at once inflates false positives"
+   ],
+   "key_points": [
+    "The null hypothesis is the specific claim of 'nothing going on' that the test is built against. Vague nulls produce uninterpretable tests.",
+    "A p-value is the probability of data at least this extreme if the null were true. It is a statement about data given a hypothesis, never about the hypothesis given the data.",
+    "A type I error is rejecting a true null \u2014 a false alarm \u2014 and its rate is the threshold you chose. A type II error is failing to detect a real effect.",
+    "Lowering the threshold reduces false alarms and increases missed effects. Which error is worse is a business question, not a statistical one.",
+    "Power is the probability of detecting an effect of a given size if it is real. Low power means a null result tells you almost nothing.",
+    "Testing twenty independent things at the 5% level means one is expected to look significant by chance. Corrections such as Bonferroni or false discovery rate exist for exactly this.",
+    "Stopping as soon as the result looks significant is the same error spread over time, and it substantially inflates the false positive rate.",
+    "Statistical significance is not effect size. With a large enough sample, a difference too small to act on becomes significant."
+   ],
+   "example": {
+    "caption": "Why the fraud rule and the auto-reject rule need different thresholds",
+    "body": "A screening rule that flags possible fraud for human review should tolerate false alarms: a type I error costs an analyst ten minutes. A rule that auto-declines an application cannot: the same error is a real customer turned away with no recourse. Identical statistics, opposite thresholds, and the reason is entirely about which mistake you are willing to make."
+   },
+   "misconceptions": [
+    {
+     "claim": "p = 0.03 means a 3% chance the result is wrong.",
+     "correction": "It is the probability of the data under the null, not the probability the null is true. Those are different quantities and the second needs a prior."
+    },
+    {
+     "claim": "A non-significant result means there is no effect.",
+     "correction": "It means this data did not distinguish one. With low power that is expected even for real effects."
+    },
+    {
+     "claim": "p = 0.049 and p = 0.051 are different findings.",
+     "correction": "They are near-identical evidence sitting either side of a line somebody chose."
+    }
+   ],
+   "interview_angle": "Often a trap embedded in a case: they describe testing several variants and picking the winner. Naming the multiple-comparisons problem unprompted is the answer.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Statistical_hypothesis_test",
+    "https://en.wikipedia.org/wiki/Statistical_power"
+   ]
+  },
+  {
+   "id": "stats-regression",
+   "title": "Regression: what a coefficient actually says",
+   "track": "stats",
+   "skill": "statistics",
+   "concept": "regression",
+   "level": "working",
+   "order": 4,
+   "prerequisites": [
+    "stats-intervals"
+   ],
+   "hook": "Regression is the workhorse of analysis and the most confidently misread output in it. A coefficient is a conditional, estimated, associational quantity, and dropping any of those three words is where the trouble starts.",
+   "objectives": [
+    "Interpret a coefficient in a sentence that is actually true",
+    "Name the assumptions and what breaks when they fail",
+    "Explain why adding a variable changes the others"
+   ],
+   "key_points": [
+    "A coefficient estimates the average change in the outcome per unit change in that predictor, holding the other predictors in the model fixed.",
+    "'Holding the others fixed' is doing enormous work. Add or remove a variable and the remaining coefficients change, sometimes sign included.",
+    "Each coefficient is an estimate with a standard error. Reporting it without that is reporting a point where you have a distribution.",
+    "R-squared is the share of variance explained. It always rises when you add predictors, which is why adjusted R-squared exists and why neither measures whether the model is right.",
+    "The usual assumptions are linearity in the parameters, independent errors, constant error variance and no perfect collinearity. Residual plots are how you check rather than assume.",
+    "Correlated predictors inflate standard errors and make individual coefficients unstable, even while overall prediction stays fine.",
+    "Logistic regression models the log-odds of a binary outcome; its coefficients are not probabilities and exponentiating gives an odds ratio, not a risk ratio.",
+    "Regression describes association. Causal reading requires an experimental design or an identification strategy, not a bigger dataset."
+   ],
+   "example": {
+    "caption": "A coefficient that flips",
+    "body": "Regress loan default on FICO band alone and the coefficient is large. Add loan-to-value and it shrinks; add product type and it can move again. Nothing about the borrowers changed. The first model was attributing to FICO everything correlated with it, because 'holding the others fixed' held nothing fixed when there were no others. This is why 'controlling for' is a claim about a specific model, not a property of the world."
+   },
+   "misconceptions": [
+    {
+     "claim": "A high R-squared means a good model.",
+     "correction": "It measures fit to the data you have. An overfitted model has excellent R-squared and no predictive value, and a well-specified model of a noisy process can have a low one."
+    },
+    {
+     "claim": "A significant coefficient means that variable matters.",
+     "correction": "It means it is distinguishable from zero in this specification. Change the covariates and the answer can change."
+    },
+    {
+     "claim": "Logistic regression coefficients are probabilities.",
+     "correction": "They are on the log-odds scale. Converting to a probability depends on the values of every other predictor."
+    }
+   ],
+   "interview_angle": "'Walk me through a model you built' \u2014 and your Omnicals regression forecast will get this question. Be ready on how you validated it and what you did when it missed.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Linear_regression",
+    "https://en.wikipedia.org/wiki/Logistic_regression"
+   ]
+  },
+  {
+   "id": "stats-experiments",
+   "title": "Experiments: the only clean route to cause",
+   "track": "stats",
+   "skill": "statistics",
+   "concept": "experiment-design",
+   "level": "interview",
+   "order": 5,
+   "prerequisites": [
+    "stats-testing"
+   ],
+   "hook": "Randomisation is what licenses the word 'caused'. Everything else in experiment design exists to protect that one property from the ways real systems break it.",
+   "objectives": [
+    "Design a test with the decision made before the data",
+    "Compute what sample size a given effect needs",
+    "Name the ways randomisation gets broken in practice"
+   ],
+   "key_points": [
+    "Random assignment makes the groups exchangeable in expectation, so any systematic difference in outcome is attributable to the treatment. That is the whole argument.",
+    "Fix the metric, the threshold and the sample size before starting. Deciding afterwards converts a test into a search for a result.",
+    "Power analysis says what sample size is needed to detect an effect of a given size. Running an underpowered test wastes the traffic and produces an uninterpretable null.",
+    "The minimum detectable effect is a business decision: below some size the change is not worth shipping, and there is no point powering to detect it.",
+    "The randomisation unit must match the interference. Randomising by session when users see both variants leaks the treatment and biases the comparison toward zero.",
+    "Novelty and primacy effects mean early results often differ from steady state, which is one reason a fixed horizon beats stopping when it looks good.",
+    "Sanity checks come before analysis: did the split actually come out near 50/50, are the groups balanced on pre-treatment covariates, did instrumentation fire equally.",
+    "A guardrail metric protects against winning on the target metric while damaging something you care about more."
+   ],
+   "example": {
+    "caption": "Why a session-level split can hide a real effect",
+    "body": "You test a new application flow, randomising by session. A borrower starts on their phone in the old flow, finishes on a laptop in the new one, and their outcome lands in whichever bucket the last session fell in. Both arms are now contaminated with each other's experience, the measured difference shrinks toward zero, and a genuine improvement reads as no effect. Randomising by borrower costs nothing and removes it."
+   },
+   "misconceptions": [
+    {
+     "claim": "You can stop the test as soon as it hits significance.",
+     "correction": "Repeatedly testing as data arrives inflates the false positive rate substantially. Fix the horizon, or use a method designed for sequential looks."
+    },
+    {
+     "claim": "An A/A test is a waste of traffic.",
+     "correction": "It validates the whole apparatus. If an A/A test shows a significant difference, your instrumentation or assignment is broken and every result is suspect."
+    }
+   ],
+   "interview_angle": "'How would you test this change' is a standard product-analyst question. Metric, unit of randomisation, sample size, guardrails, horizon \u2014 in that order.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Design_of_experiments",
+    "https://en.wikipedia.org/wiki/A/B_testing",
+    "https://en.wikipedia.org/wiki/Statistical_power"
+   ]
+  },
+  {
+   "id": "stats-causality",
+   "title": "Causality without an experiment",
+   "track": "stats",
+   "skill": "statistics",
+   "concept": "causality",
+   "level": "advanced",
+   "order": 6,
+   "prerequisites": [
+    "stats-regression",
+    "stats-experiments"
+   ],
+   "hook": "Most questions worth answering cannot be randomised. Knowing which of those you can still answer, and saying plainly when you cannot, is most of what senior analytical judgement is.",
+   "objectives": [
+    "Distinguish a confounder from a mediator from a collider",
+    "Say why 'controlling for everything' is not a strategy",
+    "Choose language that matches the evidence"
+   ],
+   "key_points": [
+    "A confounder causes both the treatment and the outcome, and leaving it out biases the estimate. Adjusting for it helps.",
+    "A mediator sits on the causal path between treatment and outcome. Adjusting for it removes part of the very effect you are trying to measure.",
+    "A collider is caused by both. Adjusting for it creates a spurious association between things that were independent \u2014 which is why adding controls can make an estimate worse.",
+    "It follows that you cannot decide what to control for from the data alone. It requires a claim about the causal structure, which is an assumption you should state.",
+    "Selection into the sample is a collider you did not choose. Studying only funded loans, or only customers who replied, conditions on an outcome and distorts everything downstream.",
+    "Quasi-experimental designs \u2014 difference-in-differences, regression discontinuity, instrumental variables \u2014 each buy identification with a specific assumption that is worth naming out loud.",
+    "When none of that is available, 'associated with' is the honest phrase, and using it is a mark of seniority rather than weakness."
+   ],
+   "example": {
+    "caption": "Controlling for a mediator, and destroying the finding",
+    "body": "A new underwriting tool is meant to reduce time-to-close. You regress close time on tool usage and control for number of document requests \u2014 and the effect disappears. The tool worked *by* reducing document requests. Controlling for the mechanism removed the effect from the estimate, and the conclusion 'no impact' is exactly backwards. Nothing in the data would have told you; only knowing what the tool does."
+   },
+   "misconceptions": [
+    {
+     "claim": "Add every available control to be safe.",
+     "correction": "Controlling for mediators removes real effects and controlling for colliders manufactures fake ones. More controls is not more rigour."
+    },
+    {
+     "claim": "A large enough dataset settles causation.",
+     "correction": "Size reduces noise, not confounding. A million rows of observational data has the same identification problem as a thousand."
+    }
+   ],
+   "interview_angle": "Senior analyst and product-analyst loops probe this deliberately: 'usage correlates with retention, what do you conclude'. The wanted answer includes what you would need to say more.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Causal_inference",
+    "https://en.wikipedia.org/wiki/Confounding",
+    "https://en.wikipedia.org/wiki/Survivorship_bias"
+   ]
+  },
+  {
+   "id": "ml-framing",
+   "title": "Framing a problem, and the leak that ruins it",
+   "track": "ml",
+   "skill": "machine-learning",
+   "concept": "framing",
+   "level": "foundation",
+   "order": 1,
+   "prerequisites": [],
+   "hook": "Most failed models are not badly tuned. They answer a question nobody asked, or they were tested on information that will not exist when they run.",
+   "objectives": [
+    "Turn a business question into a supervised learning problem",
+    "Split data so the score means something",
+    "Recognise leakage before it flatters you"
+   ],
+   "key_points": [
+    "Supervised learning needs three things stated before any modelling: what one row is, what is being predicted, and at what moment in time the prediction is made.",
+    "The prediction time matters most. Every feature must be computable from information available at that moment, or the model cannot be used.",
+    "Data leakage is using information at training time that will not exist at prediction time. It produces excellent test scores and a model that fails immediately in production.",
+    "Common leaks: a field updated after the outcome, an aggregate computed over the whole dataset including the test rows, or an identifier that encodes the label.",
+    "The split must mirror the deployment. Time-ordered data needs a time-based split \u2014 random folds let the model train on the future and test on the past.",
+    "Three sets, not two: train to fit, validation to choose, test to report once. Choosing on the test set turns it into a validation set and the reported score into an optimistic one.",
+    "A baseline comes first. Predicting the majority class, or last month's value, is often surprisingly hard to beat and tells you whether the problem is worth modelling."
+   ],
+   "example": {
+    "caption": "The feature that was updated after the fact",
+    "body": "A model predicting loan delinquency includes 'number of collection calls'. It scores beautifully. It is also useless: collection calls happen because the loan went delinquent, so the feature encodes the answer. At prediction time \u2014 when you want to know which current loans will go bad \u2014 that field is zero for every one of them. The score was measuring how well the model could read the future, and it could read it perfectly, because you handed it to it."
+   },
+   "misconceptions": [
+    {
+     "claim": "A high test score means the model will work.",
+     "correction": "Only if the test set resembles deployment. Leakage and a mis-specified split are both invisible in the score and fatal in production."
+    },
+    {
+     "claim": "Random splits are fine for any data.",
+     "correction": "For time-ordered data they train on the future. The realistic split is by time, and it usually lowers the score \u2014 which is the point."
+    }
+   ],
+   "interview_angle": "'Your model does great offline and badly in production \u2014 why' is a standard question and leakage is the first thing to name.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Supervised_learning",
+    "https://en.wikipedia.org/wiki/Leakage_(machine_learning)",
+    "https://en.wikipedia.org/wiki/Training,_validation,_and_test_data_sets"
+   ]
+  },
+  {
+   "id": "ml-fit",
+   "title": "Bias, variance, and what regularisation buys",
+   "track": "ml",
+   "skill": "machine-learning",
+   "concept": "model-fit",
+   "level": "working",
+   "order": 2,
+   "prerequisites": [
+    "ml-framing"
+   ],
+   "hook": "Every knob on every model trades the same two things against each other. Once you can name which one you are currently paying for, tuning stops being guesswork.",
+   "objectives": [
+    "Diagnose underfitting versus overfitting from a learning curve",
+    "Explain what a regularisation penalty does",
+    "Choose a remedy that matches the diagnosis"
+   ],
+   "key_points": [
+    "Expected error decomposes into bias \u2014 error from a model too simple to represent the pattern \u2014 variance \u2014 error from a model so flexible it changes with the sample \u2014 and irreducible noise.",
+    "The diagnosis is the gap between training and validation performance. Both poor means high bias; training far better than validation means high variance.",
+    "The remedies are opposite. High bias wants more capacity, better features, less regularisation. High variance wants more data, less capacity, more regularisation.",
+    "Regularisation adds a penalty on the size of the coefficients, so the fit has to earn its complexity. L2 shrinks coefficients smoothly; L1 drives some to exactly zero and so selects features.",
+    "Cross-validation estimates out-of-sample performance more stably than one split, which matters most when data is scarce.",
+    "Early stopping is regularisation for iterative learners: stop when validation error starts rising rather than when training error stops falling.",
+    "More data reduces variance and does nothing for bias. If the model is too simple, collecting more rows will not help."
+   ],
+   "example": {
+    "caption": "Reading the gap",
+    "body": "Training accuracy 0.98, validation 0.71. That gap is variance \u2014 the model memorised. Now training 0.72, validation 0.70. Almost no gap, and both poor: that is bias, and adding data or regularisation will do nothing at all. Same two numbers, opposite prescriptions, and reading them the wrong way round is how people spend a week tuning in the wrong direction."
+   },
+   "misconceptions": [
+    {
+     "claim": "More data always helps.",
+     "correction": "It reduces variance. Against a high-bias model it changes nothing, and the time is better spent on features or capacity."
+    },
+    {
+     "claim": "Regularisation is a way to improve accuracy.",
+     "correction": "It trades training fit for generalisation. On an underfitted model it makes everything worse."
+    }
+   ],
+   "interview_angle": "'Your model underperforms, what do you check' \u2014 the expected answer is the train/validation gap and what it implies, not a list of algorithms to try.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Overfitting",
+    "https://www.ibm.com/think/topics/overfitting"
+   ]
+  },
+  {
+   "id": "ml-metrics",
+   "title": "Metrics: which mistake are you willing to make",
+   "track": "ml",
+   "skill": "machine-learning",
+   "concept": "evaluation",
+   "level": "working",
+   "order": 3,
+   "prerequisites": [
+    "ml-framing"
+   ],
+   "hook": "A classifier does not output a class, it outputs a score. Choosing the threshold is a business decision wearing a technical costume, and accuracy hides it entirely.",
+   "objectives": [
+    "Choose a metric that matches the cost of each error",
+    "Read a confusion matrix and a ROC curve",
+    "Say why accuracy misleads on imbalanced data"
+   ],
+   "key_points": [
+    "The confusion matrix is the ground truth: true and false positives, true and false negatives. Every metric is a summary of it, and summaries lose things.",
+    "Precision is the share of predicted positives that were right. Recall is the share of actual positives that were found. Moving the threshold trades one for the other.",
+    "Accuracy is misleading whenever classes are imbalanced: at 1% fraud, predicting 'never fraud' is 99% accurate and worthless.",
+    "The F1 score is the harmonic mean of precision and recall, useful when you need a single number and the two matter roughly equally \u2014 which is often not true.",
+    "ROC-AUC summarises performance across all thresholds and is insensitive to class balance. Precision-recall AUC is more informative when positives are rare.",
+    "For most decisions the threshold matters more than the model. Two models with identical AUC can behave completely differently at the operating point you actually use.",
+    "For regression, MAE treats every error equally and RMSE punishes large ones more. Which you want depends on whether one big miss is worse than several small ones."
+   ],
+   "example": {
+    "caption": "Same model, two businesses",
+    "body": "A delinquency model scores every loan. Set the threshold low and you catch nearly every bad loan and flood the servicing team with false alarms \u2014 right, if a review costs ten minutes and a missed default costs thousands. Set it high and you only flag the near-certain ones \u2014 right, if flagging triggers something the borrower experiences. The model is identical. The threshold is the entire decision, and it is not a modelling choice."
+   },
+   "misconceptions": [
+    {
+     "claim": "A 95% accurate model is a good model.",
+     "correction": "Compare it to the base rate first. If 95% of cases are negative, it may have learned nothing at all."
+    },
+    {
+     "claim": "AUC tells you how the model will perform.",
+     "correction": "It averages over thresholds you will never use. Performance at your operating point is the number that matters."
+    }
+   ],
+   "interview_angle": "'Which metric would you use and why' is asked constantly and answered badly. Tie it to the cost of each error type in that specific business.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Precision_and_recall",
+    "https://en.wikipedia.org/wiki/Receiver_operating_characteristic"
+   ]
+  },
+  {
+   "id": "ml-trees",
+   "title": "Trees and ensembles: why they win on tabular data",
+   "track": "ml",
+   "skill": "machine-learning",
+   "concept": "tree-models",
+   "level": "working",
+   "order": 4,
+   "prerequisites": [
+    "ml-fit"
+   ],
+   "hook": "For tabular business data, gradient-boosted trees beat neural networks more often than not, and understanding why tells you a lot about what your data actually is.",
+   "objectives": [
+    "Explain how a decision tree splits",
+    "Distinguish bagging from boosting",
+    "Say when a linear model is still the better choice"
+   ],
+   "key_points": [
+    "A decision tree splits the data repeatedly on the feature and threshold that best separates the target, producing rules that are readable in isolation.",
+    "A single deep tree overfits badly \u2014 it can carve out a leaf for nearly every row \u2014 which is why trees are almost always used in ensembles.",
+    "Bagging trains many trees on bootstrap samples and averages them. Random forests add a second randomisation, considering only a subset of features per split, which decorrelates the trees and reduces variance further.",
+    "Boosting trains trees in sequence, each fitting the errors the previous ones left. It reduces bias as well as variance and is usually stronger, at the cost of being easier to overfit and slower to train.",
+    "Trees need no feature scaling, handle non-linearity and interactions automatically, and cope with mixed types \u2014 which is most of why they dominate on tabular data.",
+    "They extrapolate badly. A tree can only predict values it saw in training, so a genuinely out-of-range input gets the nearest leaf rather than a trend continued.",
+    "Feature importance from trees is easily misread: correlated features split their importance between them, and importance is not causal.",
+    "A linear model is still preferable when the relationship really is linear, when coefficients must be explained to a regulator, or when data is small."
+   ],
+   "example": {
+    "caption": "Why the tree found the interaction and the regression did not",
+    "body": "Default risk is higher for high loan-to-value borrowers, but only in one product. A linear model with both variables sees two independent effects and misses that; you would have to know to add the interaction term yourself. A tree splits on product, then splits on LTV inside one branch and not the other \u2014 it discovered the interaction because that is what splitting does. That is the tabular advantage in one sentence."
+   },
+   "misconceptions": [
+    {
+     "claim": "Random forests and gradient boosting are basically the same.",
+     "correction": "Bagging averages independent trees to cut variance. Boosting fits residuals in sequence to cut bias. They fail in different ways and tune differently."
+    },
+    {
+     "claim": "Feature importance shows what drives the outcome.",
+     "correction": "It shows what the model used. Correlated features share importance arbitrarily, and none of it is causal."
+    }
+   ],
+   "interview_angle": "'Why did you pick that model' \u2014 for tabular data the honest answer is usually gradient boosting, and being able to say why beats naming the fanciest option.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Decision_tree_learning",
+    "https://en.wikipedia.org/wiki/Random_forest",
+    "https://en.wikipedia.org/wiki/Gradient_boosting"
+   ]
+  },
+  {
+   "id": "ml-imbalance",
+   "title": "Rare events, and how not to fool yourself",
+   "track": "ml",
+   "skill": "machine-learning",
+   "concept": "imbalance",
+   "level": "interview",
+   "order": 5,
+   "prerequisites": [
+    "ml-metrics"
+   ],
+   "hook": "Fraud, default and churn are all rare, and rarity breaks the defaults. Every technique for handling it also distorts something, and knowing which is the skill.",
+   "objectives": [
+    "Say why imbalance is a problem for training and for evaluation separately",
+    "Compare resampling with class weights",
+    "Explain why resampling breaks probability calibration"
+   ],
+   "key_points": [
+    "Imbalance causes two distinct problems: the learner sees too few positives to characterise them, and the usual metrics stop being informative.",
+    "Oversampling the minority risks memorising the few positives. Undersampling the majority throws away real information. Both change the class balance the model learns.",
+    "SMOTE creates synthetic minority examples by interpolating between neighbours rather than copying, which reduces exact memorisation but can invent implausible combinations.",
+    "Class weights penalise minority errors more without changing the data, and are usually the first thing to try because nothing is fabricated or discarded.",
+    "Any resampling changes the base rate the model implicitly learns, so its predicted probabilities no longer match reality. If you need calibrated probabilities, recalibrate afterwards or use weights instead.",
+    "Resample only the training data. Touching the validation or test set makes the evaluation measure a world that does not exist.",
+    "Precision-recall curves are more informative than ROC when positives are rare, because ROC's false positive rate has a huge denominator and moves very little."
+   ],
+   "example": {
+    "caption": "The 2% problem",
+    "body": "Two percent of loans go delinquent. Train without adjustment and the model can score 98% accuracy by never predicting delinquency \u2014 and its ranking may still be useful, which is why you look at the scores rather than the classes. Oversample to 50/50 and the model now believes delinquency is a coin flip: its predicted probabilities are wildly overstated, and if anyone downstream uses them as expected loss, every number is wrong. The ranking improved and the probabilities became lies."
+   },
+   "misconceptions": [
+    {
+     "claim": "Always balance the classes before training.",
+     "correction": "It is one option with a real cost. Class weights often work as well and leave probabilities interpretable."
+    },
+    {
+     "claim": "Resampling the whole dataset is fine as long as you are consistent.",
+     "correction": "Resampling the test set means measuring performance on a distribution that will never occur."
+    }
+   ],
+   "interview_angle": "Any fraud, risk or churn role asks this. Mentioning that resampling breaks calibration is the detail that signals you have deployed one.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Oversampling_and_undersampling_in_data_analysis",
+    "https://en.wikipedia.org/wiki/Precision_and_recall"
+   ]
+  },
+  {
+   "id": "ml-production",
+   "title": "After deployment: drift, monitoring and decay",
+   "track": "ml",
+   "skill": "machine-learning",
+   "concept": "production",
+   "level": "advanced",
+   "order": 6,
+   "prerequisites": [
+    "ml-metrics"
+   ],
+   "hook": "A model is not finished when it ships. It is a component whose accuracy decays silently while everything around it keeps returning numbers.",
+   "objectives": [
+    "Distinguish data drift from concept drift",
+    "Design monitoring that detects failure before users do",
+    "Say why a model can degrade with no code change"
+   ],
+   "key_points": [
+    "Data drift is the input distribution changing. Concept drift is the relationship between inputs and outcome changing. Both degrade the model and they need different responses.",
+    "Drift happens without any change to your code, because the world moves \u2014 new products, new segments, a rate change, a competitor.",
+    "Monitor inputs as well as outputs. Feature distributions shift before performance does, which is what makes them an early warning rather than a post-mortem.",
+    "Ground truth is usually delayed. You learn whether a loan defaulted months later, so proxy metrics \u2014 score distribution, prediction rate, feature ranges \u2014 have to carry the monitoring in between.",
+    "A prediction-distribution shift with unchanged inputs usually means a pipeline break, not a model problem. That is the cheapest and most common cause.",
+    "Retraining on a schedule is a blunt instrument. Retraining on a trigger \u2014 a drift threshold or a performance drop \u2014 is better, and needs the monitoring to exist first.",
+    "Log the inputs and the prediction for every call. Without that you cannot debug a bad decision after the fact, and someone will eventually ask you to."
+   ],
+   "example": {
+    "caption": "The model that broke because an upstream default changed",
+    "body": "Someone changes a source system so a missing income field arrives as 0 instead of null. The pipeline does not error. The model does not error. It just starts scoring a slice of applicants as if they earned nothing, and the only symptom is a quiet shift in the score distribution. Output monitoring catches this in a day; waiting for ground truth catches it in a quarter."
+   },
+   "misconceptions": [
+    {
+     "claim": "If accuracy is stable, the model is fine.",
+     "correction": "Accuracy needs labels, which arrive late. By the time it moves you have been making bad decisions for however long the label delay is."
+    },
+    {
+     "claim": "Drift means retrain.",
+     "correction": "Check for a pipeline break first \u2014 it is more common, cheaper to fix, and retraining on broken data bakes the break in."
+    }
+   ],
+   "interview_angle": "'How would you know if your model stopped working' separates people who have shipped from people who have trained. Naming label delay and proxy monitoring is the answer.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Concept_drift",
+    "https://www.ibm.com/think/topics/data-drift"
+   ]
+  },
+  {
+   "id": "py-complexity",
+   "title": "Complexity: why the slow version is slow",
+   "track": "python",
+   "skill": "python",
+   "concept": "complexity",
+   "level": "foundation",
+   "order": 1,
+   "prerequisites": [],
+   "hook": "You do not need to compute Big-O to write good analysis code. You need to notice when a loop is inside another loop over the same data, because that is when a job that ran in seconds starts running overnight.",
+   "objectives": [
+    "Read Big-O as a growth rate rather than a speed",
+    "Recognise the accidental nested loop",
+    "Pick the data structure that removes it"
+   ],
+   "key_points": [
+    "Big-O describes how work grows with input size, not how fast something runs. An O(n^2) algorithm can beat an O(n log n) one on small inputs and lose catastrophically on large ones.",
+    "The common shapes: O(1) constant, O(log n) halving, O(n) linear, O(n log n) a good sort, O(n^2) every pair.",
+    "A list membership test is O(n) \u2014 Python scans it. A set or dict lookup is O(1) on average, because it hashes straight to the slot.",
+    "That single swap is the most valuable optimisation in ordinary data work: a lookup inside a loop turns O(n^2) into O(n).",
+    "Appending to a list is amortised O(1); inserting at the front is O(n) because everything shifts. A deque is the structure for both ends.",
+    "Sorting is O(n log n) and is often worth doing once to make everything afterwards cheaper, rather than searching repeatedly.",
+    "Memory has a complexity too. Building a list of a million dictionaries to then aggregate is a memory decision as much as a time one."
+   ],
+   "example": {
+    "caption": "The reconciliation that took four hours",
+    "body": "For each of 50,000 ledger rows, check whether its id appears in a list of 50,000 expected ids. That is 2.5 billion comparisons, and it is the shape of nearly every accidentally slow script \u2014 a loop, and inside it a scan over something else. Convert the expected ids to a set once, up front, and each check becomes a hash lookup. Same logic, same output, 50,000 operations instead of 2.5 billion."
+   },
+   "misconceptions": [
+    {
+     "claim": "Big-O tells you which code is faster.",
+     "correction": "It tells you how each scales. Constants and cache behaviour decide small inputs, and they can dominate entirely."
+    },
+    {
+     "claim": "`in` is a cheap operator.",
+     "correction": "Its cost depends entirely on what is on the right. On a list it scans; on a set it hashes."
+    }
+   ],
+   "interview_angle": "Rarely asked directly in analyst interviews, and constantly asked indirectly: 'this job takes six hours, what would you look at'.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Time_complexity",
+    "https://en.wikipedia.org/wiki/Big_O_notation",
+    "https://en.wikipedia.org/wiki/Hash_table"
+   ]
+  },
+  {
+   "id": "py-pandas",
+   "title": "pandas: grain, merge, and the index that bites",
+   "track": "python",
+   "skill": "python",
+   "concept": "pandas",
+   "level": "foundation",
+   "order": 2,
+   "prerequisites": [
+    "py-complexity"
+   ],
+   "hook": "pandas is SQL with an extra concept \u2014 the index \u2014 and most confusing behaviour comes from that concept doing something you did not ask for.",
+   "objectives": [
+    "State a DataFrame's grain and keep track of it through a merge",
+    "Choose between merge, join and concat deliberately",
+    "Say what the index is doing to your operation"
+   ],
+   "key_points": [
+    "A DataFrame has a grain exactly like a table does, and merge changes it exactly like a join does. The one-to-many fan-out is the same bug in a different language.",
+    "The index is a labelled axis, not just row numbers. Operations align on it silently, which is powerful and is why arithmetic between two Series can produce NaNs where you expected numbers.",
+    "merge joins on columns; join defaults to joining on the index; concat stacks along an axis without matching keys. Reaching for the wrong one produces confidently wrong shapes.",
+    "Always check the row count before and after a merge. `validate='one_to_one'` or `'one_to_many'` makes pandas raise instead of silently duplicating.",
+    "groupby collapses to the grain of the grouping keys, like GROUP BY. transform returns a value per original row instead, which is the pandas equivalent of a window function.",
+    "Chained assignment \u2014 `df[df.a > 1]['b'] = 0` \u2014 may write to a temporary copy and silently do nothing. Use `.loc` for assignment.",
+    "NaN is not equal to itself, so filtering with `!= value` drops NaN rows exactly as SQL's three-valued logic does."
+   ],
+   "example": {
+    "caption": "The merge that quietly tripled the totals",
+    "body": "Merge a loans frame onto a payments frame and sum the principal. The number is three times too big and nothing errored \u2014 every loan's principal was repeated once per payment. This is the SQL grain lesson in pandas clothing, and the fix is the same: aggregate to loan grain first, or pass `validate='one_to_one'` and let it raise rather than compute."
+   },
+   "misconceptions": [
+    {
+     "claim": "merge and join are interchangeable.",
+     "correction": "join uses the index by default and merge uses columns. Mixing them up joins on the wrong thing and often still returns rows."
+    },
+    {
+     "claim": "A SettingWithCopyWarning is noise.",
+     "correction": "It is telling you the write may have gone to a copy. Sometimes it did, and your change silently vanished."
+    }
+   ],
+   "interview_angle": "Take-homes are usually pandas. The reviewable signal is whether you checked shape after a merge and handled nulls deliberately.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Pandas_(software)"
+   ]
+  },
+  {
+   "id": "py-vectorise",
+   "title": "Vectorisation: stop writing the loop",
+   "track": "python",
+   "skill": "python",
+   "concept": "vectorisation",
+   "level": "working",
+   "order": 3,
+   "prerequisites": [
+    "py-pandas"
+   ],
+   "hook": "A loop over a DataFrame is usually a hundred times slower than the vectorised form, and the vectorised form is usually shorter. This is the rare case where fast and readable are the same code.",
+   "objectives": [
+    "Replace an apply or iterrows with a vectorised expression",
+    "Say why vectorised operations are faster",
+    "Know when a loop is genuinely the right answer"
+   ],
+   "key_points": [
+    "Vectorised operations push the loop into compiled code operating over contiguous memory, avoiding per-row Python object overhead.",
+    "iterrows is the slowest common pattern: it builds a Series object per row. apply is better but still calls a Python function per row.",
+    "Boolean masks replace conditional loops: `df.loc[df.status == 'delinquent', 'flag'] = 1` touches every matching row in one operation.",
+    "np.where and np.select express if/else and multi-branch logic across a whole column at once.",
+    "Categorical dtypes cut memory dramatically for repeated strings, which matters more than speed once frames get large.",
+    "Vectorisation trades memory for speed \u2014 it materialises intermediate arrays. On a frame near your memory limit, chunking may beat it.",
+    "A loop is right when each iteration depends on the last, or when the work per row is genuinely complex. Recognising that is not a failure to vectorise."
+   ],
+   "example": {
+    "caption": "Same logic, two orders of magnitude",
+    "body": "Flagging delinquent loans with `for i, row in df.iterrows(): ...` constructs a Series for every row and calls back into Python each time. `df['flag'] = (df.paid_at.isna()). astype(int)` does the whole column in one compiled pass. On a few hundred rows neither matters. On a million the first is a coffee break and the second is instant, and the second is also less code."
+   },
+   "misconceptions": [
+    {
+     "claim": "apply is vectorised.",
+     "correction": "It is a loop with nicer syntax. It calls your Python function once per row."
+    },
+    {
+     "claim": "Vectorised is always better.",
+     "correction": "It builds intermediates. Near a memory ceiling, or with genuinely sequential logic, chunking or a loop wins."
+    }
+   ],
+   "interview_angle": "Shows up in take-home review rather than as a question. Vectorised code reads as someone who has processed real volumes.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Array_programming",
+    "https://en.wikipedia.org/wiki/Pandas_(software)"
+   ]
+  },
+  {
+   "id": "py-quality",
+   "title": "Making analysis code trustworthy",
+   "track": "python",
+   "skill": "python",
+   "concept": "reproducibility",
+   "level": "working",
+   "order": 4,
+   "prerequisites": [
+    "py-pandas"
+   ],
+   "hook": "Analysis code has a specific failure mode: it runs, produces a number, and the number is wrong. Nothing crashes. The habits that catch that are cheap and mostly unglamorous.",
+   "objectives": [
+    "Add assertions that catch a wrong answer, not just a crash",
+    "Make a result reproducible by someone else",
+    "Say what belongs in a test for a data pipeline"
+   ],
+   "key_points": [
+    "Assert the shape of your data at each step: expected row count, no unexpected nulls, keys unique where they should be. A pipeline that fails loudly beats one that returns a plausible number.",
+    "Reconciliation is the strongest check available in analysis: totals tie to a known source, counts match upstream, a sum by segment equals the overall sum.",
+    "Pin dependencies. An analysis that produced a number last quarter and cannot reproduce it today is not evidence of anything.",
+    "Set random seeds wherever sampling or model fitting happens, or the number changes between runs and nobody can tell whether a change is real.",
+    "Test the transformation functions, not the notebook. A function taking a frame and returning a frame is testable with a five-row fixture; a notebook is not.",
+    "The tests worth writing are the edge cases that produce silent wrongness: empty input, all-null column, duplicate keys, a single row.",
+    "Separate extraction from transformation. Code that fetches and transforms in one function can only be tested with a live connection, so it will not be tested."
+   ],
+   "example": {
+    "caption": "The assertion that would have caught it",
+    "body": "One line after a merge \u2014 `assert len(df) == len(loans), f'grain changed: {len(df)} vs {len(loans)}'` \u2014 turns the most common silent error in analysis into an immediate, specific failure. It costs nothing to write, it documents the intended grain for the next reader, and it fails at the moment the mistake happens rather than three steps later in a total that merely looks high."
+   },
+   "misconceptions": [
+    {
+     "claim": "Analysis code does not need tests.",
+     "correction": "It needs them more than most code, because its failure mode is a wrong number rather than an exception. Nothing else will catch that."
+    },
+    {
+     "claim": "It ran without errors, so it is correct.",
+     "correction": "Every silent data bug ran without errors. That is the definition of the category."
+    }
+   ],
+   "interview_angle": "'How do you know your analysis is right' is a seniority question. Reconciliation and assertions are the answer; 'I check it carefully' is not.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Unit_testing",
+    "https://en.wikipedia.org/wiki/Data_validation"
+   ]
+  },
+  {
+   "id": "dm-normalisation",
+   "title": "Normalisation, and when to stop",
+   "track": "modelling",
+   "skill": "data-modeling",
+   "concept": "normalisation",
+   "level": "foundation",
+   "order": 1,
+   "prerequisites": [],
+   "hook": "Normalisation exists to stop the same fact being stored twice, because two copies eventually disagree. Analytical modelling then deliberately breaks it, and knowing why is the whole subject.",
+   "objectives": [
+    "Explain what an update anomaly is",
+    "Describe third normal form in a sentence",
+    "Say why warehouses denormalise on purpose"
+   ],
+   "key_points": [
+    "Normalisation organises tables so each fact is stored once. The point is to prevent anomalies, where updating a fact in one place leaves a stale copy elsewhere.",
+    "First normal form: no repeating groups, one value per cell. Second: no partial dependency on part of a composite key. Third: no attribute depending on another non-key attribute.",
+    "In practice, third normal form means every column describes the key, the whole key and nothing but the key.",
+    "Transactional systems normalise because they are write-heavy and correctness under concurrent updates is the priority.",
+    "Analytical systems denormalise because they are read-heavy: joins cost time on every query, storage is cheap, and the data is loaded rather than updated in place.",
+    "The denormalised copy is safe precisely because it is derived. It is rebuilt from the normalised source, so a disagreement is a pipeline bug rather than a permanent inconsistency.",
+    "Choosing a shape means naming the workload. Neither form is correct in the abstract."
+   ],
+   "example": {
+    "caption": "The address stored twice",
+    "body": "Put the borrower's address on every loan row and one borrower moving means updating every one of their loans. Miss one and you now have two addresses for one person, with nothing to say which is right. That is an update anomaly, and it is the entire argument for normalisation. In a warehouse the same duplication is fine \u2014 because nobody updates it in place, and the whole table is rebuilt from the source that does store it once."
+   },
+   "misconceptions": [
+    {
+     "claim": "Normalised is correct and denormalised is lazy.",
+     "correction": "They optimise for different workloads. A star schema is a deliberate denormalisation, not a mistake."
+    },
+    {
+     "claim": "More normalisation is always safer.",
+     "correction": "Past third normal form the gains are usually theoretical and the join cost is real."
+    }
+   ],
+   "interview_angle": "'Walk me through how you would model this' expects the workload to be named before the shape is chosen.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Database_normalization",
+    "https://www.ibm.com/think/topics/data-modeling"
+   ]
+  },
+  {
+   "id": "dm-dimensional",
+   "title": "Facts, dimensions, and stating the grain",
+   "track": "modelling",
+   "skill": "data-modeling",
+   "concept": "dimensional-modelling",
+   "level": "working",
+   "order": 2,
+   "prerequisites": [
+    "dm-normalisation"
+   ],
+   "hook": "Dimensional modelling is a small vocabulary that makes analytical databases predictable \u2014 and almost every wrong number in one comes from skipping its first step.",
+   "objectives": [
+    "Separate facts from dimensions in a new domain",
+    "State a fact table's grain before designing it",
+    "Explain why a star beats a snowflake for analysis"
+   ],
+   "key_points": [
+    "A fact table holds measurements \u2014 things you sum, count or average \u2014 at a stated grain. A dimension table holds the descriptive attributes you filter and group by.",
+    "Declaring the grain is the first step and the one people skip: 'one row per payment', not 'payments'. Every subsequent decision depends on it.",
+    "Facts are numeric and additive where possible. A fact that cannot be summed across a dimension \u2014 a ratio, a percentage \u2014 is a warning sign; store the numerator and denominator instead.",
+    "A star schema keeps dimensions denormalised and one join from the fact. A snowflake normalises them into chains, saving space and costing joins on every query.",
+    "Conformed dimensions are shared across fact tables, which is what lets two different processes be compared on the same customer or the same date.",
+    "Mixing grains in one fact table is the classic error \u2014 order headers and order lines together \u2014 and it makes every aggregate ambiguous.",
+    "A date dimension is worth building rather than deriving, because fiscal periods, holidays and week definitions are business facts that do not follow from a timestamp."
+   ],
+   "example": {
+    "caption": "Two facts, two grains, one mistake",
+    "body": "Loan originations and loan payments are different processes measured at different grains, and putting them in one table forces a row to be either a loan with null payment columns or a payment with repeated loan columns. Either way every SUM needs a filter nobody will remember to write. Two fact tables sharing a conformed borrower and date dimension answers both questions and can still be joined when someone asks a question spanning them."
+   },
+   "misconceptions": [
+    {
+     "claim": "Star schemas are outdated now that storage is cheap.",
+     "correction": "The shape exists for query predictability and comprehension, not storage. It is still the default in modern warehouses."
+    },
+    {
+     "claim": "Grain is obvious from the table name.",
+     "correction": "'payments' could be one row per payment, per scheduled instalment, or per payment attempt. Only stating it removes the ambiguity."
+    }
+   ],
+   "interview_angle": "Analytics-engineering interviews are largely this. Say the grain out loud first, every time.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Star_schema",
+    "https://www.ibm.com/think/topics/data-modeling"
+   ]
+  },
+  {
+   "id": "dm-scd",
+   "title": "History: what happens when an attribute changes",
+   "track": "modelling",
+   "skill": "data-modeling",
+   "concept": "scd",
+   "level": "interview",
+   "order": 3,
+   "prerequisites": [
+    "dm-dimensional"
+   ],
+   "hook": "A customer moves city. Overwrite the old value and last year's report quietly changes. That single decision is what slowly changing dimensions are about.",
+   "objectives": [
+    "Choose an SCD type for a given attribute",
+    "Explain why Type 1 makes old reports irreproducible",
+    "Write a query that gets the value as of a date"
+   ],
+   "key_points": [
+    "A slowly changing dimension is one whose descriptive attributes change over time. The type describes what happens to the previous value.",
+    "Type 1 overwrites. Simple, and it silently rewrites history \u2014 every report that grouped by the old value now reports differently.",
+    "Type 2 adds a new row with valid-from and valid-to dates and a current flag, preserving history at the cost of a dimension that grows and joins that need a date predicate.",
+    "Type 3 keeps a 'previous value' column, which handles exactly one change and is rarely the right answer.",
+    "The choice is a business question: does anyone need to reproduce last year's report exactly, or is the current value always what is meant.",
+    "With Type 2 the fact must join on the surrogate key valid at the transaction date, not on the natural key, or every historical row picks up today's attributes.",
+    "Auditability usually forces Type 2 in regulated domains, because 'what did we believe at the time' is a question someone will eventually have to answer."
+   ],
+   "example": {
+    "caption": "The report that changed after it was signed",
+    "body": "A borrower's risk band is corrected from B to A. With Type 1 the dimension is overwritten, and the delinquency-by-risk-band report for last quarter now shows different numbers than the copy that was signed off \u2014 with no record of why. With Type 2 the old row stays, closed off at the change date, and the historical report reproduces exactly while today's reporting uses the current row."
+   },
+   "misconceptions": [
+    {
+     "claim": "Type 2 everything to be safe.",
+     "correction": "It multiplies dimension rows and complicates every join. Use it where history is genuinely needed and Type 1 where the current value is always meant."
+    },
+    {
+     "claim": "A current-flag column is enough for history.",
+     "correction": "It tells you which row is current, not which was current on a given date. Reproducing an old report needs the valid-from and valid-to range."
+    }
+   ],
+   "interview_angle": "A near-guaranteed question in analytics engineering. Naming the audit implication rather than only the mechanics is what distinguishes an answer.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Slowly_changing_dimension",
+    "https://en.wikipedia.org/wiki/Star_schema"
+   ]
+  },
+  {
+   "id": "dm-metrics",
+   "title": "Metric definitions, and where they should live",
+   "track": "modelling",
+   "skill": "data-modeling",
+   "concept": "semantic-layer",
+   "level": "advanced",
+   "order": 4,
+   "prerequisites": [
+    "dm-dimensional"
+   ],
+   "hook": "Two dashboards showing different revenue for the same month is the most common failure in analytics, and it is never a data problem. It is two people having written the definition twice.",
+   "objectives": [
+    "Say why a metric defined in three dashboards is three metrics",
+    "Describe what a semantic layer does",
+    "Design a metric that survives being asked about"
+   ],
+   "key_points": [
+    "A metric is a definition, not a number: what is counted, at what grain, over which population, with which filters and which time basis.",
+    "When each dashboard implements the definition itself, the definitions drift, and the disagreement surfaces in a meeting rather than in a test.",
+    "A semantic layer defines metrics once, above the tables and below the dashboards, so every consumer resolves the same definition.",
+    "The definition must state the time basis explicitly \u2014 booked date versus recognised date versus paid date produce different and equally defensible revenue numbers.",
+    "A metric tree decomposes a headline number into the factors that drive it, so a movement can be attributed rather than merely observed.",
+    "Ownership matters as much as definition. A metric with no owner is one nobody may change, and therefore one everyone quietly forks.",
+    "Changing a definition changes history. Version it and say when it changed, or a step in the chart gets blamed on the business."
+   ],
+   "example": {
+    "caption": "Three revenue numbers, all correct",
+    "body": "Finance counts revenue when it is recognised. Sales counts it when the deal is booked. The ops dashboard counts it when cash arrives. All three are right, all three differ, and every meeting starts by relitigating whose number is real. The fix is not choosing a winner \u2014 it is naming all three, defining each once, and labelling every chart with which one it shows."
+   },
+   "misconceptions": [
+    {
+     "claim": "Everyone knows what revenue means.",
+     "correction": "Everyone knows what it means to them. The disagreement is invisible until two numbers meet."
+    },
+    {
+     "claim": "A semantic layer is a BI tool feature.",
+     "correction": "It is a discipline about where definitions live. A well-run dbt project with tested metric models is one."
+    }
+   ],
+   "interview_angle": "'Two dashboards disagree, what do you do' \u2014 the answer is to compare the definitions before comparing the data.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Semantic_layer",
+    "https://www.ibm.com/think/topics/business-intelligence"
+   ]
+  },
+  {
+   "id": "pipe-shapes",
+   "title": "ETL, ELT, and where the transform belongs",
+   "track": "pipelines",
+   "skill": "etl-quality",
+   "concept": "pipeline-shapes",
+   "level": "foundation",
+   "order": 1,
+   "prerequisites": [],
+   "hook": "The letters describe one decision: do you clean the data before it lands or after. That choice decides what you can recover from when a transformation turns out to be wrong.",
+   "objectives": [
+    "Choose between ETL and ELT for a given constraint",
+    "Explain why keeping raw data is a recoverability decision",
+    "Say when ETL is still right"
+   ],
+   "key_points": [
+    "ETL transforms in a dedicated step and loads the result. ELT loads raw data into the destination and transforms it there using the warehouse's own compute.",
+    "ELT became the default because warehouse compute got cheap and elastic, so the transformation step no longer needed its own infrastructure.",
+    "The decisive argument is recoverability. ELT keeps the raw data, so a transformation bug is re-runnable; under ETL the untransformed data was never stored and the mistake is permanent.",
+    "ETL still wins where raw data must not land in the destination at all \u2014 regulated fields, secrets, anything the destination is not cleared to hold.",
+    "A staging layer holding raw-as-landed data is what makes ELT recoverable. Transforming straight into the presentation layer gives up the benefit while keeping the shape.",
+    "Layering \u2014 raw, then cleaned and conformed, then presentation \u2014 makes each step testable and lets a failure be traced to a stage rather than a pipeline.",
+    "Incremental loads process only what changed. They are much cheaper and much easier to get subtly wrong than full refreshes."
+   ],
+   "example": {
+    "caption": "The bug you can and cannot recover from",
+    "body": "A currency conversion is applied with the wrong rate for a week. Under ELT the raw amounts are still in staging: fix the transformation, re-run, done. Under ETL the converted values are all you ever stored, the original amounts are gone, and there is no way back except re-extracting from a source that may itself have moved on. Same bug, one afternoon versus a data-loss incident."
+   },
+   "misconceptions": [
+    {
+     "claim": "ELT is just ETL with the steps reordered.",
+     "correction": "Reordering is what preserves the raw data, which changes what is recoverable. That is the substance, not the sequence."
+    },
+    {
+     "claim": "Incremental is always better than full refresh.",
+     "correction": "Incremental has to handle late-arriving and deleted records correctly. A full refresh is often the right choice until volume forces the issue."
+    }
+   ],
+   "interview_angle": "'Walk me through a pipeline you built' \u2014 your Supreme Lending pipeline answers this. Say which shape it was and why.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Extract,_transform,_load",
+    "https://www.ibm.com/think/topics/etl"
+   ]
+  },
+  {
+   "id": "pipe-idempotence",
+   "title": "Retries: designing for the second run",
+   "track": "pipelines",
+   "skill": "etl-quality",
+   "concept": "idempotence",
+   "level": "working",
+   "order": 2,
+   "prerequisites": [
+    "pipe-shapes"
+   ],
+   "hook": "Every scheduler retries. If running your pipeline twice does not produce the same result as running it once, you have a data corruption bug waiting for a bad network day.",
+   "objectives": [
+    "Say what makes an operation idempotent",
+    "Turn an append-based load into a safe one",
+    "Explain why partial failure is the hard case"
+   ],
+   "key_points": [
+    "An operation is idempotent when applying it more than once leaves the same end state as applying it once. That is what makes an automatic retry safe.",
+    "Appending is not idempotent: a retry after a partial failure duplicates whatever the first attempt wrote.",
+    "Upserting on a natural key is idempotent, because the second run overwrites the rows the first wrote rather than adding to them.",
+    "Replacing a whole partition is the simplest idempotent pattern in warehousing: delete the day and rewrite it, so a re-run converges regardless of what the first attempt managed.",
+    "Partial failure is the difficult case: some rows written, then a crash. Without transactions or partition replacement you cannot tell how far it got.",
+    "Side effects outside the database \u2014 emails, webhooks, file drops \u2014 are the ones retries hurt most, and they need their own deduplication key.",
+    "Backfills are just retries over a wider window. A pipeline that is safe to retry is safe to backfill, and one that is not cannot be corrected without manual cleanup."
+   ],
+   "example": {
+    "caption": "The day that got counted twice",
+    "body": "A nightly job appends yesterday's payments. It times out at 90% and the scheduler retries. Now 90% of yesterday's payments exist twice, every downstream total is inflated by an amount nobody can derive, and the only fix is identifying and deleting the duplicates by hand. Replacing the partition instead \u2014 delete where date = yesterday, then insert \u2014 makes the retry a no-op regardless of where the first run died."
+   },
+   "misconceptions": [
+    {
+     "claim": "Retries are rare enough not to design for.",
+     "correction": "Every orchestrator retries by default. It is a normal operating condition, not an exception."
+    },
+    {
+     "claim": "A unique constraint makes it idempotent.",
+     "correction": "It stops duplicates by making the retry fail. That is a stuck pipeline rather than a converged one \u2014 better than corruption, worse than an upsert."
+    }
+   ],
+   "interview_angle": "'What happens if this job runs twice' is a standard data-engineering probe. Naming partition replacement or upsert-by-key is the answer.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Idempotence",
+    "https://www.ibm.com/think/topics/etl"
+   ]
+  },
+  {
+   "id": "pipe-quality",
+   "title": "Testing data, not just code",
+   "track": "pipelines",
+   "skill": "etl-quality",
+   "concept": "data-quality",
+   "level": "working",
+   "order": 3,
+   "prerequisites": [
+    "pipe-idempotence"
+   ],
+   "hook": "Code tests tell you the transformation does what you wrote. Data tests tell you the data is what you assumed \u2014 and it is the second one that fails at three in the morning.",
+   "objectives": [
+    "Write the four tests that catch most breakages",
+    "Decide what should fail the pipeline versus warn",
+    "Say why freshness is a data test"
+   ],
+   "key_points": [
+    "The high-value tests are few: uniqueness of the key, not-null on required fields, accepted values for enums, and referential integrity to the parent table.",
+    "Row-count and volume anomaly checks catch the silent partial load, which no schema test will notice because every row present is valid.",
+    "Freshness is a data test. A table that stopped updating looks perfectly healthy to every other check, and staleness is invisible in the data itself.",
+    "Distribution checks \u2014 a mean or null rate outside its usual range \u2014 catch upstream semantic changes that keep the schema intact.",
+    "Severity is a design decision. A failed uniqueness test on a primary key should stop the pipeline; a slightly unusual distribution should warn, because blocking on it trains people to ignore alerts.",
+    "Test at the boundary where data enters your control. Failing at ingestion localises the problem to the source; failing three models later means debugging the wrong thing.",
+    "Reconciliation against an authoritative source is the strongest test available and the one most worth the effort where money is involved."
+   ],
+   "example": {
+    "caption": "The check that catches what schemas cannot",
+    "body": "An upstream system changes so missing income arrives as 0 rather than null. Every row is present, every type is right, every not-null test passes, and the average income silently drops by a third. Only a distribution check notices. This is the argument for testing values and not only shapes \u2014 and it is the same failure that silently poisons a model downstream."
+   },
+   "misconceptions": [
+    {
+     "claim": "Schema validation is data quality.",
+     "correction": "It catches structural change. Semantic change \u2014 a default flipping, a unit changing \u2014 passes every schema check."
+    },
+    {
+     "claim": "Every failing test should stop the pipeline.",
+     "correction": "Blocking on soft signals produces alert fatigue, and then the hard failures get ignored too."
+    }
+   ],
+   "interview_angle": "'How do you know the data is right' \u2014 your GL reconciliation and control work answers this directly. Lead with the reconciliation.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Data_validation",
+    "https://www.ibm.com/think/topics/data-quality"
+   ]
+  },
+  {
+   "id": "pipe-incremental",
+   "title": "Incremental loading and change capture",
+   "track": "pipelines",
+   "skill": "etl-quality",
+   "concept": "incremental",
+   "level": "interview",
+   "order": 4,
+   "prerequisites": [
+    "pipe-idempotence"
+   ],
+   "hook": "Full refreshes are simple and eventually impossible. Everything hard about the alternative comes down to three cases: updates, deletes, and things arriving late.",
+   "objectives": [
+    "Choose an incremental strategy for a source",
+    "Say why deletes are the hard case",
+    "Handle late-arriving data without reprocessing everything"
+   ],
+   "key_points": [
+    "Incremental loading processes only records changed since the last run, identified by a watermark \u2014 usually an updated-at timestamp or an increasing id.",
+    "A timestamp watermark misses any row whose updated-at is not maintained, and silently: the row exists, it is just never picked up again.",
+    "Deletes are the fundamental problem. A source row that disappears has no updated-at, so watermark-based loads never learn about it and the warehouse keeps a record the source says is gone.",
+    "Change data capture reads the database's transaction log instead, so inserts, updates and deletes all appear as events, in order.",
+    "Late-arriving data breaks naive watermarks: a record inserted with an old timestamp lands behind the mark and is skipped forever. Overlapping windows or a lookback period are the usual mitigations.",
+    "Out-of-order events must be applied by their own timestamp rather than arrival order, or a stale update overwrites a newer value.",
+    "Full refresh remains correct and is often right. Move to incremental when volume forces it, not because it seems more sophisticated."
+   ],
+   "example": {
+    "caption": "The loan that stayed cancelled forever",
+    "body": "A loan is cancelled and the row is deleted from the source. The nightly incremental load selects rows where updated_at > watermark; the deleted row has no updated_at because it no longer exists. It is never selected again, so the warehouse keeps it forever, and every count of active loans is one too high \u2014 permanently, silently, and with no error anywhere. This is why soft deletes or CDC exist."
+   },
+   "misconceptions": [
+    {
+     "claim": "Incremental is strictly better than full refresh.",
+     "correction": "It is cheaper and more complex. Correctness now depends on the source maintaining timestamps and on you handling deletes."
+    },
+    {
+     "claim": "CDC is just a faster incremental load.",
+     "correction": "It carries deletes and ordering, which watermarks structurally cannot. That is a correctness difference, not a speed one."
+    }
+   ],
+   "interview_angle": "'How would you keep the warehouse in sync' \u2014 mention deletes before you are asked, because that is the part most answers miss.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Change_data_capture",
+    "https://en.wikipedia.org/wiki/Extract,_transform,_load"
+   ]
+  },
+  {
+   "id": "bi-charts",
+   "title": "Choosing a chart is choosing a comparison",
+   "track": "bi",
+   "skill": "dashboard-design",
+   "concept": "chart-choice",
+   "level": "foundation",
+   "order": 1,
+   "prerequisites": [],
+   "hook": "A chart type is not a style preference. It encodes a specific comparison, and the wrong encoding makes the reader do arithmetic they will get wrong.",
+   "objectives": [
+    "Pick an encoding from the comparison being made",
+    "Say why pie charts and dual axes mislead",
+    "Order categories deliberately"
+   ],
+   "key_points": [
+    "Decide the comparison first \u2014 over time, between categories, part to whole, relationship between two measures \u2014 and the chart type follows.",
+    "People judge position along a common scale most accurately, then length, then angle, then area, then colour. Encode the most important comparison in the most accurate channel available.",
+    "Pie charts encode as angle and area, the two weakest channels, which is why comparing slices is hard and why a bar chart almost always beats one.",
+    "Bar charts must start at zero, because the bar's length is the encoding. Line charts need not, because the encoding is the slope.",
+    "Dual axes let you place any two series in any apparent relationship by choosing the scales. They imply a correlation the data may not contain.",
+    "Sort categorical bars by value rather than alphabetically unless the order is meaningful. Alphabetical order encodes nothing and hides the ranking.",
+    "Colour should carry meaning consistently \u2014 same metric, same colour, everywhere \u2014 and should not be the only channel, for readers with colour vision differences.",
+    "Direct labelling beats a legend. A legend makes the reader look away and match, every single time."
+   ],
+   "example": {
+    "caption": "The truncated axis",
+    "body": "Delinquency moves from 2.1% to 2.3%. On a bar chart with the axis starting at 2.0% the second bar is three times the height of the first, and every reader takes away 'delinquency tripled'. Nothing was falsified \u2014 the numbers are printed right there \u2014 and the chart still lied, because the encoding is length and the length was made to say something the data does not."
+   },
+   "misconceptions": [
+    {
+     "claim": "Always start every axis at zero.",
+     "correction": "Bars, yes \u2014 the length is the encoding. Lines showing change over a narrow range are unreadable at zero and the slope is the encoding."
+    },
+    {
+     "claim": "More colour makes a chart clearer.",
+     "correction": "Colour without meaning is decoration that competes with the data for attention."
+    }
+   ],
+   "interview_angle": "Portfolio and take-home review. A chart that starts at a non-zero baseline or uses a dual axis invites exactly the question you do not want.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Data_visualization",
+    "https://www.ibm.com/think/topics/data-visualization"
+   ]
+  },
+  {
+   "id": "bi-dashboards",
+   "title": "Designing backwards from the decision",
+   "track": "bi",
+   "skill": "dashboard-design",
+   "concept": "dashboard-design",
+   "level": "working",
+   "order": 2,
+   "prerequisites": [
+    "bi-charts"
+   ],
+   "hook": "A dashboard nobody can name a decision for is a wall of charts. Naming the decision first is what makes everything else \u2014 which metrics, which cuts, what to remove \u2014 answerable.",
+   "objectives": [
+    "Start from the decision and the person making it",
+    "Justify removing a chart",
+    "Design for the glance before the investigation"
+   ],
+   "key_points": [
+    "Start with the decision and its owner. 'What will someone do differently as a result of this screen' is the question that determines everything else.",
+    "Show the exception, not the state. A number that is normal needs no attention; the value of a dashboard is surfacing what is not normal.",
+    "A number without a comparison is not information. Every headline figure needs a baseline \u2014 last period, target, or same period last year.",
+    "Design for the glance first: the top of the screen answers 'is anything wrong', and detail lives below for when the answer is yes.",
+    "Every additional chart makes the others harder to see. Removing one is a real improvement, and 'someone might want it' is not a requirement.",
+    "Filters are a cost. Each one is a decision pushed onto the reader, and a sensible default beats a filter they must set correctly.",
+    "State the refresh time and the definitions on the screen. A dashboard whose freshness is unknown gets verified elsewhere, and then it is not being used.",
+    "If people export it to a spreadsheet, the dashboard failed at something specific \u2014 find out what and fix that."
+   ],
+   "example": {
+    "caption": "Four tabs down to one number and a list",
+    "body": "An operations lead checked four tabs each morning to find the accounts needing attention. The replacement was one number \u2014 how many need attention today \u2014 and the list of those accounts, with everything else moved behind a link. Fewer charts, strictly less information on screen, and the morning check went from ten minutes to ten seconds, because the dashboard was finally doing the selection instead of delegating it."
+   },
+   "misconceptions": [
+    {
+     "claim": "More metrics make a dashboard more useful.",
+     "correction": "Each one competes for attention. Past a handful the reader stops scanning and starts hunting."
+    },
+    {
+     "claim": "Everything should be filterable.",
+     "correction": "Filters move work onto the reader and multiply the states you must design for. Defaults are a decision you can make once."
+    }
+   ],
+   "interview_angle": "Everyone claims dashboards. What distinguishes an answer is naming the decision, the person, and what you removed.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Dashboard_(business)",
+    "https://www.ibm.com/think/topics/dashboard"
+   ]
+  },
+  {
+   "id": "bi-communicating",
+   "title": "Delivering a finding so it lands",
+   "track": "bi",
+   "skill": "dashboard-design",
+   "concept": "communication",
+   "level": "interview",
+   "order": 3,
+   "prerequisites": [
+    "bi-dashboards"
+   ],
+   "hook": "Analysis that is right and ignored has the same effect as analysis that is wrong. How a finding is delivered is part of the work, not a soft skill bolted on after.",
+   "objectives": [
+    "Lead with the answer",
+    "State uncertainty without undermining the finding",
+    "Anticipate the first question an executive will ask"
+   ],
+   "key_points": [
+    "Lead with the answer and the recommended action. Method belongs after, and in an appendix if it is long \u2014 the reader decides how deep to go, not you.",
+    "One message per deliverable. If there are three findings, they are three deliverables or three clearly separated sections.",
+    "State the uncertainty in terms of the decision: 'this holds unless volume drops below X' is useful, 'p = 0.04' is not, to that audience.",
+    "Name the limitation before it is found. Volunteering the weakness builds more credibility than defending it under questioning.",
+    "Quantify the so-what. 'Conversion is down 3%' becomes actionable as 'that is roughly 40 applications a month'.",
+    "Expect the first question to be 'is the data right', and have the reconciliation ready. That question is about trust rather than about data, and answering it once buys the rest of the meeting.",
+    "Write the title of the chart as the finding \u2014 'Delinquency concentrated in one product' \u2014 rather than as a description of the axes."
+   ],
+   "example": {
+    "caption": "Two openings, same analysis",
+    "body": "'I pulled six months of data, joined it to the servicing system, and after excluding test accounts I found\u2026' \u2014 you have lost the room before the finding. Versus: 'Delinquency is concentrated in one product, which accounts for 70% of it on 20% of volume. I would tighten that product's criteria. Here is how I checked it.' Identical work. The second one gets a decision; the first gets a follow-up meeting."
+   },
+   "misconceptions": [
+    {
+     "claim": "Showing your working builds credibility.",
+     "correction": "Showing it first buries the finding. Making it available on request is what builds credibility."
+    },
+    {
+     "claim": "Caveats protect you.",
+     "correction": "Unprioritised caveats read as no confidence. Name the ones that would change the decision and drop the rest."
+    }
+   ],
+   "interview_angle": "'Tell me about an analysis that changed a decision' is asking about this directly, and the answer must include how you delivered it.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Data_visualization",
+    "https://www.ibm.com/think/topics/business-intelligence"
+   ]
+  },
+  {
+   "id": "cs-structures",
+   "title": "Data structures: choosing what to look things up in",
+   "track": "cs",
+   "skill": "cs-foundations",
+   "concept": "data-structures",
+   "level": "foundation",
+   "order": 1,
+   "prerequisites": [],
+   "hook": "Four structures cover almost everything in ordinary engineering. Knowing what each costs is what turns a slow program into a fast one without any cleverness.",
+   "objectives": [
+    "Choose between list, set, dict and deque for a task",
+    "Say what a hash table trades for O(1) lookup",
+    "Recognise when sorting first is the right move"
+   ],
+   "key_points": [
+    "An array or list gives O(1) access by position and O(n) search by value, because it must scan.",
+    "A hash table gives average O(1) insert and lookup by hashing the key straight to a slot. Python's dict and set are hash tables.",
+    "The trade is that hash tables are unordered, use more memory, and need hashable keys. Worst case degrades to O(n) under heavy collision.",
+    "A binary search tree keeps keys ordered, giving O(log n) lookup plus ordered traversal and range queries \u2014 which a hash table cannot do at all.",
+    "Binary search over a sorted array is O(log n) but requires the sort first. Sorting once to search many times is usually the right trade.",
+    "A queue and a stack differ only in which end you remove from, and that difference is breadth-first versus depth-first traversal.",
+    "The practical rule: if you are searching a collection inside a loop, it should almost certainly be a set or dict."
+   ],
+   "example": {
+    "caption": "Ordered or fast \u2014 pick one",
+    "body": "You need to know whether an id has been seen: a set, O(1), done. You need the ids in order, or all ids between two values: a hash table cannot help you at all, and you want a sorted structure. This is the whole trade in one line \u2014 hashing destroys order to buy constant-time lookup, and if you need the order back you have to pay for it somewhere else."
+   },
+   "misconceptions": [
+    {
+     "claim": "Dictionaries are unordered in Python.",
+     "correction": "They preserve insertion order since 3.7. That is not the same as being sorted, and lookup is still by hash."
+    },
+    {
+     "claim": "Hash lookup is always O(1).",
+     "correction": "It is O(1) on average. Pathological collisions degrade it, which is why hash quality matters."
+    }
+   ],
+   "interview_angle": "Analyst roles rarely ask this directly and technical screens do. It is also the answer to most 'why is this script slow' questions.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Hash_table",
+    "https://en.wikipedia.org/wiki/Binary_search_algorithm",
+    "https://en.wikipedia.org/wiki/Sorting_algorithm"
+   ]
+  },
+  {
+   "id": "cs-systems",
+   "title": "Caching, queues and the shape of a system",
+   "track": "cs",
+   "skill": "cs-foundations",
+   "concept": "systems",
+   "level": "working",
+   "order": 2,
+   "prerequisites": [
+    "cs-structures"
+   ],
+   "hook": "Two ideas explain most of how systems are made to scale: keep a copy of expensive answers, and stop making the caller wait for work that can happen later.",
+   "objectives": [
+    "Say what a cache costs as well as what it saves",
+    "Explain why a queue decouples producer from consumer",
+    "Name the invalidation problem"
+   ],
+   "key_points": [
+    "A cache stores the result of expensive work so later requests skip it. The cost is that the copy can be stale, and knowing when to discard it is the hard part.",
+    "Cache invalidation is genuinely hard because correctness now depends on knowing every event that could change the underlying answer \u2014 and the cache is usually far from those events.",
+    "Time-based expiry trades staleness for simplicity and is right far more often than people admit. Event-based invalidation is exact and couples the cache to every writer.",
+    "A queue lets a producer hand off work and return immediately, so a slow consumer creates a backlog rather than a timeout.",
+    "That decoupling is also a durability boundary: work in a queue survives the consumer restarting, which an in-process background thread does not.",
+    "Queues change delivery guarantees. At-least-once is the common default, which means consumers must be idempotent \u2014 the same property pipelines need for retries.",
+    "Backpressure matters: an unbounded queue converts a throughput problem into a memory problem and fails later and worse.",
+    "Every cache and queue adds a place where the system can be inconsistent. Add them to solve a measured problem, not by default."
+   ],
+   "example": {
+    "caption": "The dashboard that showed yesterday",
+    "body": "A dashboard query is expensive, so its result is cached for an hour. Someone corrects a record and refreshes, and the old number is still there \u2014 the cache has no idea a write happened. They refresh again, get the same number, and conclude the system is broken. Nothing is broken; the invalidation was never wired. Showing the cache timestamp on screen would have turned a bug report into a shrug."
+   },
+   "misconceptions": [
+    {
+     "claim": "Caching is free performance.",
+     "correction": "It buys speed with staleness and adds a second source of truth to keep consistent."
+    },
+    {
+     "claim": "A queue guarantees exactly-once delivery.",
+     "correction": "Most give at-least-once. Exactly-once is expensive and usually approximated by making consumers idempotent."
+    }
+   ],
+   "interview_angle": "System-design questions in data roles usually reduce to these two plus idempotence, which you already have from the pipelines track.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Cache_(computing)",
+    "https://en.wikipedia.org/wiki/Message_queue",
+    "https://en.wikipedia.org/wiki/Concurrency_(computer_science)"
+   ]
   }
  ]
 }

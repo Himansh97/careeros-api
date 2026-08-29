@@ -230,6 +230,55 @@ def streak(*, now: datetime | None = None) -> int:
     return count
 
 
+# One lesson from an interview track and one from an AI track, alternating by
+# day. Two tracks in parallel keeps the applications served and the interest
+# alive; running nine at once would finish none of them.
+LESSON_TRACKS = (("sql", "stats", "modelling", "pipelines", "bi", "python", "cs"),
+                 ("llm", "ml"))
+
+
+def lesson_items(day: str | None = None) -> list[dict[str, Any]]:
+    """The next unstarted lesson from each side, in prerequisite order.
+
+    Derived rather than stored, like the demand items — so a lesson taught this
+    morning is not offered again this afternoon.
+
+    Which track within a side rotates by day, so a stalled track does not block
+    the other six behind it. The lesson within a track never rotates: the order
+    is the teaching, and grain comes before joins whatever day it is.
+    """
+    from .lessons import overview
+
+    day = day or today()
+    index = sum(ord(c) for c in day)
+    out: list[dict[str, Any]] = []
+
+    for side in LESSON_TRACKS:
+        # Rotate the starting point, then take the first side that has anything
+        # left — so a finished track is skipped rather than yielding nothing.
+        rotated = side[index % len(side):] + side[: index % len(side)]
+        for track in rotated:
+            data = overview(track)
+            nxt = data["next"].get(track)
+            if not nxt:
+                continue
+            lesson = next(l for l in data["lessons"] if l["id"] == nxt)
+            out.append({
+                "term": lesson["title"],
+                "kind": "lesson",
+                "lessonId": lesson["id"],
+                "track": track,
+                "level": lesson["level"],
+                "demand": 0,
+                "questionId": "",
+                "companies": [],
+                "box": 0,
+                "hasCard": False,
+            })
+            break
+    return out
+
+
 def state(day: str | None = None) -> dict[str, Any]:
     """Today's round: the items, whether it is done, and the streak."""
     day = day or today()
@@ -241,7 +290,10 @@ def state(day: str | None = None) -> dict[str, Any]:
     if done and row:
         items = json.loads(row["items"] or "[]")
     else:
-        items = [i.as_dict() for i in build(day)]
+        # One demand item from the live pipeline, plus a lesson from each side.
+        # The demand item is what is about to be asked; the lessons are what
+        # actually builds the ability to answer it.
+        items = [i.as_dict() for i in build(day)][:1] + lesson_items(day)
 
     return {
         "day": day,
@@ -257,7 +309,7 @@ def complete(day: str | None = None, scored: int = 0,
              items: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """Record that today's round was worked."""
     day = day or today()
-    served = items if items is not None else [i.as_dict() for i in build(day)]
+    served = items if items is not None else state(day)["items"]
     at = datetime.now(timezone.utc).isoformat()
     with connect() as conn:
         conn.execute(

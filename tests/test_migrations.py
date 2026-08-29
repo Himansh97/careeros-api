@@ -40,13 +40,25 @@ class MigrationTests(unittest.TestCase):
                 "SELECT version, name, checksum FROM schema_migrations"
             ).fetchall()
 
-        self.assertEqual(status.current_version, 3)
+        # Derived from the registry rather than hardcoded. The point of this
+        # assertion is "a fresh database ends at the latest migration", and
+        # writing that as a literal meant every new migration failed the test
+        # for no reason other than existing.
+        expected = load_migrations()
+        self.assertEqual(status.current_version, expected[-1].version)
         self.assertTrue(
             {"applications", "timeline", "approvals", "job_flags"}.issubset(tables)
         )
         self.assertEqual(
             [(row["version"], row["name"]) for row in ledger],
-            [(1, "baseline"), (2, "trust_foundation"), (3, "liveness_evidence")],
+            [(m.version, m.name) for m in expected],
+        )
+        # The ordering matters as much as the set: migrations must be applied
+        # in version order or a later one can depend on a table that is not
+        # there yet.
+        self.assertEqual(
+            [row["version"] for row in ledger],
+            sorted(row["version"] for row in ledger),
         )
         self.assertEqual(len(ledger[0]["checksum"]), 64)
 
@@ -59,10 +71,11 @@ class MigrationTests(unittest.TestCase):
                 "SELECT COUNT(*) FROM schema_migrations"
             ).fetchone()[0]
 
-        self.assertEqual(first.current_version, 3)
-        self.assertEqual(second.current_version, 3)
+        latest = load_migrations()[-1].version
+        self.assertEqual(first.current_version, latest)
+        self.assertEqual(second.current_version, latest)
         self.assertEqual(second.applied_versions, ())
-        self.assertEqual(count, 3)
+        self.assertEqual(count, len(load_migrations()))
 
     def test_matching_legacy_database_is_baselined_without_replacing_rows(self) -> None:
         with sqlite3.connect(self.path) as connection:
@@ -94,10 +107,14 @@ class MigrationTests(unittest.TestCase):
     def test_checksum_change_is_refused(self) -> None:
         initialize(path=self.path)
         changed = Migration.build(1, "baseline", "SELECT 1;")
-        trust, liveness = load_migrations()[1:]
+        # Every migration except the tampered one, unchanged. Passing a subset
+        # made `initialize` refuse for a different reason — it saw applied
+        # versions the registry no longer contained — so the checksum guard this
+        # test exists for was never reached.
+        rest = load_migrations()[1:]
 
         with mock.patch.object(
-            db, "load_migrations", return_value=(changed, trust, liveness)
+            db, "load_migrations", return_value=(changed, *rest)
         ):
             with self.assertRaises(MigrationChecksumMismatch):
                 initialize(path=self.path)
