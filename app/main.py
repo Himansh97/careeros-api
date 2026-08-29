@@ -134,6 +134,28 @@ async def prep_overview() -> dict[str, Any]:
     return overview()
 
 
+@app.get("/api/prep/round")
+async def prep_round() -> dict[str, Any]:
+    """Today's three, drawn from what the staged pipeline is asking for.
+
+    Not from the resume deck. The deck is 158 terms written once; this is what
+    thirty live postings are asking about right now, which is a different list
+    and the one about to be tested.
+    """
+    from .daily_round import state
+
+    return state()
+
+
+@app.post("/api/prep/round/complete")
+async def prep_round_complete(body: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Mark today worked. The streak reads back from these rows."""
+    from .daily_round import complete
+
+    body = body or {}
+    return complete(scored=int(body.get("scored") or 0))
+
+
 @app.get("/api/prep/concepts")
 async def prep_concepts() -> dict[str, Any]:
     """Every technical term on the candidate's own resume, with its schedule.

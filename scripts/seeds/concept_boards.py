@@ -423,3 +423,237 @@ BOARDS = [
          blurb="Pipelines and warehouse modelling — the vocabulary these interviews run in.",
          notes=DATA),
 ]
+
+
+# ---------------------------------------------------------------------------
+# What the pipeline is actually asking for.
+#
+# Measured, not guessed: the 30 jobs staged to apply to name 60 distinct
+# requirements between them, and the boards above match none of them. Those
+# boards are a syllabus; this one is the market. Ordered by how many staged jobs
+# name each requirement, which is also the order they are worth learning in.
+#
+# Two of these — Reporting and Financial services — are domain framings rather
+# than crisp concepts. Their cards say what an interviewer means by the phrase
+# instead of pretending to a textbook definition, because pretending is how a
+# card teaches you to answer a question nobody asked.
+# ---------------------------------------------------------------------------
+
+DEMAND = [
+    note(
+        "SQL",  # 18 of 30 staged jobs
+        "SQL is a declarative language for querying and manipulating relational data: "
+        "you state the result you want and the database's planner decides how to get it. "
+        "In interviews it is mostly about grain — deciding what one row represents before "
+        "joining or aggregating anything.",
+        [W + "SQL", IBM + "structured-query-language"],
+        "You describe the answer you want, not the steps to get it. Most SQL that returns "
+        "wrong numbers is not wrong syntax — it is a join that quietly duplicated rows.",
+        "आप बताते हैं कि नतीजा क्या चाहिए, यह नहीं कि कैसे निकालना है। ग़लत आँकड़े देने वाली "
+        "ज़्यादातर SQL में सिन्टैक्स की ग़लती नहीं होती — जॉइन चुपचाप पंक्तियाँ दोगुनी कर देता है।",
+        "The single most demanded requirement in your pipeline — eighteen of thirty jobs. "
+        "What gets probed is rarely syntax: state the grain out loud before you join, know "
+        "why a LEFT JOIN to a one-to-many table inflates a SUM, and be able to reach for a "
+        "window function when someone asks for a running total or a rank within a group.",
+        dict(kind="flow", caption="Decide the grain before anything else",
+             nodes=[{"label": "Grain", "note": "what does one row mean?"},
+                    {"label": "Filter", "note": "cut before you join, where you can"},
+                    {"label": "Join", "note": "the step that duplicates rows"},
+                    {"label": "Aggregate", "note": "now the numbers are safe"}]),
+    ),
+    note(
+        "Reporting",  # 15 of 30
+        "Reporting is the recurring delivery of an agreed set of measures to a known "
+        "audience on a known schedule. It differs from analysis in its purpose: a report "
+        "answers the same question repeatedly so change is visible, while an analysis "
+        "answers a new question once.",
+        [W + "Business_reporting", IBM + "business-intelligence"],
+        "The same numbers, on time, every time, to people who will notice if they move. "
+        "Boring on purpose — the value is that it is comparable to last month.",
+        "वही आँकड़े, समय पर, हर बार, उन लोगों तक जो बदलाव तुरंत पकड़ लेंगे। जान-बूझकर उबाऊ — "
+        "इसकी क़ीमत इसी में है कि पिछले महीने से तुलना हो सके।",
+        "Fifteen of your thirty jobs name it, and the interview question behind it is "
+        "almost always about reliability rather than charts: what happens when the source "
+        "is late, how you know a number is wrong before the audience does, and whether "
+        "last quarter's report still reproduces. Have an answer about a control you built, "
+        "not a dashboard you designed.",
+        dict(kind="cycle", caption="It repeats, which is the whole point",
+             nodes=[{"label": "Agree measures", "note": "definitions fixed in advance"},
+                    {"label": "Refresh", "note": "on a schedule people rely on"},
+                    {"label": "Check", "note": "reconcile before anyone sees it"},
+                    {"label": "Deliver", "note": "same shape as last time"}]),
+    ),
+    note(
+        "Forecasting",  # 7 of 30
+        "Forecasting estimates future values from historical data, usually by separating a "
+        "series into trend, seasonality and noise and projecting the parts that persist. "
+        "The estimate is only useful with its uncertainty attached — a forecast without an "
+        "interval is a guess with a decimal point.",
+        [W + "Forecasting", W + "Time_series"],
+        "Working out what next month probably looks like, and saying how sure you are. "
+        "The range matters more than the number.",
+        "अगले महीने के आँकड़े का अनुमान लगाना — और यह भी बताना कि आप कितने आश्वस्त हैं। "
+        "अकेले आँकड़े से ज़्यादा अहम वह दायरा है जिसमें वह रह सकता है।",
+        "Seven of your jobs name it, and your Omnicals claim is a regression forecast with "
+        "a stated accuracy gain, so this one will be probed against your own bullet. Be "
+        "ready to say how you validated it — a holdout period, not a fit on all the data — "
+        "and what you did when the model missed.",
+        dict(kind="flow", caption="Decompose, project, and state the range",
+             nodes=[{"label": "Decompose", "note": "trend, seasonality, noise"},
+                    {"label": "Fit", "note": "on history, held-out period kept back"},
+                    {"label": "Project", "note": "forward, with an interval"},
+                    {"label": "Backtest", "note": "how wrong was it last time?"}]),
+    ),
+    note(
+        "Dashboarding",  # 7 of 30
+        "Dashboarding is designing a fixed set of visualisations that answer a defined "
+        "decision at a glance and refresh on their own. The design constraint is the "
+        "decision: a dashboard that shows everything supports nothing, because the viewer "
+        "has to do the selection the dashboard was meant to do.",
+        [W + "Dashboard_(business)", IBM + "data-visualization"],
+        "A screen someone checks to decide something. If nobody can say what decision it "
+        "drives, it is a wall of charts rather than a dashboard.",
+        "एक ऐसा स्क्रीन जिसे देखकर कोई फ़ैसला लिया जाता है। अगर कोई यह न बता सके कि इससे "
+        "कौन-सा फ़ैसला होता है, तो वह डैशबोर्ड नहीं, बस चार्टों की दीवार है।",
+        "The strong answer names the decision and the person, then what you removed. "
+        "Interviewers hear 'I built dashboards in Tableau' constantly; they remember 'the "
+        "ops lead was checking four tabs each morning, so I cut it to one number and an "
+        "exception list'.",
+        dict(kind="layers", caption="Design downward from the decision",
+             nodes=[{"label": "Decision", "note": "what will someone do differently?"},
+                    {"label": "Measures", "note": "the few that move that decision"},
+                    {"label": "Charts", "note": "chosen to make those readable"},
+                    {"label": "Refresh", "note": "so it is trusted without asking"}]),
+    ),
+    note(
+        "Data quality",  # 4 of 30
+        "Data quality is the fitness of data for its purpose, usually assessed on "
+        "dimensions such as accuracy, completeness, consistency, timeliness, validity and "
+        "uniqueness. It is a property of data against a use, not an absolute — the same "
+        "table can be fit for a trend and unfit for a reconciliation.",
+        [W + "Data_quality", IBM + "data-quality"],
+        "Whether the data is good enough for what you are about to do with it. Good enough "
+        "for a chart is not good enough for a payment.",
+        "क्या यह डेटा उस काम के लिए भरोसेमंद है जो आप करने जा रहे हैं। जो डेटा चार्ट के लिए "
+        "ठीक है, ज़रूरी नहीं कि भुगतान के लिए भी ठीक हो।",
+        "You have GL reconciliation and control-design claims, so expect this to be probed "
+        "concretely: which dimension failed, how you detected it, and whether the check ran "
+        "automatically afterwards. A named check that runs on a schedule beats 'I validated "
+        "the data' every time.",
+        dict(kind="compare", caption="Fitness is relative to the use",
+             nodes=[{"label": "Complete", "note": "is anything missing?"},
+                    {"label": "Valid", "note": "does it obey the rules?"},
+                    {"label": "Timely", "note": "is it current enough to act on?"}]),
+    ),
+    note(
+        "Data pipeline",  # 4 of 30
+        "A data pipeline is an automated sequence that moves data from sources to a "
+        "destination, applying transformation, validation and scheduling along the way. "
+        "The engineering concerns are ordering, failure and repetition rather than the "
+        "transformation logic itself.",
+        [W + "Data_pipeline", IBM + "data-pipeline"],
+        "The plumbing that gets data from where it is produced to where it is used, on a "
+        "schedule, without someone running it by hand.",
+        "वह व्यवस्था जो डेटा को उसके स्रोत से उपयोग की जगह तक, तय समय पर, बिना किसी के "
+        "हाथ से चलाए पहुँचाती है।",
+        "Your Supreme Lending claim is a production pipeline in Python, SQL and PySpark, so "
+        "this is a resume term and a market demand at once. The question that separates "
+        "answers: what happens when it fails halfway and gets retried — which is the "
+        "idempotence card on the data engineering board.",
+        dict(kind="flow", caption="Extract, move, land — repeatably",
+             nodes=[{"label": "Extract", "note": "from the source system"},
+                    {"label": "Transform", "note": "clean, join, conform"},
+                    {"label": "Validate", "note": "fail loudly, not silently"},
+                    {"label": "Load", "note": "idempotently, so retries are safe"}]),
+    ),
+    note(
+        "Statistical modeling",  # 3 of 30
+        "A statistical model is a set of assumptions expressed as a probability "
+        "distribution, fitted to data to estimate relationships and quantify uncertainty "
+        "about them. Its purpose is usually explanation and inference, where a machine "
+        "learning model is usually judged on prediction alone.",
+        [W + "Statistical_model", W + "Regression_analysis"],
+        "Writing down how you think the numbers were generated, then checking that story "
+        "against the data — and saying how confident the answer is.",
+        "यह लिखना कि आपके हिसाब से ये आँकड़े कैसे बने, फिर उस कहानी को डेटा से जाँचना — और "
+        "यह भी बताना कि जवाब पर कितना भरोसा है।",
+        "You claim regression forecasting at Omnicals, so be ready for the assumptions "
+        "question. Knowing that a coefficient is an estimate with a standard error, and "
+        "that the model can be well-fitted and still wrong about causation, is what "
+        "separates this from 'I ran a regression'.",
+        dict(kind="compare", caption="Two different jobs",
+             nodes=[{"label": "Statistical", "note": "explain, infer, quantify uncertainty"},
+                    {"label": "ML", "note": "predict, judged on held-out error"},
+                    {"label": "Overlap", "note": "same maths, different question asked"}]),
+    ),
+    note(
+        "Hypothesis testing",  # 3 of 30
+        "A statistical hypothesis test asks how likely the observed data would be if a "
+        "stated null hypothesis were true, and rejects it when that likelihood falls below "
+        "a threshold chosen in advance. Choosing the threshold afterwards invalidates the "
+        "procedure.",
+        [W + "Statistical_hypothesis_test"],
+        "Assume nothing is happening, then check whether the data would be surprising if "
+        "that were true. Decide the bar before you look, not after.",
+        "पहले यह मान लें कि कुछ हो ही नहीं रहा, फिर देखें कि क्या यह डेटा उस स्थिति में चौंकाने "
+        "वाला होगा। सीमा पहले तय करें, नतीजा देखकर नहीं।",
+        "Pairs with the p-value and A/B test cards on the statistics board. The trap worth "
+        "naming before an interviewer does: testing many things at once means something "
+        "will look significant by chance, and stopping the moment it does is the same "
+        "mistake in slow motion.",
+        dict(kind="flow", caption="The order matters",
+             nodes=[{"label": "State the null", "note": "what 'nothing happening' means"},
+                    {"label": "Fix the bar", "note": "before seeing the data"},
+                    {"label": "Measure", "note": "collect, then compute"},
+                    {"label": "Decide", "note": "reject or fail to reject — never 'accept'"}]),
+    ),
+    note(
+        "Risk management",  # 6 of 30
+        "Risk management is the practice of identifying what could go wrong, sizing each "
+        "risk by likelihood and impact, and deciding deliberately whether to avoid, reduce, "
+        "transfer or accept it. The decision to accept is as legitimate as the others, "
+        "provided it is made rather than defaulted into.",
+        [W + "Risk_management", IBM + "risk-management"],
+        "Working out what could go wrong, how bad it would be, and choosing what to do "
+        "about it on purpose — including deciding to live with it.",
+        "यह तय करना कि क्या ग़लत हो सकता है, कितना नुक़सान होगा, और सोच-समझकर उसका "
+        "जवाब चुनना — इसमें यह भी शामिल है कि कुछ जोखिम स्वीकार कर लिए जाएँ।",
+        "Six of your jobs name it, and you have control-design and preventative-control "
+        "claims. The distinction to have ready: a preventative control stops the thing "
+        "happening, a detective control tells you it happened. Interviewers in financial "
+        "services ask which you built and why that one.",
+        dict(kind="compare", caption="Controls do different jobs",
+             nodes=[{"label": "Preventative", "note": "stops it occurring"},
+                    {"label": "Detective", "note": "surfaces it after the fact"},
+                    {"label": "Accepted", "note": "a decision, not an oversight"}]),
+    ),
+    note(
+        "Financial services",  # 10 of 30
+        "Financial services covers banking, lending, insurance, payments and asset "
+        "management. As a job requirement it rarely means product knowledge in the "
+        "abstract — it means familiarity with regulated data: fields that carry legal "
+        "meaning, reports someone must sign, and a change process that assumes an auditor "
+        "will read it later.",
+        [W + "Financial_services"],
+        "Not 'do you know what a mortgage is'. It means: have you worked where a wrong "
+        "number is a compliance problem rather than an embarrassment.",
+        "सवाल यह नहीं कि आपको बैंकिंग की जानकारी है या नहीं। मतलब यह है कि क्या आपने ऐसी "
+        "जगह काम किया है जहाँ ग़लत आँकड़ा शर्मिंदगी नहीं, नियम-उल्लंघन बन जाता है।",
+        "Ten of your jobs name it and you have a genuinely strong answer — mortgage "
+        "origination, Ginnie Mae pooling, escrow, GL reconciliation. Lead with the "
+        "constraint rather than the domain: work that had to reconcile, be traceable, and "
+        "survive being audited.",
+        dict(kind="layers", caption="What the requirement is really testing",
+             nodes=[{"label": "Regulated data", "note": "fields with legal meaning"},
+                    {"label": "Traceability", "note": "who changed what, and why"},
+                    {"label": "Reconciliation", "note": "it has to tie out"},
+                    {"label": "Audit", "note": "someone reads it a year later"}]),
+    ),
+]
+
+BOARDS.append(
+    dict(slug="demand", title="What your jobs are asking for", order=0,
+         blurb="Measured from the 30 roles you have staged — ordered by how many of them "
+               "name each requirement. Learn downward.",
+         notes=DEMAND)
+)
