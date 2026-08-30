@@ -190,6 +190,133 @@ async def learn_teach(lesson_id: str, body: dict[str, Any] | None = None) -> dic
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.get("/api/jobs/{job_id}/defend")
+async def job_defend(job_id: str) -> dict[str, Any]:
+    """What this posting will make you defend out loud, and can teach you now.
+
+    The moment matters more than the content. You have just told a company you
+    know dbt; that is when you are most willing to find out whether you can say
+    what dbt is, and it is also the only honest preview of the interview. So the
+    set is drawn from the requirements of the job actually being applied to,
+    never from a syllabus.
+
+    Requirements already settled — explained back with nothing missing and
+    nothing inverted — drop out, so this shrinks as it is used rather than
+    asking the same thing forever.
+    """
+    from .explain import explain
+    from .lessons import _states
+    from .technical_learning.curriculum import get_lesson
+
+    p = _profile()
+    job = await _job_or_404(job_id)
+    scored = score_job(job, p)
+    settled = {
+        lesson_id
+        for lesson_id, row in _states().items()
+        if row.get("state") in ("explained", "mastered")
+    }
+
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for requirement in scored.get("requirements", []):
+        label = requirement.get("label")
+        if not label:
+            continue
+        found = explain(label, p)["lesson"]
+        if not found or found["id"] in seen:
+            continue
+        seen.add(found["id"])
+        lesson = get_lesson(found["id"])
+        items.append({
+            "term": label,
+            # Whether the resume already claims it. Defending something you
+            # claimed is the interview; defending a gap is study, and the
+            # difference is worth showing rather than flattening.
+            "claimed": requirement.get("match") in ("exact", "partial"),
+            "importance": requirement.get("importance"),
+            "lessonId": lesson.id,
+            "lessonTitle": lesson.title,
+            "hook": lesson.hook,
+            "settled": lesson.id in settled,
+            # How many ideas the explanation is checked against, so the ask is
+            # legible before it is accepted rather than after.
+            "points": len(lesson.key_points),
+        })
+
+    open_items = [i for i in items if not i["settled"]]
+    # Required before preferred, claimed before unclaimed: the thing you said
+    # you can do is the thing you will be asked to defend first.
+    open_items.sort(key=lambda i: (i["importance"] != "required", not i["claimed"]))
+    return {
+        "jobId": job_id,
+        "title": job.get("title"),
+        "company": (job.get("company") or {}).get("name")
+        if isinstance(job.get("company"), dict)
+        else job.get("company"),
+        "items": open_items,
+        "settledCount": len(items) - len(open_items),
+        "total": len(items),
+    }
+
+
+@app.post("/api/learn/explain-back")
+async def learn_explain_back(body: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Say it back in your own words, and be told what you left out.
+
+    Takes a `term` as a posting words it, or a `lessonId` — the term form is the
+    one that matters, because it is what a requirement on a job page can hand
+    over without the candidate going anywhere.
+
+    Returns which ideas the explanation carried, which it missed, and which it
+    stated backwards. Never a score: making "did I pass" the question is exactly
+    what stops this being useful.
+    """
+    from .explain import explain
+    from .feynman import check
+    from .lessons import mark_explained
+    from .technical_learning.curriculum import get_lesson
+
+    body = body or {}
+    said = str(body.get("explanation") or "")
+    lesson_id = str(body.get("lessonId") or "").strip()
+    term = str(body.get("term") or "").strip()
+
+    if not lesson_id and term:
+        found = explain(term, _profile())["lesson"]
+        if not found:
+            raise HTTPException(
+                status_code=404,
+                detail=f"nothing written teaches {term!r} yet",
+            )
+        lesson_id = found["id"]
+    if not lesson_id:
+        raise HTTPException(status_code=400, detail="a term or lessonId is required")
+
+    try:
+        lesson = get_lesson(lesson_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc).strip("'")) from exc
+
+    result = check(
+        points=list(lesson.key_points),
+        title=lesson.title,
+        explanation=said,
+    )
+    result["lessonId"] = lesson.id
+    result["lessonTitle"] = lesson.title
+    result["term"] = term or None
+
+    # Earned rather than self-declared. `explained` used to be a button you
+    # pressed about yourself; it now means a check read what you wrote and found
+    # nothing missing and nothing inverted.
+    if result.get("ok") and result.get("settled"):
+        mark_explained(lesson.id)
+        result["state"] = "explained"
+
+    return result
+
+
 @app.post("/api/learn/lessons/{lesson_id}/explained")
 async def learn_explained(lesson_id: str) -> dict[str, Any]:
     """Record that it was said back in their own words."""
