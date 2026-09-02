@@ -4,4 +4,12 @@
 #
 #   ./.venv/bin/pip install -r requirements-dev.txt
 #   ./.venv/bin/playwright install chromium
+
+# The test runner. It was missing from both requirements files for long enough
+# that a fresh .venv could not run tests/ at all, which is the failure mode where
+# a suite quietly stops being run rather than starting to fail. No plugins: the
+# tests use plain pytest and unittest, and fastapi's TestClient needs only httpx,
+# which requirements.txt already pins.
+pytest==8.4.2
+
 playwright==1.62.0

@@ -19,3 +19,19 @@ scripts/import_*.py
 # ...but a source importer embeds no candidate data — it reads a feed and writes
 # jobs. The rule above is about resume text, not the word "import".
 !scripts/import_ziprecruiter.py
+
+# Ruflo local secrets and runtime data
+.env.local
+.env.*.local
+.claude-flow/data/
+.claude-flow/logs/
+.claude-flow/sessions/
+
+# --- ruflo runtime state (npx ruflo init) ---
+# Local orchestration scaffolding and its databases. Ignored rather than
+# committed so adopting or dropping ruflo never shows up as a repo change.
+.claude-flow/
+.agents/
+.swarm/
+ruvector.db
+.mcp.json
