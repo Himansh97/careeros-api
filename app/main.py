@@ -30,6 +30,11 @@ from .sources import NOT_COVERED, SOURCE_LABELS
 from .outreach import build_outreach
 from .profile import ProfileNotFound, load_profile
 from .scoring import score_job_cached as score_job
+from .application_states import (
+    InvalidApplicationState,
+    InvalidApplicationTransition,
+    validate_transition,
+)
 from .store import (
     StatusRegression,
     add_approval,
@@ -1568,17 +1573,53 @@ async def application_opened(app_id: str) -> dict[str, Any]:
 
 @app.post("/api/applications/{app_id}/advance")
 async def application_advance(app_id: str, req: AdvanceRequest) -> dict[str, Any]:
-    if not get_application(app_id):
+    """Move an application on, or say precisely why it cannot move.
+
+    The policy lives in `application_states` and is applied here, at the edge,
+    rather than inside `store.advance`. Internal callers write states this
+    route will not accept — `mark_applying` writes `applying`, and the Tsenta
+    submit path writes `submitted` from a confirmation — and they are trusted
+    in a way an HTTP body is not.
+
+    Errors carry a stable `code` rather than only prose, because the frontend
+    has to tell "that is not a state" apart from "that is not a move you can
+    make from here", and matching on a sentence would break the first time one
+    is reworded.
+    """
+    current = get_application(app_id)
+    if not current:
         raise HTTPException(status_code=404, detail="Application not found")
     try:
+        target = validate_transition(
+            current["status"], req.status,
+            # `force` is a correction, so it still has to say what it is
+            # correcting. Without a note it fails as repair_reason_required
+            # rather than silently rewinding the record.
+            repair=req.force, reason=req.note or "",
+        )
+    except InvalidApplicationState as exc:
+        # 422, not 400: the body parsed and the field is the right type. What
+        # failed is that the text names no state this pipeline has.
+        raise HTTPException(
+            status_code=422, detail={"code": exc.code, "message": str(exc)}
+        ) from None
+    except InvalidApplicationTransition as exc:
+        # 409: both states are real; the edge between them is not.
+        raise HTTPException(
+            status_code=409, detail={"code": exc.code, "message": str(exc)}
+        ) from None
+    try:
         advance(
-            app_id, req.status, req.note or f"Moved to {req.status}",
+            app_id, target.value, req.note or f"Moved to {target.value}",
             allow_regression=req.force,
         )
     except StatusRegression as exc:
+        # Reachable only for stored states the policy reads but does not rank.
         # 409, not 400: the request is well-formed and the caller is simply out
         # of date. The UI should refetch rather than rewrite the field.
-        raise HTTPException(status_code=409, detail=str(exc)) from None
+        raise HTTPException(
+            status_code=409, detail={"code": "status_regression", "message": str(exc)}
+        ) from None
     return get_application(app_id)
 
 

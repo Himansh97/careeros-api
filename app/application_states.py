@@ -33,9 +33,18 @@ class InvalidApplicationTransition(ValueError):
         super().__init__(f"{code}: {current!r} -> {target!r}")
 
 
+# Statuses that exist in stored rows but are not canonical states. They are
+# readable so an old row can still be moved on, and refused on write so nothing
+# new lands in one.
+#
+# `applying` is written by `pipeline_signals.mark_applying` when the candidate
+# opens the employer's form. It reads as READY because that is what it means:
+# the application is prepared and nothing has been confirmed sent. Reading it as
+# SUBMITTED would record an application the candidate may never have finished.
 _LEGACY_READS = {
     "applied": ApplicationState.SUBMITTED,
     "interviewing": ApplicationState.INTERVIEW,
+    "applying": ApplicationState.READY,
 }
 
 _NEXT = {

@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Iterator
 
+from .application_states import validate_transition
 from .config import DB_PATH, READY_SCORE
 from .db import connect as database_connection
 
@@ -292,7 +293,32 @@ def advance(
 
         args.append(app_id)
         conn.execute(f"UPDATE applications SET {', '.join(sets)} WHERE id=?", args)
-        add_timeline(conn, app_id, note)
+        # Re-entering the stage an application is already in is not an event.
+        # The UPDATE above still runs, so a stamp that was somehow missed gets
+        # filled, but a second timeline row would read as a second thing having
+        # happened when nothing did. Two clicks on the same button is the common
+        # way to get here.
+        if current != status:
+            add_timeline(conn, app_id, note)
+
+
+def repair_application_state(app_id: str, target: str, reason: str) -> None:
+    """Correct a status that is wrong, rather than moving one that is right.
+
+    Deliberately not reachable from the API. A backward move is either a
+    mistake or a correction, and the difference is a human who can say which —
+    so this asks for a reason and refuses without one. The reason goes on the
+    timeline, because a record that jumped backwards with no explanation is
+    worse than one that is merely wrong.
+    """
+    current = (get_application(app_id) or {}).get("status")
+    state = validate_transition(current, target, repair=True, reason=reason)
+    advance(
+        app_id,
+        state.value,
+        f"Corrected to {state.value} — {reason.strip()}",
+        allow_regression=True,
+    )
 
 
 def _optional(row: sqlite3.Row, key: str) -> Any:
