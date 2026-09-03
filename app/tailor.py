@@ -215,8 +215,46 @@ def tailor_resume(
     # similar postings the order is identical, which is why two analyst
     # applications came out 99.5% the same document. Dropping the claims a
     # given posting has no use for is also just better resume practice.
+    # Composed STAR bullets, where the evidence supports them. A recorded claim
+    # is usually one action; the situation it addressed and the result it
+    # produced are recorded as separate claims about the same work, so a bullet
+    # that reads situation-action-result is those pieces put back together.
+    # `star.load` verifies each one against the union of its sources through the
+    # same containment check overrides go through, so a composition that drifted
+    # is dropped rather than served.
+    #
+    # A role with no composed bullets falls through to the claim-level path
+    # below unchanged, which is why this is additive rather than a replacement.
+    from .star import select as star_select
+
+    starred: set[str] = set()
+    for section in sections:
+        composed = star_select(
+            section["employer"], profile, wanted, job.get("description", ""), limit=3
+        )
+        if not composed:
+            continue
+        starred.add(section["employer"])
+        section["bullets"] = [
+            {
+                **bullet.as_dict(),
+                "relevance": len(bullet.themes),
+                "hits": [w for w in wanted if w.lower() in bullet.text.lower()],
+                "changeType": "rewritten",
+                "whyChanged": (
+                    "Composed as situation, action and result from "
+                    f"{', '.join(bullet.source_claims)}."
+                ),
+            }
+            for bullet in composed
+        ]
+
+    # Sections already reduced to three composed bullets are left alone: the
+    # three are chosen and ordered as one story, and re-trimming by coverage
+    # would break the arc it exists to make.
+    plain = [s for s in sections if s["employer"] not in starred]
     _order_by_coverage(sections, weights)
-    _select_bullets(sections, weights=weights)
+    _select_bullets(plain, weights=weights)
 
     # Resolved once and reused: the headline, the project ordering and the
     # response all describe the same decision, so they cannot disagree.

@@ -267,7 +267,7 @@ def _group_label(group: str) -> str:
 # roughly 120 items read as "everything I have ever touched" and cost about
 # fourteen lines of a one-page resume, which is fourteen lines not spent on
 # evidence.
-MAX_SKILL_GROUPS = 6
+MAX_SKILL_GROUPS = 4
 MAX_SKILLS_PER_GROUP = 14
 
 
@@ -311,7 +311,8 @@ def _page_count(pdf_bytes: bytes) -> int:
     return len(PdfReader(io.BytesIO(pdf_bytes)).pages)
 
 
-def _trim(resume: dict[str, Any], lead: int, rest: int) -> dict[str, Any]:
+def _trim(resume: dict[str, Any], lead: int, rest: int,
+          projects: int = 3) -> dict[str, Any]:
     """A copy of the resume with bullets capped per role.
 
     Bullets arrive relevance-ordered, so trimming drops the least relevant
@@ -334,13 +335,15 @@ def _trim(resume: dict[str, Any], lead: int, rest: int) -> dict[str, Any]:
     # A project is a showcase, not a job history. `_build_projects` already
     # orders bullets by marginal coverage, so the first one is the strongest
     # and a second mostly repeats the pitch.
-    projects = resume.get("projects") or []
-    if projects:
-        keep_projects = 3 if rest >= 3 else 2
-        per_project = 2 if rest >= 3 else 1
+    entries = resume.get("projects") or []
+    if entries:
+        # One bullet each once the budget is tight. A project is a showcase and
+        # _build_projects already orders its bullets by marginal coverage, so
+        # the first is the strongest and a second mostly repeats the pitch.
+        per_project = 2 if projects >= 3 and rest >= 3 else 1
         trimmed["projects"] = [
             {**p, "bullets": p["bullets"][:per_project]}
-            for p in projects[:keep_projects]
+            for p in entries[:max(0, projects)]
         ]
     return trimmed
 
@@ -425,22 +428,28 @@ def build_pdf(resume: dict[str, Any], profile: Any) -> bytes:
     # tight type beats fewer in loose type, which is the priority order stated
     # above. Within one trim level the loosest readable density wins.
     tight = DENSITIES[-1]
+    # Employment bullets are the last thing given up. For each bullet level the
+    # project section is shrunk first, so a page that will not fit loses a
+    # project before it loses a bullet -- three composed situation-action-result
+    # bullets per role are the argument the page is making, and a project entry
+    # is a supporting exhibit.
     for lead, rest in [(7, 4), (6, 3), (5, 3), (5, 2), (4, 2), (4, 1), (3, 1)]:
-        trimmed = _trim(resume, lead, rest)
-        # Cheap feasibility check first. If the tightest setting still
-        # overflows at this trim level, no looser one can fit, so skip the
-        # four renders that would only confirm it.
-        if not acceptable(_render_pdf(trimmed, profile, tight)):
-            continue
-        for density in DENSITIES:
-            candidate = _render_pdf(trimmed, profile, density)
-            if acceptable(candidate):
-                return candidate
+        for projects in (3, 2, 1):
+            trimmed = _trim(resume, lead, rest, projects)
+            # Cheap feasibility check first. If the tightest setting still
+            # overflows here, no looser density can fit, so skip the four
+            # renders that would only confirm it.
+            if not acceptable(_render_pdf(trimmed, profile, tight)):
+                continue
+            for density in DENSITIES:
+                candidate = _render_pdf(trimmed, profile, density)
+                if acceptable(candidate):
+                    return candidate
 
     # Pass 3 - nothing fit. Return the hardest trim rather than raising: a
     # document that runs long is still a document the candidate can edit, and
     # failing here would block an application over a layout rule.
-    return fitted or _render_pdf(_trim(resume, 3, 1), profile, tight)
+    return fitted or _render_pdf(_trim(resume, 3, 1, 1), profile, tight)
 
 
 # --------------------------------------------------------------------- PDF

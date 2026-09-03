@@ -276,3 +276,60 @@ class TestEducationClosesTheGap(unittest.TestCase):
         self.assertTrue(graded, "no education entry records a GPA")
         for entry in graded:
             self.assertIn(f"GPA {entry['gpa']}", text)
+
+
+class TestStarBulletsSurviveTheFitter(unittest.TestCase):
+    """Three composed bullets per role are the argument the page makes.
+
+    The fitter used to cut employment bullets first, which reduced older roles
+    to two and broke the situation-action-result shape on three of four jobs.
+    Projects and skills give way before bullets do now, so this pins the order
+    of sacrifice rather than the page count alone.
+    """
+
+    def setUp(self) -> None:
+        try:
+            from app.profile import load_profile
+
+            self.profile = load_profile()
+        except Exception as exc:  # pragma: no cover - depends on local PII
+            self.skipTest(f"real profile unavailable: {exc}")
+
+    def _render(self, title, description):
+        from pypdf import PdfReader
+
+        from app.documents import build_pdf
+        from app.scoring import score_job_cached as score_job
+
+        job = {"id": f"star-{abs(hash(title))}", "title": title,
+               "description": description, "company": {"name": "Acme"},
+               "location": "Remote"}
+        resume = tailor_resume(job, score_job(job, self.profile), self.profile)
+        return resume, PdfReader(io.BytesIO(build_pdf(resume, self.profile)))
+
+    def test_every_role_keeps_three_bullets_on_one_page(self) -> None:
+        resume, reader = self._render(
+            "Sr Data Analyst, Mortgage Analytics",
+            "SQL, Power BI, requirements gathering, data quality, Python, Encompass, MISMO.")
+        self.assertEqual(len(reader.pages), 1)
+        for section in resume["sections"]:
+            with self.subTest(role=section["heading"][:30]):
+                self.assertEqual(len(section["bullets"]), 3)
+
+    def test_the_bullets_are_composed_not_raw_claims(self) -> None:
+        resume, _ = self._render(
+            "Senior Data Engineer",
+            "ETL, Airflow, PySpark, pipelines, CI/CD, Azure, schema validation.")
+        kinds = {b.get("changeType") for s in resume["sections"] for b in s["bullets"]}
+        self.assertEqual(kinds, {"rewritten"})
+
+    def test_every_rendered_bullet_names_its_source_claims(self) -> None:
+        """A composed bullet with no cited sources cannot be checked, which is
+        the whole reason composing is allowed at all."""
+        resume, _ = self._render(
+            "Business Analyst",
+            "Requirements gathering, stakeholder management, UAT, process improvement.")
+        for section in resume["sections"]:
+            for bullet in section["bullets"]:
+                with self.subTest(bullet=bullet["id"]):
+                    self.assertTrue(bullet.get("sourceClaims"))

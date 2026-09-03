@@ -71,7 +71,16 @@ def verify_override(original: str, rewritten: str) -> list[str]:
     # first word is capitalised for position, not because it names anything.
     # Every capital after that is a tool, system or employer, which is exactly
     # the class of detail a rewrite must not invent.
-    original_words = {w.lower() for w in re.findall(r"[A-Za-z0-9+/\.]+", original)}
+    # Trailing punctuation is stripped here exactly as it is on the rewrite side
+    # below. The character class keeps "." so "Node.js" and ".NET" survive as one
+    # token, but that also captured a sentence-final "Python." -- which then
+    # never matched a rewrite's "Python", and the claim's own tool was reported
+    # as invented. Only a tool named at the very end of a claim was affected,
+    # which is why it survived this long.
+    original_words = {
+        w.strip(".,()").lower()
+        for w in re.findall(r"[A-Za-z0-9+/\.]+", original)
+    }
     body = rewritten.split(maxsplit=1)[1] if len(rewritten.split()) > 1 else ""
     added = {
         token.strip(".,()")
