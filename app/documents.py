@@ -306,14 +306,23 @@ def _trim(resume: dict[str, Any], lead: int, rest: int) -> dict[str, Any]:
         {**s, "bullets": s["bullets"][: lead if i == 0 else rest]}
         for i, s in enumerate(resume.get("sections", []))
     ]
-    # Projects shrink alongside employment. Trimming only the roles could not
-    # converge once projects existed — the overflow loop would tighten forever
-    # while the projects section held its full height.
+    # Projects shrink alongside employment, but not on the same curve. Tying
+    # project bullets directly to `rest` made the section the binding
+    # constraint: at rest=2 it rendered three projects of two full claim
+    # bullets each, roughly twelve lines, which pushed the page over and forced
+    # the ladder down to rest=1 -- costing one bullet at every role after the
+    # first. Measured on a real posting, decoupling them buys three employment
+    # bullets back at the same page count.
+    #
+    # A project is a showcase, not a job history. `_build_projects` already
+    # orders bullets by marginal coverage, so the first one is the strongest
+    # and a second mostly repeats the pitch.
     projects = resume.get("projects") or []
     if projects:
-        keep_projects = max(1, min(len(projects), rest + 1))
+        keep_projects = 3 if rest >= 3 else 2
+        per_project = 2 if rest >= 3 else 1
         trimmed["projects"] = [
-            {**p, "bullets": p["bullets"][: max(1, rest)]}
+            {**p, "bullets": p["bullets"][:per_project]}
             for p in projects[:keep_projects]
         ]
     return trimmed
@@ -516,8 +525,13 @@ def _render_pdf(resume: dict[str, Any], profile: Any,
         flow.append(split_row(left, _escape(dates)))
         if meta.get("subtitle"):
             flow.append(Paragraph(_escape(meta["subtitle"]), sub_s))
-        if meta.get("tools"):
-            flow.append(Paragraph(_escape(meta["tools"]), sub_s))
+        # The per-role `Tools:` line is not rendered. Four of them cost about
+        # eight lines and restated the SKILLS block sitting directly above,
+        # which on a one-page resume was eight lines of duplication in place of
+        # evidence -- Syracuse, Freyr and Omnicals were down to a single bullet
+        # each to make room. The field stays in the profile; a reader who wants
+        # the stack for a role can see it in the bullets, which name the tools
+        # in the context of what was built with them.
         bullets = [ListItem(Paragraph(_escape(b.get("text", "")), body_s), leftIndent=11)
                    for b in section.get("bullets", [])]
         if bullets:
@@ -673,7 +687,10 @@ def build_docx(resume: dict[str, Any], profile: Any) -> bytes:
         if meta.get("location"):
             heading += f", {meta['location']}"
         split_row(heading, section.get("subheading", "").split(" · ")[0])
-        for line in (meta.get("subtitle"), meta.get("tools")):
+        # `tools` is deliberately absent here too. The PDF and DOCX must
+        # render the same document; tests/test_outreach_copy.py exists because
+        # they once did not.
+        for line in (meta.get("subtitle"),):
             if not line:
                 continue
             p = document.add_paragraph()
