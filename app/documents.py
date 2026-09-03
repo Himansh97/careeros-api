@@ -229,12 +229,28 @@ def _group_label(group: str) -> str:
     return label
 
 
-def _prioritised_skills(resume: dict[str, Any], profile: Any) -> list[tuple[str, list[str]]]:
-    """Order skill groups, and skills within them, by what the job asked for.
+# How much of the skills inventory reaches the page. The inventory itself stays
+# complete: it is what `scoring._find_evidence` reads for its weaker
+# "listed but not demonstrated" tier, so deleting entries there would turn real
+# skills into gaps, which is the wrong direction entirely.
+#
+# This is a rendering cap, and it is safe precisely because the groups are
+# already ordered by what this posting asked for. The groups that fall off the
+# end are the ones this employer never mentioned, so the ATS keywords that
+# matter for this job survive while the wall does not. Twelve categories and
+# roughly 120 items read as "everything I have ever touched" and cost about
+# fourteen lines of a one-page resume, which is fourteen lines not spent on
+# evidence.
+MAX_SKILL_GROUPS = 6
+MAX_SKILLS_PER_GROUP = 14
 
-    The content is unchanged — every skill the candidate has is still listed.
-    Only the ordering adapts, so a recruiter scanning the first line sees the
-    skills their posting actually named instead of a fixed house order.
+
+def _prioritised_skills(resume: dict[str, Any], profile: Any) -> list[tuple[str, list[str]]]:
+    """Order skill groups by what the job asked for, and keep the top ones.
+
+    Ordering adapts so a recruiter scanning the first line sees the skills
+    their posting actually named instead of a fixed house order. Everything
+    past MAX_SKILL_GROUPS is dropped from the page but kept in the profile.
     """
     wanted = {w.lower() for w in (resume.get("matchedSkills") or [])}
     groups = list((getattr(profile, "skills_inventory", {}) or {}).items())
@@ -257,7 +273,10 @@ def _prioritised_skills(resume: dict[str, Any], profile: Any) -> list[tuple[str,
         ordered.append((name, sorted(items, key=rank_item), hits))
 
     ordered.sort(key=lambda g: -g[2])
-    return [(name, items) for name, items, _ in ordered]
+    return [
+        (name, items[:MAX_SKILLS_PER_GROUP])
+        for name, items, _ in ordered[:MAX_SKILL_GROUPS]
+    ]
 
 
 def _page_count(pdf_bytes: bytes) -> int:

@@ -667,9 +667,15 @@ def _summary(
     domains = _delivery_domains(text)
     domain_phrase = _join(domains)
 
+    # No year count. "3+ years" was hardcoded here and traced to nothing in
+    # the evidence file, which is the shape non-negotiable #1 exists to stop.
+    # It was also checkable and wrong from the resume's own dates: the two
+    # non-intern roles total 26 months, so a reviewer who counts finds a number
+    # smaller than the first line claims and reads the rest sceptically. The
+    # dates are on the page; they can do the arithmetic without being told.
     positioning = (
-        f"{role_family} with 3+ years of experience delivering end-to-end "
-        f"{domain_phrase}, backed by {credential}."
+        f"{role_family} delivering end-to-end {domain_phrase}, "
+        f"backed by {credential}."
     )
 
     # --- sentence 2: the hands-on skills this posting actually asked for ---

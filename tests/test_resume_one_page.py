@@ -27,7 +27,8 @@ def _render(title: str, description: str):
 
     profile = load_profile()
     job = {
-        "id": "probe",
+        # Distinct per case: score_job_cached memoises on job id alone.
+        "id": f"probe-{abs(hash((title, description)))}",
         "title": title,
         "description": description,
         "company": {"name": "Acme"},
@@ -115,3 +116,90 @@ class TestNoToolchainFingerprint(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSkillsAreCappedButRelevanceSurvives(unittest.TestCase):
+    """The cap is only safe because the ordering earns it.
+
+    Dropping groups off the end is fine when the ones that fall off are the
+    ones this posting never mentioned. It would be a real loss if a posting's
+    own specialism could be cut, so that is what this checks rather than the
+    cap arithmetic.
+    """
+
+    def setUp(self) -> None:
+        try:
+            from app.profile import load_profile
+
+            self.profile = load_profile()
+        except Exception as exc:  # pragma: no cover - depends on local PII
+            self.skipTest(f"real profile unavailable: {exc}")
+
+    def _groups(self, title: str, description: str):
+        from app.documents import _prioritised_skills
+        from app.scoring import score_job_cached as score_job
+
+        # A distinct id per job. `score_job_cached` memoises on job id alone
+        # and only clears when the profile object changes, so reusing one id
+        # for several different postings hands back the first one's score.
+        # Two of these tests passed on that stale result before this was fixed.
+        job = {"id": f"probe-{abs(hash((title, description)))}", "title": title,
+               "description": description,
+               "company": {"name": "Acme"}, "location": "Remote"}
+        resume = tailor_resume(job, score_job(job, self.profile), self.profile)
+        return [name for name, _ in _prioritised_skills(resume, self.profile)]
+
+    def test_the_page_shows_at_most_the_cap(self) -> None:
+        from app.documents import MAX_SKILL_GROUPS
+
+        groups = self._groups("Senior Data Engineer", "ETL, SQL, Python, Airflow.")
+        self.assertLessEqual(len(groups), MAX_SKILL_GROUPS)
+
+    def test_a_mortgage_posting_keeps_the_mortgage_group(self) -> None:
+        groups = self._groups(
+            "Sr Data Analyst Mortgage Analytics",
+            "Mortgage servicing analytics. Encompass, MISMO, escrow reconciliation, "
+            "Ginnie Mae pool delivery, Purchase Advice, SQL, Power BI.",
+        )
+        self.assertIn("mortgage_domain", groups)
+        self.assertEqual(groups[0], "mortgage_domain", "the specialism should lead")
+
+    def test_an_engineering_posting_keeps_the_engineering_group(self) -> None:
+        groups = self._groups(
+            "Senior Data Engineer",
+            "Build ETL pipelines with PySpark and Airflow. Data pipeline design, "
+            "data quality control, dimensional modeling, BigQuery.",
+        )
+        self.assertIn("data_engineering_and_big_data", groups)
+
+    def test_the_inventory_itself_is_not_trimmed(self) -> None:
+        """Scoring reads the full inventory; only the page is capped.
+
+        Deleting entries would turn skills the candidate genuinely has into
+        gaps, which is the opposite of what non-negotiable #2 asks for.
+        """
+        from app.documents import MAX_SKILL_GROUPS
+
+        self.assertGreater(len(self.profile.skills_inventory), MAX_SKILL_GROUPS)
+
+
+class TestSummaryClaimsNoTenure(unittest.TestCase):
+    def setUp(self) -> None:
+        try:
+            from app.profile import load_profile
+
+            load_profile()
+        except Exception as exc:  # pragma: no cover - depends on local PII
+            self.skipTest(f"real profile unavailable: {exc}")
+
+    def test_no_year_count_appears_in_the_summary(self) -> None:
+        """A hardcoded tenure traces to no evidence and is checkable from the
+        dates on the same page, so it must not be asserted."""
+        import re
+
+        text = _render(*CASES[0]).pages[0].extract_text()
+        self.assertNotIn("3+ years", text)
+        self.assertIsNone(
+            re.search(r"\d+\+?\s*years of experience", text),
+            "the summary is claiming a tenure again",
+        )
