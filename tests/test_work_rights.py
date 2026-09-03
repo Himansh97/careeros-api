@@ -227,3 +227,54 @@ class TestTheMarketDecidesTheResumeHeader(unittest.TestCase):
         self.assertEqual(_market_for({"location": "Mumbai, India"}), "in")
         self.assertEqual(_market_for({"location": "Dallas, TX"}), "us")
         self.assertEqual(_market_for({}), "us")
+
+
+class TestGulfHeaderFields(unittest.TestCase):
+    """Languages and availability belong on a Gulf CV and nowhere else.
+
+    Both are rendered only from stated facts. A citizenship implies no
+    language -- India has twenty-two official ones -- and an invented
+    availability is a commitment the candidate never made.
+    """
+
+    class Profile:
+        work_rights = {"AE": {"sponsorship_required": True, "workable": True},
+                       "IN": {"status": "citizen", "unrestricted": True}}
+        languages = [{"language": "English", "proficiency": "Fluent"},
+                     {"language": "Hindi", "proficiency": "Native"}]
+        availability = ""
+
+    def _header(self, market, **overrides):
+        from app.documents import _market_header
+
+        p = self.Profile()
+        for k, v in overrides.items():
+            setattr(p, k, v)
+        return _market_header({"market": market}, p)
+
+    def test_languages_render_with_proficiency(self):
+        line = next(x for x in self._header("ae") if x.startswith("Languages"))
+        self.assertIn("English (Fluent)", line)
+        self.assertIn("Hindi (Native)", line)
+
+    def test_languages_do_not_render_on_other_markets(self):
+        for market in ("us", "in"):
+            with self.subTest(market=market):
+                self.assertEqual(self._header(market), [])
+
+    def test_no_languages_recorded_means_no_line(self):
+        self.assertFalse(any(x.startswith("Languages")
+                             for x in self._header("ae", languages=[])))
+
+    def test_an_incomplete_language_entry_is_skipped(self):
+        """A language with no stated proficiency is not a Gulf-CV language."""
+        header = self._header("ae", languages=[{"language": "Arabic", "proficiency": ""}])
+        self.assertFalse(any(x.startswith("Languages") for x in header), header)
+
+    def test_availability_is_omitted_when_unknown(self):
+        """Omitted rather than guessed: 'Immediate' is a commitment."""
+        self.assertFalse(any(x.startswith("Availability") for x in self._header("ae")))
+
+    def test_availability_renders_once_stated(self):
+        header = self._header("ae", availability="30 days")
+        self.assertIn("Availability: 30 days", header)

@@ -477,6 +477,26 @@ def _market_header(resume: dict[str, Any], profile: Any) -> list[str]:
         )
         if status:
             lines.append(f"UAE visa status: {status}")
+
+    # Languages with proficiency. Gulf recruiters weigh these directly, and
+    # Arabic in particular for government and Abu Dhabi roles. Rendered only
+    # from stated entries -- a citizenship implies no language, and India has
+    # twenty-two official ones.
+    spoken = [
+        f"{e.get('language','').strip()} ({e.get('proficiency','').strip()})"
+        for e in (getattr(profile, "languages", None) or [])
+        if e.get("language") and e.get("proficiency")
+    ]
+    if spoken:
+        lines.append("Languages: " + ", ".join(spoken))
+
+    # Availability is expected in a Gulf header. Omitted rather than guessed
+    # when unknown: "Immediate" on a resume is a commitment, and inventing one
+    # is a promise the candidate never made.
+    availability = (getattr(profile, "availability", "") or "").strip()
+    if availability:
+        lines.append(f"Availability: {availability}")
+
     return lines
 
 

@@ -103,6 +103,11 @@ class CandidateProfile:
     # therefore blocks -- the safe direction. `work_authorization` above stays
     # as the US-shaped summary the resume and application answers use.
     work_rights: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Spoken languages and proficiency. Empty by default, and only ever
+    # populated from a stated fact -- citizenship implies no language.
+    languages: list[dict[str, str]] = field(default_factory=list)
+    # "Immediate", "30 days", and so on. Gulf CVs are expected to state it.
+    availability: str = ""
     professional_summary: str = ""
     credentials_line: list[str] = field(default_factory=list)
     evidence: list[EvidenceClaim] = field(default_factory=list)
@@ -176,6 +181,8 @@ def load_profile() -> CandidateProfile:
             k: v for k, v in (raw.get("work_rights") or {}).items()
             if not k.startswith("_") and isinstance(v, dict)
         },
+        languages=list((raw.get("languages") or {}).get("entries") or []),
+        availability=(raw.get("availability") or ""),
         portfolio_url=raw.get("portfolio_url", ""),
         education=raw.get("education", []),
         certifications=raw.get("certifications", []),
