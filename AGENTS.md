@@ -22,11 +22,32 @@ reads it through `app/profile.py`.
    whole value is that its numbers can be trusted.
 2. **An unrecognised requirement is a gap, never a pass.** Not knowing what a term means
    is not a reason to assume the candidate meets it.
-3. **PII never enters git.** Resume text is derived from `career_evidence.json`, which
-   `careeros` gitignores as personal data — so it must not be inlined in Python either.
-   Per-job overrides live in `~/careeros/overrides/<job_id>.json` (gitignored) and are
-   applied by the generic `scripts/apply_overrides.py`. `.gitignore` blocks
-   `scripts/align_*.py` and `scripts/import_*.py` so a one-off cannot reintroduce this.
+3. **PII never enters git. This repo is public.** `careeros-api` and `careeros-web` are
+   public on GitHub; only `careeros`, which holds the candidate's data, is private. Assume
+   anything committed here is readable by a recruiter who finds the portfolio and clicks
+   through, because that is the actual threat model.
+
+   Resume text is derived from `career_evidence.json`, which `careeros` gitignores as
+   personal data, so it must not be inlined in Python either. Per-job overrides live in
+   `~/careeros/overrides/<job_id>.json` (gitignored) and are applied by the generic
+   `scripts/apply_overrides.py`. `.gitignore` blocks `scripts/align_*.py` and
+   `scripts/import_*.py` so a one-off cannot reintroduce this.
+
+   Three places this leaks that are easy to miss:
+
+   - **Tests.** A test asserting `GPA 3.6` or a graduation date puts that value in a
+     public repo. Read expected values out of the loaded profile instead. The test is
+     better for it: it then checks the pipeline rather than restating a constant.
+   - **Comments.** A comment explaining a layout fix by quoting the string that broke it
+     publishes the string.
+   - **Commit messages.** They are as public as the diff and are not covered by
+     `.gitignore`. A message reasoning about the candidate's employment gap, tenure
+     arithmetic, or grades is a durable public record of the weakest part of their
+     resume. Explain the engineering reason; leave the personal specifics out.
+
+   Employer names, job titles and the mortgage domain are already public here and on the
+   candidate's own portfolio, so those are not the concern. Grades, gap analysis, salary,
+   contact details and anything derived from `career_evidence.json` are.
 4. **Never add a `Co-Authored-By: Claude` trailer to commits.**
 5. **Nothing auto-submits.** The API prepares and stops. `app/prefill.py` drives a
    *visible* browser and is structurally incapable of submitting — `SUBMIT_PATTERNS`
