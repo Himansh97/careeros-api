@@ -82,8 +82,16 @@ class TestOnePage(unittest.TestCase):
         reader = _render(*CASES[0])
         text = reader.pages[0].extract_text()
         self.assertGreater(len(text.split()), 400, "page is nearly empty")
-        for expected in ("Supreme Lending", "Syracuse", "EDUCATION"):
-            self.assertIn(expected, text)
+        self.assertIn("EDUCATION", text)
+        # Read from the profile rather than named here. This repo is public and
+        # the profile is not, so a literal would move candidate data across
+        # that line -- which is what non-negotiable #3 and the .gitignore rules
+        # on scripts/align_*.py are both about.
+        from app.profile import load_profile
+
+        employers = [r.get("employer", "") for r in load_profile().employment_history]
+        for employer in employers[:2]:
+            self.assertIn(employer.split(" (")[0], text)
 
 
 class TestNoToolchainFingerprint(unittest.TestCase):
@@ -237,5 +245,34 @@ class TestEducationClosesTheGap(unittest.TestCase):
         self.assertEqual(_edu_period({}), "")
 
     def test_the_range_reaches_the_rendered_page(self) -> None:
+        from app.documents import _edu_period
+
         text = _render(*CASES[0]).pages[0].extract_text()
-        self.assertIn("Aug 2023 - May 2025", text)
+        studied = [e for e in self.profile.education if e.get("start_date")]
+        self.assertTrue(studied, "no education entry records a start date")
+        for entry in studied:
+            self.assertIn(_edu_period(entry), text)
+
+    def test_the_date_column_holds_only_a_date(self) -> None:
+        """The right-hand column is a fifth of the width, sized for a date.
+
+        A period plus a GPA does not fit and wrapped between "GPA" and the
+        number, leaving the value stranded on its own line. GPA belongs with
+        the degree.
+        """
+        from app.documents import _edu_left, _edu_period
+
+        for entry in self.profile.education:
+            with self.subTest(degree=entry.get("degree")):
+                self.assertNotIn("GPA", _edu_period(entry))
+                self.assertLessEqual(len(_edu_period(entry)), 22)
+                if entry.get("gpa"):
+                    self.assertIn("GPA", _edu_left(entry))
+
+    def test_gpa_survives_into_the_rendered_page(self) -> None:
+        # Moving a field between columns is exactly how one quietly disappears.
+        text = _render(*CASES[0]).pages[0].extract_text()
+        graded = [e for e in self.profile.education if e.get("gpa")]
+        self.assertTrue(graded, "no education entry records a GPA")
+        for entry in graded:
+            self.assertIn(f"GPA {entry['gpa']}", text)

@@ -180,10 +180,27 @@ def _edu_period(edu: dict[str, Any]) -> str:
     """
     start = _pretty_month(edu.get("start_date", ""))
     end = _pretty_month(edu.get("graduation_date", ""))
-    period = f"{start} - {end}" if start and end and start != end else (end or start)
+    return f"{start} - {end}" if start and end and start != end else (end or start)
+
+
+def _edu_left(edu: dict[str, Any]) -> str:
+    """Degree, institution, and GPA -- everything except the dates.
+
+    GPA sits here rather than beside the period. The right-hand column is a
+    fifth of the width, sized for a date, and a study period plus a GPA wrapped
+    inside it, breaking between "GPA" and the number. Putting the GPA with the
+    degree it belongs to is also the ordinary resume shape, and it leaves the
+    date column holding a date, exactly like the employment rows directly
+    above.
+    """
+    parts = [edu.get("degree", ""), edu.get("institution", "")]
+    if edu.get("location"):
+        parts.append(edu["location"])
+    left = ", ".join(x for x in parts[1:] if x)
+    left = f"{parts[0]} - {left}" if left else parts[0]
     if edu.get("gpa"):
-        period += f", GPA {edu['gpa']}"
-    return period
+        left += f", GPA {edu['gpa']}"
+    return left
 
 
 def _coursework_for(
@@ -560,11 +577,9 @@ def _render_pdf(resume: dict[str, Any], profile: Any,
         flow += [Paragraph("EDUCATION", section_s), rule()]
         coursework = resume.get("coursework") or []
         for e in education:
-            left = f"<b>{_escape(e.get('degree',''))}</b> - {_escape(e.get('institution',''))}"
-            if e.get("location"):
-                left += f", {_escape(e['location'])}"
-            right = _edu_period(e)
-            flow.append(split_row(left, f"<b>{_escape(right)}</b>", left_ratio=0.80))
+            flow.append(split_row(f"<b>{_escape(_edu_left(e))}</b>",
+                                  f"<b>{_escape(_edu_period(e))}</b>",
+                                  left_ratio=0.72))
             items = [
                 ListItem(Paragraph(_escape(c["text"]), body_s), leftIndent=11)
                 for c in _coursework_for(e, coursework)
@@ -715,10 +730,7 @@ def build_docx(resume: dict[str, Any], profile: Any) -> bytes:
         section_heading("EDUCATION")
         coursework = resume.get("coursework") or []
         for e in education:
-            left = f"{e.get('degree','')} - {e.get('institution','')}"
-            if e.get("location"):
-                left += f", {e['location']}"
-            split_row(left, _edu_period(e))
+            split_row(_edu_left(e), _edu_period(e))
             for c in _coursework_for(e, coursework):
                 document.add_paragraph(c["text"], style="List Bullet")
 
