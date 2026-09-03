@@ -598,6 +598,10 @@ def _render_pdf(resume: dict[str, Any], profile: Any,
 
     flow.append(Spacer(1, 3))
 
+    # Read once: it decides both the header block above and the tail order
+    # below, and the two must not disagree about which market this is.
+    market = (resume.get("market") or "us").lower()
+
     summary = resume.get("summary") or getattr(profile, "professional_summary", "")
     if summary:
         flow += [Paragraph("PROFESSIONAL SUMMARY", section_s), rule(),
@@ -609,10 +613,25 @@ def _render_pdf(resume: dict[str, Any], profile: Any,
         for group, items in skills:
             flow.append(Paragraph(
                 f"<b>{_escape(_group_label(group))}:</b> {_escape(', '.join(items))}", body_s))
+    def emit_certifications() -> None:
+        """Its own section in the Gulf order, a line under SKILLS elsewhere.
+
+        Two UAE guides place "Certifications and licenses" between education and
+        projects. US convention keeps it compact under skills, where it has
+        never earned a heading of its own on a one-page resume.
+        """
         certs = getattr(profile, "certifications", []) or []
-        if certs:
+        if not certs:
+            return
+        if market == "ae":
+            flow.extend([Paragraph("CERTIFICATIONS", section_s), rule(),
+                         Paragraph(_escape(", ".join(certs)), body_s)])
+        else:
             flow.append(Paragraph(
                 f"<b>Certifications:</b> {_escape(', '.join(certs))}", body_s))
+
+    if market != "ae":
+        emit_certifications()
 
     flow += [Paragraph("PROFESSIONAL EXPERIENCE", section_s), rule()]
     for section in resume.get("sections", []):
@@ -642,9 +661,11 @@ def _render_pdf(resume: dict[str, Any], profile: Any,
 
     # Named deliverables sit after employment: a recruiter reads the roles for
     # context first, then the projects for what was actually shipped.
-    projects = resume.get("projects") or []
-    if projects:
-        flow += [Paragraph("SELECTED PROJECTS", section_s), rule()]
+    def emit_projects() -> None:
+        projects = resume.get("projects") or []
+        if not projects:
+            return
+        flow.extend([Paragraph("SELECTED PROJECTS", section_s), rule()])
         for project in projects:
             flow.append(Paragraph(f"<b>{_escape(project.get('name',''))}</b>", body_s))
             bullets = [
@@ -656,9 +677,11 @@ def _render_pdf(resume: dict[str, Any], profile: Any,
                                          leftIndent=12, bulletFontSize=7, spaceBefore=1))
             flow.append(Spacer(1, 3))
 
-    education = getattr(profile, "education", []) or []
-    if education:
-        flow += [Paragraph("EDUCATION", section_s), rule()]
+    def emit_education() -> None:
+        education = getattr(profile, "education", []) or []
+        if not education:
+            return
+        flow.extend([Paragraph("EDUCATION", section_s), rule()])
         coursework = resume.get("coursework") or []
         for e in education:
             flow.append(split_row(f"<b>{_escape(_edu_left(e))}</b>",
@@ -671,6 +694,18 @@ def _render_pdf(resume: dict[str, Any], profile: Any,
             if items:
                 flow.append(ListFlowable(items, bulletType="bullet", start="•",
                                          leftIndent=12, bulletFontSize=7, spaceBefore=1))
+
+    # The tail order belongs to the market. Two UAE guides agree on experience,
+    # education, certifications, then projects. US convention leads with
+    # projects, because published work outranks a degree there and the degree is
+    # the last thing a US reader checks.
+    if market == "ae":
+        emit_education()
+        emit_certifications()
+        emit_projects()
+    else:
+        emit_projects()
+        emit_education()
 
     doc.build(flow)
     return buf.getvalue()

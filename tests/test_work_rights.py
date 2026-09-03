@@ -278,3 +278,64 @@ class TestGulfHeaderFields(unittest.TestCase):
     def test_availability_renders_once_stated(self):
         header = self._header("ae", availability="30 days")
         self.assertIn("Availability: 30 days", header)
+
+
+class TestSectionOrderFollowsTheMarket(unittest.TestCase):
+    """UAE guidance puts education and certifications ahead of projects.
+
+    US convention leads with projects, because published work outranks a degree
+    there. Two markets, two orders, decided by where the role is.
+    """
+
+    def setUp(self):
+        try:
+            from app.profile import load_profile
+
+            self.profile = load_profile()
+        except Exception as exc:  # pragma: no cover
+            self.skipTest(f"real profile unavailable: {exc}")
+
+    def _headings(self, location):
+        import io
+
+        from pypdf import PdfReader
+
+        from app.documents import build_pdf
+        from app.scoring import score_job
+        from app.tailor import tailor_resume
+
+        job = {"id": f"ord-{abs(hash(location))}", "title": "Data Analyst",
+               "description": "SQL, Power BI, requirements gathering, data quality.",
+               "company": {"name": "Acme"}, "location": location}
+        resume = tailor_resume(job, score_job(job, self.profile), self.profile)
+        text = PdfReader(io.BytesIO(build_pdf(resume, self.profile))).pages[0].extract_text()
+        return [
+            l.strip() for l in text.splitlines()
+            if l.strip().isupper() and len(l.strip()) > 4 and "SRIVASTAVA" not in l
+        ]
+
+    def test_uae_puts_education_and_certifications_before_projects(self):
+        h = self._headings("Dubai, United Arab Emirates")
+        self.assertLess(h.index("EDUCATION"), h.index("SELECTED PROJECTS"), h)
+        self.assertLess(h.index("CERTIFICATIONS"), h.index("SELECTED PROJECTS"), h)
+        self.assertLess(h.index("EDUCATION"), h.index("CERTIFICATIONS"), h)
+
+    def test_uae_gives_certifications_their_own_heading(self):
+        self.assertIn("CERTIFICATIONS", self._headings("Dubai"))
+
+    def test_us_leads_with_projects_and_has_no_certifications_heading(self):
+        h = self._headings("Dallas, TX")
+        self.assertLess(h.index("SELECTED PROJECTS"), h.index("EDUCATION"), h)
+        self.assertNotIn("CERTIFICATIONS", h)
+
+    def test_india_keeps_the_us_order(self):
+        """Nothing researched says India differs, so it should not."""
+        self.assertEqual(self._headings("Mumbai, India"), self._headings("Dallas, TX"))
+
+    def test_the_common_opening_is_the_same_everywhere(self):
+        for place in ("Dubai", "Dallas, TX", "Mumbai, India"):
+            with self.subTest(place=place):
+                self.assertEqual(
+                    self._headings(place)[:3],
+                    ["PROFESSIONAL SUMMARY", "SKILLS", "PROFESSIONAL EXPERIENCE"],
+                )
