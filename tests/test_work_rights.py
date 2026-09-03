@@ -128,3 +128,102 @@ class TestTheRealProfile(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSponsorshipIsAThirdState(unittest.TestCase):
+    """Blocked, warned, or clear. Two states could not express the UAE.
+
+    India is unrestricted: citizenship, no employer involvement. Dublin has
+    nothing recorded and blocks. The UAE is neither -- the employer sponsors
+    the residence permit as a matter of routine, which is a real condition
+    worth stating and not a reason to hide the market.
+    """
+
+    RIGHTS = {
+        "IN": {"status": "citizen", "unrestricted": True},
+        "AE": {"status": "employer-sponsored", "unrestricted": False,
+               "sponsorship_required": True, "workable": True},
+    }
+
+    def setUp(self):
+        self.profile = FakeProfile(self.RIGHTS)
+
+    def _verdict(self, location):
+        return check_eligibility(job(location), self.profile)
+
+    def test_dubai_is_not_blocked(self):
+        v = self._verdict("Dubai, United Arab Emirates")
+        self.assertNotIn("work_location", [b["type"] for b in v["blockers"]])
+
+    def test_dubai_carries_a_sponsorship_warning(self):
+        v = self._verdict("Dubai, United Arab Emirates")
+        self.assertIn("sponsorship_required", [w["type"] for w in v["warnings"]])
+
+    def test_india_carries_no_such_warning(self):
+        """Citizenship means no employer involvement, so saying otherwise would
+        invent a condition that does not exist."""
+        v = self._verdict("Mumbai, India")
+        self.assertNotIn("sponsorship_required", [w["type"] for w in v["warnings"]])
+
+    def test_an_unrecorded_country_still_blocks_rather_than_warning(self):
+        v = self._verdict("Dublin, Ireland")
+        self.assertIn("work_location", [b["type"] for b in v["blockers"]])
+        self.assertEqual([w["type"] for w in v["warnings"]], [])
+
+    def test_removing_the_ae_right_restores_the_block(self):
+        self.profile = FakeProfile({"IN": self.RIGHTS["IN"]})
+        v = self._verdict("Dubai, United Arab Emirates")
+        self.assertIn("work_location", [b["type"] for b in v["blockers"]])
+
+
+class TestTheMarketDecidesTheResumeHeader(unittest.TestCase):
+    """Nationality and visa status belong on a Gulf CV and are a liability on
+    a US one, so this is keyed to where the role is, never to a preference."""
+
+    def setUp(self):
+        try:
+            from app.profile import load_profile
+
+            self.profile = load_profile()
+        except Exception as exc:  # pragma: no cover
+            self.skipTest(f"real profile unavailable: {exc}")
+
+    def test_a_uae_resume_states_nationality_and_visa_status(self):
+        from app.documents import _market_header
+
+        lines = _market_header({"market": "ae"}, self.profile)
+        self.assertTrue(any("Nationality" in x for x in lines), lines)
+        self.assertTrue(any("visa status" in x.lower() for x in lines), lines)
+
+    def test_a_us_resume_states_neither(self):
+        """Nationality on a US application invites exactly the discrimination
+        US hiring law exists to prevent."""
+        from app.documents import _market_header
+
+        self.assertEqual(_market_header({"market": "us"}, self.profile), [])
+        self.assertEqual(_market_header({}, self.profile), [])
+
+    def test_an_india_resume_states_neither(self):
+        from app.documents import _market_header
+
+        self.assertEqual(_market_header({"market": "in"}, self.profile), [])
+
+    def test_nationality_is_never_inferred(self):
+        """Only a recorded citizenship produces one. Guessing from a name, a
+        location or an education history would be a fabricated fact on a
+        document a visa decision is read from."""
+        from app.documents import _market_header
+
+        class NoRights:
+            work_rights = {"AE": {"sponsorship_required": True, "workable": True}}
+
+        lines = _market_header({"market": "ae"}, NoRights())
+        self.assertFalse(any("Nationality" in x for x in lines), lines)
+
+    def test_the_market_comes_from_the_posting_not_a_setting(self):
+        from app.tailor import _market_for
+
+        self.assertEqual(_market_for({"location": "Dubai"}), "ae")
+        self.assertEqual(_market_for({"location": "Mumbai, India"}), "in")
+        self.assertEqual(_market_for({"location": "Dallas, TX"}), "us")
+        self.assertEqual(_market_for({}), "us")

@@ -687,6 +687,7 @@ async def handshake(client: httpx.AsyncClient) -> list[dict[str, Any]]:
 REGIONS: dict[str, dict[str, Any]] = {
     "us": {"label": "United States", "countries": "US", "location": ""},
     "in": {"label": "India", "countries": "IN", "location": ""},
+    "ae": {"label": "UAE", "countries": "AE", "location": ""},
 }
 DEFAULT_REGION = "us"
 

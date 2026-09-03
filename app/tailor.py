@@ -292,6 +292,12 @@ def tailor_resume(
 
     return {
         "jobId": job["id"],
+        # Which market's conventions this document follows. Taken from where
+        # the role is, not from a global setting: a UAE posting gets a UAE
+        # resume whichever region the pool happens to be showing. Nationality
+        # and visa status belong on a Gulf CV and are a liability on a US one,
+        # so this cannot be a preference.
+        "market": _market_for(job),
         "summary": edits.get("summary") or generated_summary,
         "headline": edits.get("headline") or variant.label or profile.headline
         or "Business Analytics Consultant",
@@ -319,6 +325,13 @@ def tailor_resume(
         "audit": audit,
         "updatedAt": None,
     }
+
+
+def _market_for(job: dict[str, Any]) -> str:
+    """The market whose resume conventions this posting expects."""
+    from .eligibility import country_for
+
+    return (country_for(job.get("location") or "") or "US").lower()
 
 
 def _project_affinity(claims: list[EvidenceClaim], description: str) -> int:

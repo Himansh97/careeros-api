@@ -453,6 +453,47 @@ def build_pdf(resume: dict[str, Any], profile: Any) -> bytes:
 
 
 # --------------------------------------------------------------------- PDF
+def _market_header(resume: dict[str, Any], profile: Any) -> list[str]:
+    """Extra header lines a market expects, and no others.
+
+    Returns nothing for the United States, where nationality and visa status on
+    a resume are a liability rather than a convention.
+    """
+    market = (resume.get("market") or "us").lower()
+    if market != "ae":
+        return []
+
+    rights = (getattr(profile, "work_rights", None) or {}).get("AE") or {}
+    nationality = getattr(profile, "nationality", "") or _nationality_from(profile)
+
+    lines: list[str] = []
+    if nationality:
+        lines.append(f"Nationality: {nationality}")
+    if rights:
+        status = (
+            "Requires employer-sponsored employment visa"
+            if rights.get("sponsorship_required")
+            else rights.get("status", "")
+        )
+        if status:
+            lines.append(f"UAE visa status: {status}")
+    return lines
+
+
+def _nationality_from(profile: Any) -> str:
+    """Nationality, only where the profile actually records a citizenship.
+
+    Never inferred from a name, a location or an education history. Getting
+    this wrong on a document that a visa decision is read from is not a
+    cosmetic error.
+    """
+    for code, right in (getattr(profile, "work_rights", None) or {}).items():
+        if str(right.get("status", "")).strip().lower() == "citizen":
+            return {"IN": "Indian", "US": "American", "GB": "British",
+                    "CA": "Canadian"}.get(code, code)
+    return ""
+
+
 def _render_pdf(resume: dict[str, Any], profile: Any,
                 density: dict[str, float] | None = None) -> bytes:
     d = density or DENSITIES[1]
@@ -521,6 +562,20 @@ def _render_pdf(resume: dict[str, Any], profile: Any,
     flow.append(Paragraph(_contact_markup(profile), contact_s))
     if getattr(profile, "credentials_line", []):
         flow.append(Paragraph(_escape("  |  ".join(profile.credentials_line)), creds_s))
+
+    # Gulf market convention. UAE recruiters read nationality and visa status as
+    # a hiring constraint, not as personal trivia: nationality drives the visa
+    # route and residency status decides whether they must sponsor. Every guide
+    # consulted agrees these belong on the page, and disagrees about photographs
+    # and date of birth -- so neither is included, and marital status and
+    # religion are excluded outright, which the sources are unanimous about.
+    #
+    # A US resume must never carry these. Nationality on a US application
+    # invites exactly the discrimination US hiring law is built to prevent, so
+    # this block is keyed to the market and off everywhere else.
+    for line in _market_header(resume, profile):
+        flow.append(Paragraph(_escape(line), contact_s))
+
     flow.append(Spacer(1, 3))
 
     summary = resume.get("summary") or getattr(profile, "professional_summary", "")

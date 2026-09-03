@@ -126,6 +126,8 @@ _COUNTRY_OF_MARKER: dict[str, str] = {
     "hyderabad": "IN", "pune": "IN", "chennai": "IN", "delhi": "IN",
     "noida": "IN", "gurgaon": "IN", "gurugram": "IN", "kolkata": "IN",
     "ahmedabad": "IN", "pondicherry": "IN",
+    "dubai": "AE", "abu dhabi": "AE", "sharjah": "AE", "ajman": "AE",
+    "united arab emirates": "AE", "uae": "AE", " ae": "AE",
     "canada": "CA", "toronto": "CA", "vancouver": "CA",
     "united kingdom": "GB", " uk": "GB", "u.k.": "GB", "london": "GB",
 }
@@ -140,18 +142,30 @@ def country_for(place: str) -> str | None:
     return None
 
 
+def right_to_work(profile: Any, place: str) -> dict[str, Any] | None:
+    """The recorded right to work at a place, or None if nothing is recorded."""
+    code = country_for(place)
+    if not code:
+        return None
+    return (getattr(profile, "work_rights", None) or {}).get(code)
+
+
 def may_work_in(profile: Any, place: str) -> bool:
-    """Whether the candidate has a recorded, unrestricted right to work there.
+    """Whether the candidate can take a role there at all, sponsorship included.
+
+    Three states, not two. Unrestricted is India, where citizenship means no
+    employer involvement. Sponsorship-required is the UAE, where the employer
+    sponsors the residence permit as a matter of routine -- a real condition
+    worth stating on the posting, but not a reason to hide the market, which is
+    what treating it as a blocker would do. Nothing recorded is Dublin and
+    Sao Paulo, and that still blocks.
 
     Absent means no, deliberately. A missing entry is "not recorded", and
     treating that as permission would turn a data gap into a green light on the
     one question where being wrong is expensive.
     """
-    code = country_for(place)
-    if not code:
-        return False
-    right = (getattr(profile, "work_rights", None) or {}).get(code) or {}
-    return bool(right.get("unrestricted"))
+    right = right_to_work(profile, place) or {}
+    return bool(right.get("unrestricted") or right.get("workable"))
 
 
 def _foreign_location(job: dict[str, Any]) -> str | None:
@@ -210,6 +224,23 @@ def check_eligibility(job: dict[str, Any], profile: Any) -> dict[str, Any]:
                     f"Role is based in {foreign}. F-1/OPT authorises employment "
                     "in the United States only, and no right to work in "
                     f"{foreign} is recorded."
+                ),
+                "quote": job.get("location", "") or foreign,
+            }
+        )
+
+    # A market the candidate can work in only with sponsorship is workable, and
+    # saying nothing about it would be its own kind of quiet. The warning rides
+    # alongside the posting instead of removing it.
+    _right = right_to_work(profile, job.get("location") or "")
+    if foreign and _right and _right.get("sponsorship_required") and not _right.get("unrestricted"):
+        warnings.append(
+            {
+                "type": "sponsorship_required",
+                "detail": (
+                    f"Role is based in {foreign}. The candidate holds no residency "
+                    "there, so the employer sponsors the work permit. Routine in "
+                    "this market, but confirm the employer does it."
                 ),
                 "quote": job.get("location", "") or foreign,
             }
