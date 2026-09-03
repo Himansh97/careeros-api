@@ -1048,6 +1048,69 @@ async def reset_resume_edits(job_id: str, scope: str = "user") -> dict[str, Any]
     return {"ok": True, "jobId": job_id, "scope": scope}
 
 
+@app.get("/api/regions")
+async def list_regions() -> dict[str, Any]:
+    """Which markets discovery can be pointed at, and which one it is on.
+
+    `configured` is the honest part. The India region depends entirely on
+    JobDataLake, so without that key it would return the nine direct boards --
+    all US employers -- under an India heading. Reporting it as unconfigured is
+    the same rule the mock-data gate follows on the frontend: an empty result
+    is allowed, a plausible wrong one is not.
+    """
+    from .config import jobdatalake_key
+    from .discovery import active_region
+    from .sources import DEFAULT_REGION, REGIONS
+
+    aggregator = bool(jobdatalake_key())
+    return {
+        "active": active_region(),
+        "regions": [
+            {
+                "id": rid,
+                "label": spec["label"],
+                # The US region stands on its own: the direct board readers are
+                # US employers and work with no key at all.
+                "configured": rid == DEFAULT_REGION or aggregator,
+                "requires": None if rid == DEFAULT_REGION else "JOBDATALAKE_API_KEY",
+            }
+            for rid, spec in REGIONS.items()
+        ],
+        "aggregatorConfigured": aggregator,
+    }
+
+
+class RegionRequest(BaseModel):
+    region: str
+
+
+@app.post("/api/regions")
+async def choose_region(req: RegionRequest) -> dict[str, Any]:
+    """Point discovery at a market. Invalidates the snapshot, by design."""
+    from .config import jobdatalake_key
+    from .discovery import set_region
+    from .sources import DEFAULT_REGION, REGIONS
+
+    if req.region not in REGIONS:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "unknown_region", "message": f"{req.region!r} is not a market this reads"},
+        )
+    if req.region != DEFAULT_REGION and not jobdatalake_key():
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "region_not_configured",
+                "message": (
+                    f"{REGIONS[req.region]['label']} needs JOBDATALAKE_API_KEY. "
+                    "Without it the direct boards would return US employers under "
+                    "that heading."
+                ),
+            },
+        )
+    return {"active": set_region(req.region), "note": "The job pool refreshes on the next fetch."}
+
+
 @app.get("/api/jobs/{job_id}/resume/variant")
 async def resume_variant_for_job(job_id: str) -> dict[str, Any]:
     """Which argument this posting will get, and why, before anything is sent.

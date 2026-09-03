@@ -74,6 +74,30 @@ reads it through `app/profile.py`.
 ./.venv/bin/python scripts/sync_notion.py --write            # mirror applications to Notion
 ```
 
+## Job sources: the line between an API and a crawl
+
+Nine direct board readers plus one aggregator. The rule that decides whether a
+source gets implemented is whether the operator publishes a way in: a
+documented API, published rate limits, an issued key. Greenhouse, Ashby, Lever,
+Workday, SmartRecruiters and JobDataLake all offer that bargain, so they are
+read.
+
+**LinkedIn, Indeed, Wellfound and Naukri are refused, and the gap is reported
+rather than papered over** — `sources.NOT_COVERED` carries the reason for each
+and the UI shows it. Naukri is the least ambiguous of them: its `robots.txt`
+sets `Disallow: /` for a named list of AI crawlers that includes `claudebot`,
+`Claude-User` and `Claude-SearchBot`, and its search pages do not answer a
+non-browser client at all. Do not implement it, and do not implement it through
+a third-party scraping service either — relocating the request does not change
+whose terms are breached, and most of those services want session cookies from
+the candidate's own account.
+
+India coverage comes from JobDataLake, not Naukri. `JOBDATALAKE_API_KEY` in
+`.env` turns it on; without it the India region reports itself unconfigured and
+refuses to be selected, because the direct readers are US employers and serving
+them under an India heading is the plausible-wrong-answer this codebase refuses
+everywhere else.
+
 ## The Notion mirror is one way, and must stay that way
 
 `app/notion.py` publishes applications to Notion. It is off unless `NOTION_TOKEN`

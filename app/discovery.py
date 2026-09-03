@@ -167,6 +167,34 @@ async def _refresh_quietly() -> None:
         logger.exception("background job refresh failed; serving stale snapshot")
 
 
+# Which market discovery is pointed at. Held in memory rather than the database
+# because it is a view the candidate switches between, not a fact about them --
+# and because a stale value in a table would silently keep serving the wrong
+# market after a restart, which is worse than defaulting to the one they mostly
+# apply in.
+_REGION: list[str] = ["us"]
+
+
+def active_region() -> str:
+    return _REGION[0]
+
+
+def set_region(region: str) -> str:
+    """Point discovery at a market. Unknown values fall back rather than fail.
+
+    Changing region invalidates the snapshot: the cache holds one pool, and
+    serving US postings under an India heading would be the kind of quiet wrong
+    answer this codebase refuses everywhere else.
+    """
+    from .sources import DEFAULT_REGION, REGIONS
+
+    chosen = region if region in REGIONS else DEFAULT_REGION
+    if chosen != _REGION[0]:
+        _REGION[0] = chosen
+        _cache.pop("all", None)
+    return chosen
+
+
 async def _refresh() -> list[dict[str, Any]]:
     """Actually crawl every source and replace the snapshot."""
     from .sources import fetch_source_results
@@ -175,7 +203,7 @@ async def _refresh() -> list[dict[str, Any]]:
 
     from .imported import list_imported
 
-    results = await fetch_source_results()
+    results = await fetch_source_results(region=active_region())
     for result in results:
         record_generation(result)
     prune_generations(keep=30)

@@ -680,6 +680,15 @@ async def handshake(client: httpx.AsyncClient) -> list[dict[str, Any]]:
 # were written, and a candidate reading it had no way to know their roles were
 # coming from boards the page did not mention. `test_handshake_source` fails if
 # an adapter stamps a label that is not in here.
+# Where a region's postings come from. `countries` is the ISO filter the API
+# takes; the label is what the UI shows.
+REGIONS: dict[str, dict[str, Any]] = {
+    "us": {"label": "United States", "countries": "US", "location": ""},
+    "in": {"label": "India", "countries": "IN", "location": ""},
+}
+DEFAULT_REGION = "us"
+
+
 SOURCE_LABELS: tuple[str, ...] = (
     "Greenhouse",
     "Ashby",
@@ -690,6 +699,7 @@ SOURCE_LABELS: tuple[str, ...] = (
     "Arbeitnow",
     "RemoteOK",
     "Handshake",
+    "JobDataLake",
 )
 
 # Job boards deliberately not implemented, and why. Served to the UI so the gap
@@ -699,7 +709,21 @@ NOT_COVERED: dict[str, str] = {
         "No public jobs API; their terms prohibit automated access even to "
         "publicly rendered pages. Not implemented by choice."
     ),
-    "indeed": "No free public search API available to a server.",
+    # Reachable after all, through JobDataLake's aggregation. The old note
+    # here said no free public search API was available to a server, which was
+    # true of Indeed directly and stopped being the whole picture once an
+    # aggregator with a documented API covered the same postings.
+    "indeed": (
+        "No direct API for a server, but the same postings are largely reachable "
+        "through JobDataLake, which is implemented."
+    ),
+    "naukri": (
+        "robots.txt sets `Disallow: /` for a named list of AI crawlers that "
+        "includes claudebot, Claude-User and Claude-SearchBot, last updated "
+        "2026-05-13, and the search pages do not answer a non-browser client at "
+        "all. There is no public jobs API. Not implemented, and not a candidate "
+        "for implementation. India coverage comes from JobDataLake instead."
+    ),
     "wellfound": (
         "Their terms prohibit \"automated or non-automated harvesting, "
         "collection or 'scraping'\" of listings, and their pages answer a "
@@ -711,8 +735,16 @@ NOT_COVERED: dict[str, str] = {
 }
 
 
-async def fetch_source_results() -> tuple[SourceResult, ...]:
-    """Fetch each configured adapter independently and preserve its health."""
+async def fetch_source_results(region: str = DEFAULT_REGION) -> tuple[SourceResult, ...]:
+    """Fetch each configured adapter independently and preserve its health.
+
+    `region` only reaches JobDataLake. The nine direct board readers are lists
+    of specific employers rather than searches, so there is nothing regional to
+    vary in them -- a Greenhouse board returns what that company posts wherever
+    it posts it. Filtering those by country here would silently hide postings
+    the candidate asked for, so the region narrows the aggregator and leaves
+    the direct readers alone.
+    """
     async with httpx.AsyncClient(
         timeout=HTTP_TIMEOUT_SECONDS, follow_redirects=True
     ) as client:
@@ -732,6 +764,11 @@ async def fetch_source_results() -> tuple[SourceResult, ...]:
         tasks.append(_safe_result(arbeitnow(client), "arbeitnow"))
         tasks.append(_safe_result(remoteok(client), "remoteok"))
         tasks.append(_safe_result(handshake(client), "handshake"))
+        # Returns nothing at all when no key is configured, which is why it can
+        # be appended unconditionally.
+        tasks.append(
+            _safe_result(fetch_jobdatalake(client, region=region), f"jobdatalake/{region}")
+        )
         return tuple(await asyncio.gather(*tasks))
 
 
@@ -778,3 +815,98 @@ def project_source_results(
 async def fetch_every_source() -> tuple[list[dict[str, Any]], dict[str, int], list[str]]:
     """Compatibility API over structured per-adapter results."""
     return project_source_results(await fetch_source_results())
+
+
+# ------------------------------------------------------------- JobDataLake
+# An aggregator, deliberately, where the nine above are direct board readers.
+#
+# The case for it is coverage this codebase cannot otherwise reach. Workday
+# publishes no board a server can read, and a large share of the financial
+# services employers being targeted post there; iCIMS and Rippling are the
+# same. It also covers markets outside the US, which is the whole basis of the
+# India region -- Naukri is not an option and never will be, since its
+# robots.txt sets `Disallow: /` for a named list of AI crawlers that includes
+# claudebot, and its pages do not answer a non-browser client at all.
+#
+# Terms permit this: it is a documented HTTP API with published rate limits and
+# an issued key, which is the same bargain Greenhouse and Ashby offer. That is
+# the line the rest of this module draws, and it is why LinkedIn and Wellfound
+# are refused rather than crawled.
+JOBDATALAKE_URL = "https://api.jobdatalake.com/v1/jobs"
+
+
+
+def _jobdatalake_job(row: dict[str, Any]) -> dict[str, Any] | None:
+    """One API row as a CareerOS job, or None if it cannot be applied to.
+
+    A posting with no apply URL is dropped rather than shown. The pipeline's
+    whole output is somewhere to click, and a row that cannot be applied to
+    would occupy a slot a real posting should have.
+    """
+    apply_url = (row.get("apply_url") or row.get("url") or "").strip()
+    title = (row.get("title") or "").strip()
+    if not apply_url or not title:
+        return None
+
+    company = row.get("company") or {}
+    name = (company.get("name") if isinstance(company, dict) else company) or ""
+    name = str(name).strip() or "Unknown"
+
+    locations = row.get("locations") or []
+    if isinstance(locations, list):
+        place = ", ".join(str(x) for x in locations[:2] if x)
+    else:
+        place = str(locations)
+    if row.get("remote_type") == "fully_remote" and "remote" not in place.lower():
+        place = f"{place}, Remote".strip(", ")
+
+    return _job(
+        jid=f"jdl_{row.get('handle') or row.get('id')}",
+        title=title,
+        company=name,
+        location=place,
+        description=strip_html(row.get("description") or row.get("description_html") or ""),
+        apply_url=apply_url,
+        source="JobDataLake",
+        # The originating ATS, when the aggregator knows it. Worth keeping:
+        # it is how a posting reached here, and the apply flow branches on it.
+        ats=(row.get("ats_source") or row.get("atsSource") or None),
+        posted=row.get("posted_at"),
+    )
+
+
+async def fetch_jobdatalake(
+    client: Any,
+    query: str = "*",
+    region: str = DEFAULT_REGION,
+    per_page: int = 100,
+    posted_within_days: int = 30,
+) -> list[dict[str, Any]]:
+    """Postings from JobDataLake for one region, or nothing when unconfigured."""
+    import time
+
+    from .config import jobdatalake_key
+
+    key = jobdatalake_key()
+    if not key:
+        return []
+
+    spec = REGIONS.get(region) or REGIONS[DEFAULT_REGION]
+    params = {
+        "q": query or "*",
+        "per_page": min(per_page, 100),
+        "sort_by": "posted_at:desc",
+        "posted_after": int((time.time() - posted_within_days * 86400) * 1000),
+    }
+    if spec["countries"]:
+        params["countries"] = spec["countries"]
+    if spec["location"]:
+        params["location"] = spec["location"]
+
+    response = await client.get(
+        JOBDATALAKE_URL, params=params, headers={"X-API-Key": key}, timeout=20.0
+    )
+    response.raise_for_status()
+    body = response.json()
+    rows = body.get("jobs") or body.get("data") or body.get("results") or []
+    return [j for j in (_jobdatalake_job(r) for r in rows) if j]

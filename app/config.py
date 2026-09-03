@@ -190,6 +190,18 @@ READY_SCORE = 80
 # It is read at call time rather than captured at import so that rotating the
 # key does not require a restart — which is exactly the cost that the invalid
 # ANTHROPIC_API_KEY imposed on 2026-08-25.
+# JobDataLake aggregates 40+ ATS platforms, which is what makes it worth adding
+# alongside the direct board readers: it reaches Workday, iCIMS and Rippling,
+# none of which publish a board this codebase can read, and it covers markets
+# outside the US. Off when the key is absent, and off is a normal state -- the
+# nine direct sources work identically without it.
+#
+# Read at call time, same reason as the Tsenta key below.
+def jobdatalake_key() -> str | None:
+    """The JobDataLake API key, or None when that source is simply not used."""
+    return os.getenv("JOBDATALAKE_API_KEY") or None
+
+
 def tsenta_key() -> str | None:
     """The Tsenta API key, or None when CareerOS cannot submit at all."""
     return os.getenv("TSENTA_API_KEY") or None
