@@ -41,9 +41,54 @@ from reportlab.platypus import (
 DARK = colors.HexColor("#282828")
 
 
+# Typographic characters that mark a document as machine-composed. Nobody
+# reaches for option-shift-hyphen while typing a resume, so a page carrying
+# nine em dashes reads as generated to a human reviewer. Smart quotes are here
+# for a second reason: older ATS text extractors mangle them, and a mangled
+# quote inside a bullet is a keyword that no longer matches.
+#
+# Purely punctuation. No word, number or name is altered, so this cannot change
+# what the document claims.
+_PLAIN = {
+    # Spaced forms first, so " x \u2014 y " collapses to " x - y " rather than
+    # leaving the double space a bare replacement would. An earlier version
+    # fixed that with a global whitespace collapse and broke the contact line,
+    # whose doubled spaces around the pipes are deliberate -- the PDF and DOCX
+    # renderers then disagreed, which tests/test_outreach_copy.py exists to
+    # catch and duly did.
+    " \u2014 ": " - ",
+    " \u2013 ": " - ",
+    "\u2014": "-",   # em dash
+    "\u2013": "-",   # en dash
+    "\u2018": "'",   # left single quote
+    "\u2019": "'",   # right single quote
+    "\u201c": '"',   # left double quote
+    "\u201d": '"',   # right double quote
+    "\u2022": "-",   # bullet
+    "\u2026": "...",  # ellipsis
+    "\u00a0": " ",   # non-breaking space
+}
+
+
+def plain_punctuation(text: str) -> str:
+    """Normalise typography without touching content.
+
+    Applied in `_escape` rather than at each call site because that is the one
+    place every string passes through on its way into a paragraph. The dashes
+    arrive from three different sources -- role headings built in `tailor`,
+    project names recorded in the evidence file, and the claim text itself --
+    so fixing any one of them would have left the other two.
+    """
+    out = text or ""
+    for char, replacement in _PLAIN.items():
+        out = out.replace(char, replacement)
+    return out
+
+
 def _escape(text: str) -> str:
     """ReportLab paragraphs accept a mini-HTML dialect, so escape markup."""
-    return (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    cleaned = plain_punctuation(text)
+    return cleaned.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def _pretty_month(token: str) -> str:
@@ -348,6 +393,15 @@ def _render_pdf(resume: dict[str, Any], profile: Any,
         bottomMargin=(d["margin"] - 0.1) * inch,
         title=f"{profile.name} - {resume['jobTitle']}",
         author=profile.name,
+        # ReportLab otherwise writes `Producer: ReportLab PDF Library` and the
+        # literal string "(unspecified)" into Creator and Subject. A toolchain
+        # name is a strange thing to find in the properties of a resume, and
+        # "(unspecified)" reads as a field nobody filled in. Blank rather than
+        # renamed: claiming some other authoring tool would be asserting
+        # something false about the file.
+        creator="",
+        subject="",
+        producer="",
     )
     width = doc.width
     base = getSampleStyleSheet()
