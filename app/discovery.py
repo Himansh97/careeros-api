@@ -167,16 +167,39 @@ async def _refresh_quietly() -> None:
         logger.exception("background job refresh failed; serving stale snapshot")
 
 
-# Which market discovery is pointed at. Held in memory rather than the database
-# because it is a view the candidate switches between, not a fact about them --
-# and because a stale value in a table would silently keep serving the wrong
-# market after a restart, which is worse than defaulting to the one they mostly
-# apply in.
-_REGION: list[str] = ["us"]
+# Which market discovery is pointed at.
+#
+# Stored, after being held in a module-level list first. That version reset on
+# every restart and on every --reload, so the market silently went back to the
+# United States while the candidate was working through India postings. The
+# argument for keeping it in memory was that a stale row would quietly serve
+# the wrong market -- but the market is displayed in the toggle on the page it
+# filters, so a stored value is the opposite of silent. The in-memory one was
+# the silent one.
+_REGION_KEY = "discovery.region"
 
 
 def active_region() -> str:
-    return _REGION[0]
+    """The stored market, or the default when nothing is stored or readable.
+
+    Never raises. Discovery runs on a schedule and a settings read failing is
+    not a reason for the daily fetch to stop; falling back to the default
+    market is.
+    """
+    from .sources import DEFAULT_REGION, REGIONS
+
+    try:
+        from .store import connect
+
+        with connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM app_setting WHERE key=?", (_REGION_KEY,)
+            ).fetchone()
+    except Exception:
+        return DEFAULT_REGION
+
+    stored = row["value"] if row else None
+    return stored if stored in REGIONS else DEFAULT_REGION
 
 
 def set_region(region: str) -> str:
@@ -187,11 +210,20 @@ def set_region(region: str) -> str:
     answer this codebase refuses everywhere else.
     """
     from .sources import DEFAULT_REGION, REGIONS
+    from .store import connect, now
 
     chosen = region if region in REGIONS else DEFAULT_REGION
-    if chosen != _REGION[0]:
-        _REGION[0] = chosen
-        _cache.pop("all", None)
+    if chosen == active_region():
+        return chosen
+
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO app_setting (key, value, updated_at) VALUES (?,?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value, "
+            "updated_at=excluded.updated_at",
+            (_REGION_KEY, chosen, now()),
+        )
+    _cache.pop("all", None)
     return chosen
 
 
