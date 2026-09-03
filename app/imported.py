@@ -69,10 +69,41 @@ def import_jobs(jobs: list[dict[str, Any]], source: str, live: bool = False) -> 
     return stored
 
 
+def _is_job(payload: dict[str, Any]) -> bool:
+    """Whether a stored row is actually a job posting.
+
+    28 of 61 rows in this table were not. They carry `applicationId`,
+    `jobTitle`, `companyName`, `status` and `errorCode` -- the shape of a Tsenta
+    tracked-application record, written here by something that treated this
+    table as general storage. Discovery reads every row as a job and indexes it
+    by `payload["company"]["name"]`, so each refresh died on KeyError: 'company'
+    and the job pool silently stopped updating.
+
+    Filtering at the read is deliberate rather than deleting the rows: they are
+    real records of real applications and belong somewhere, just not in a list
+    the discovery pipeline treats as postings.
+    """
+    return (
+        isinstance(payload, dict)
+        and isinstance(payload.get("company"), dict)
+        and bool(payload["company"].get("name"))
+        and bool(payload.get("title"))
+    )
+
+
 def list_imported() -> list[dict[str, Any]]:
+    """Every pasted posting. Rows that are not postings are skipped."""
     with connect() as conn:
         rows = conn.execute("SELECT payload FROM imported_jobs").fetchall()
-    return [json.loads(r["payload"]) for r in rows]
+    return [p for p in (json.loads(r["payload"]) for r in rows) if _is_job(p)]
+
+
+def non_job_rows() -> list[dict[str, Any]]:
+    """Stored rows that are not postings, so the mess is visible rather than
+    quietly filtered forever."""
+    with connect() as conn:
+        rows = conn.execute("SELECT payload FROM imported_jobs").fetchall()
+    return [p for p in (json.loads(r["payload"]) for r in rows) if not _is_job(p)]
 
 
 def imported_counts() -> dict[str, int]:

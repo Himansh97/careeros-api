@@ -25,7 +25,14 @@ from .contacts import (
 )
 from .providers import configured_providers
 from .eligibility import _foreign_location, check_eligibility
-from .discovery import add_to_cache, failed_sources, fetch_all_jobs, filter_jobs, source_counts
+from .discovery import (
+    active_region,
+    add_to_cache,
+    failed_sources,
+    fetch_all_jobs,
+    filter_jobs,
+    source_counts,
+)
 from .sources import NOT_COVERED, SOURCE_LABELS
 from .outreach import build_outreach
 from .profile import ProfileNotFound, load_profile
@@ -639,7 +646,12 @@ class SearchRequest(BaseModel):
 async def search(req: SearchRequest) -> dict[str, Any]:
     p = _profile()
     all_jobs = await fetch_all_jobs()
-    matched = filter_jobs(all_jobs, req.query, req.location, req.workArrangements)
+    # The active market decides which postings are even candidates. Without
+    # this the toggle changed what was fetched and nothing that was shown.
+    matched = filter_jobs(
+        all_jobs, req.query, req.location, req.workArrangements,
+        region=active_region(),
+    )
 
     # Facet counts come from the pool BEFORE the source filter is applied.
     # Counting after it would zero every board the candidate has not selected,
@@ -2319,7 +2331,7 @@ async def refresh_jobs() -> dict[str, Any]:
     from .discovery import failed_sources, fetch_all_jobs, filter_jobs, source_counts
 
     jobs = await fetch_all_jobs(force=True)
-    us = filter_jobs(jobs)
+    us = filter_jobs(jobs, region=active_region())
     return {
         "total": len(jobs),
         "unitedStates": len(us),
@@ -2380,7 +2392,7 @@ async def skill_gap_report(minimumFit: int = 70) -> dict[str, Any]:
     from .priority import skill_gaps
 
     p = _profile()
-    jobs = filter_jobs(await fetch_all_jobs())
+    jobs = filter_jobs(await fetch_all_jobs(), region=active_region())
 
     from .discovery_store import current_snapshot
 

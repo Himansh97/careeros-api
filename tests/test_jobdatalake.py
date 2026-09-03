@@ -207,3 +207,78 @@ class TestNaukriIsRefusedOnTheRecord(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheRegionFiltersWhatIsShown(unittest.TestCase):
+    """The toggle changes the pool, not just the fetch.
+
+    The first version narrowed only the aggregator query, so switching to India
+    left roughly 8,000 US postings from the nine direct board readers in the
+    pool with a handful of Indian ones underneath. The toggle appeared to do
+    nothing.
+    """
+
+    def setUp(self):
+        from app.discovery import in_region
+
+        self.in_region = in_region
+        self.jobs = [
+            {"title": "A", "location": "Dallas, TX"},
+            {"title": "B", "location": "Remote - US"},
+            {"title": "C", "location": "Bangalore, India"},
+            {"title": "D", "location": "Pune, India"},
+            {"title": "E", "location": "Dublin, Ireland"},
+            {"title": "F", "location": "Remote"},
+        ]
+
+    def test_india_keeps_only_india(self):
+        got = {j["title"] for j in self.in_region(self.jobs, "in")}
+        self.assertEqual(got, {"C", "D"})
+
+    def test_india_excludes_bare_remote(self):
+        """An unclassifiable 'Remote' is far more likely US than Indian, so a
+        market other than the default keeps only what positively resolves."""
+        self.assertNotIn("F", {j["title"] for j in self.in_region(self.jobs, "in")})
+
+    def test_us_keeps_bare_remote(self):
+        """The US rule stays conservative: losing a real US-remote role costs
+        more than showing one the eligibility gate will catch."""
+        got = {j["title"] for j in self.in_region(self.jobs, "us")}
+        self.assertIn("F", got)
+        self.assertNotIn("E", got)
+
+    def test_an_unknown_region_falls_back_to_the_default(self):
+        self.assertEqual(
+            [j["title"] for j in self.in_region(self.jobs, "atlantis")],
+            [j["title"] for j in self.in_region(self.jobs, "us")],
+        )
+
+
+class TestImportedStoreHoldsOnlyPostings(unittest.TestCase):
+    """A refresh died on KeyError: 'company' for days before this was found.
+
+    28 of 61 rows were Tsenta tracked-application records -- applicationId,
+    jobTitle, companyName, status -- written into a table discovery reads as
+    postings and indexes by payload["company"]["name"].
+    """
+
+    def test_a_tracked_application_record_is_not_a_posting(self):
+        from app.imported import _is_job
+
+        self.assertFalse(_is_job({
+            "applicationId": "a1", "jobTitle": "Data Analyst",
+            "companyName": "Acme", "status": "submitted", "atsType": "greenhouse",
+        }))
+
+    def test_a_real_posting_is(self):
+        from app.imported import _is_job
+
+        self.assertTrue(_is_job({
+            "id": "j1", "title": "Data Analyst",
+            "company": {"name": "Acme"}, "location": "Remote",
+        }))
+
+    def test_a_posting_missing_its_company_name_is_not(self):
+        from app.imported import _is_job
+
+        self.assertFalse(_is_job({"title": "Data Analyst", "company": {}}))

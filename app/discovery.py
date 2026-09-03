@@ -319,14 +319,46 @@ def us_only(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [j for j in jobs if _foreign_location(j) is None]
 
 
+def in_region(jobs: list[dict[str, Any]], region: str) -> list[dict[str, Any]]:
+    """The postings that belong to a market.
+
+    The region used to narrow only what was fetched from the aggregator, which
+    made the toggle invisible: the nine direct board readers still returned
+    their US employers, so switching to India left 8,000 US postings in the
+    pool with a handful of Indian ones somewhere underneath. A market has to
+    filter what is shown, not just what is collected.
+
+    US keeps its existing conservative rule -- anything not identifiably
+    foreign stays, because losing a real US-remote role costs more than showing
+    one the eligibility gate will catch. Every other market is the opposite:
+    only postings that positively resolve to that country are kept, since an
+    unclassifiable "Remote" is far more likely to be US than Indian.
+    """
+    from .sources import DEFAULT_REGION, REGIONS
+
+    if region == DEFAULT_REGION or region not in REGIONS:
+        return us_only(jobs)
+
+    from .eligibility import country_for
+
+    want = REGIONS[region]["countries"]
+    return [j for j in jobs if country_for(j.get("location") or "") == want]
+
+
 def filter_jobs(
     jobs: list[dict[str, Any]],
     query: str | None = None,
     location: str | None = None,
     work_arrangements: list[str] | None = None,
     united_states_only: bool = True,
+    region: str | None = None,
 ) -> list[dict[str, Any]]:
-    out = us_only(jobs) if united_states_only else jobs
+    # `region` supersedes the older boolean when given. The boolean stays so
+    # callers that only ever meant "US or everywhere" keep working unchanged.
+    if region is not None:
+        out = in_region(jobs, region)
+    else:
+        out = us_only(jobs) if united_states_only else jobs
 
     if query:
         terms = [t for t in query.lower().split() if t]
