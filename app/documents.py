@@ -169,9 +169,18 @@ def _edu_period(edu: dict[str, Any]) -> str:
     """Show the study period, not just graduation.
 
     A lone graduation date leaves the employment gap the degree explains
-    looking like an unexplained absence.
+    looking like an unexplained absence. This resume has exactly that shape:
+    employment ends Jul 2023 and resumes Jul 2025, and the MS that fills those
+    two years said only "May 2025". A reviewer does not reconstruct someone's
+    life from a graduation date, so what the page showed was a 24-month hole.
+
+    The docstring above described this behaviour before the code did; only the
+    graduation date was ever read. `start_date` is recorded in the profile for
+    both degrees and user-confirmed, so nothing here is inferred.
     """
-    period = _pretty_month(edu.get("graduation_date", ""))
+    start = _pretty_month(edu.get("start_date", ""))
+    end = _pretty_month(edu.get("graduation_date", ""))
+    period = f"{start} - {end}" if start and end and start != end else (end or start)
     if edu.get("gpa"):
         period += f", GPA {edu['gpa']}"
     return period

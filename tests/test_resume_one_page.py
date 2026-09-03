@@ -203,3 +203,39 @@ class TestSummaryClaimsNoTenure(unittest.TestCase):
             re.search(r"\d+\+?\s*years of experience", text),
             "the summary is claiming a tenure again",
         )
+
+
+class TestEducationClosesTheGap(unittest.TestCase):
+    """A degree must show the years it covers, not just the year it ended.
+
+    Employment on this resume ends Jul 2023 and resumes Jul 2025. The MS fills
+    those two years, but while only the graduation date rendered, the page
+    showed a 24-month absence with nothing explaining it. `_edu_period` said in
+    its own docstring that it showed the study period, and did not.
+    """
+
+    def setUp(self) -> None:
+        try:
+            from app.profile import load_profile
+
+            self.profile = load_profile()
+        except Exception as exc:  # pragma: no cover - depends on local PII
+            self.skipTest(f"real profile unavailable: {exc}")
+
+    def test_a_degree_with_a_start_date_renders_a_range(self) -> None:
+        from app.documents import _edu_period
+
+        for entry in self.profile.education:
+            if entry.get("start_date"):
+                with self.subTest(degree=entry.get("degree")):
+                    self.assertIn(" - ", _edu_period(entry))
+
+    def test_a_degree_without_a_start_date_still_renders(self) -> None:
+        from app.documents import _edu_period
+
+        self.assertEqual(_edu_period({"graduation_date": "2025-05"}), "May 2025")
+        self.assertEqual(_edu_period({}), "")
+
+    def test_the_range_reaches_the_rendered_page(self) -> None:
+        text = _render(*CASES[0]).pages[0].extract_text()
+        self.assertIn("Aug 2023 - May 2025", text)
