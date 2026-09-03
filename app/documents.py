@@ -303,9 +303,12 @@ DENSITIES = [
 ]
 
 
-# A resume may run to two pages, never more. Past two, a recruiter stops
-# reading and an ATS starts truncating.
-MAX_PAGES = 2
+# One page. A reviewer working a stack decides on the first page and rarely
+# turns to the second, so evidence on page two is evidence that mostly is not
+# read -- and at this much experience a second page reads as padding rather
+# than depth. This was 2, which is why generated documents were running long
+# while the hand-cut versions fit.
+MAX_PAGES = 1
 # Below this, the final page looks abandoned rather than finished. A resume
 # that runs 1.15 pages reads worse than a tight single page — the reader sees
 # the white space, not the extra evidence.
@@ -335,7 +338,7 @@ def build_pdf(resume: dict[str, Any], profile: Any) -> bytes:
 
     Three rules, in priority order:
 
-    1. Never exceed MAX_PAGES.
+    1. Never exceed MAX_PAGES, which is one page.
     2. Never leave the final page mostly blank.
     3. Subject to those, keep as much real evidence as possible and set it as
        loosely — i.e. as readably — as it will go.
@@ -362,21 +365,28 @@ def build_pdf(resume: dict[str, Any], profile: Any) -> bytes:
             # while trying to do better.
             fitted = candidate
 
-    # Pass 2 — still over MAX_PAGES at the tightest setting, so trim the
-    # least relevant evidence until it fits.
+    # Pass 2 - drop the least relevant evidence a step at a time, and at each
+    # step set the surviving content as loosely as it will go. Trim level is
+    # the outer loop because evidence outranks typography: more bullets in
+    # tight type beats fewer in loose type, which is the priority order stated
+    # above. Within one trim level the loosest readable density wins.
     tight = DENSITIES[-1]
     for lead, rest in [(7, 4), (6, 3), (5, 3), (5, 2), (4, 2), (4, 1), (3, 1)]:
-        candidate = _render_pdf(_trim(resume, lead, rest), profile, tight)
-        if acceptable(candidate):
-            return candidate
-        if _page_count(candidate) <= MAX_PAGES and fitted is None:
-            fitted = candidate
+        trimmed = _trim(resume, lead, rest)
+        # Cheap feasibility check first. If the tightest setting still
+        # overflows at this trim level, no looser one can fit, so skip the
+        # four renders that would only confirm it.
+        if not acceptable(_render_pdf(trimmed, profile, tight)):
+            continue
+        for density in DENSITIES:
+            candidate = _render_pdf(trimmed, profile, density)
+            if acceptable(candidate):
+                return candidate
 
-    # Pass 3 — nothing satisfied both rules. A thin final page beats a third
-    # page, so prefer whatever at least fits the page limit.
-    if fitted is not None:
-        return fitted
-    return _render_pdf(_trim(resume, 3, 1), profile, tight)
+    # Pass 3 - nothing fit. Return the hardest trim rather than raising: a
+    # document that runs long is still a document the candidate can edit, and
+    # failing here would block an application over a layout rule.
+    return fitted or _render_pdf(_trim(resume, 3, 1), profile, tight)
 
 
 # --------------------------------------------------------------------- PDF

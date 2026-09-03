@@ -176,5 +176,9 @@ rather than keep it.
   section order, contact survival, page count.
 - Re-extract the PDF text and confirm claimed keywords are present **and
   unclaimed ones are absent**. Bugs here are invisible in JSON.
-- A resume is at most 2 pages with a final page at least 45% full —
-  `documents.build_pdf` enforces both.
+- A resume is **one page** — `documents.build_pdf` enforces it, and
+  `tests/test_resume_one_page.py` renders real documents through the real
+  pipeline to check. `MAX_PAGES` was 2 and nothing asserted it, so generated
+  documents ran to two pages while the hand-cut versions fit on one.
+- Nothing that ships to an employer carries a toolchain fingerprint. No em or
+  en dashes, no smart quotes, and `/Producer` and `/Creator` are blank.
