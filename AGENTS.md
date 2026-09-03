@@ -201,5 +201,19 @@ rather than keep it.
   `tests/test_resume_one_page.py` renders real documents through the real
   pipeline to check. `MAX_PAGES` was 2 and nothing asserted it, so generated
   documents ran to two pages while the hand-cut versions fit on one.
-- Nothing that ships to an employer carries a toolchain fingerprint. No em or
-  en dashes, no smart quotes, and `/Producer` and `/Creator` are blank.
+- Nothing that ships to an employer carries a toolchain fingerprint.
+  `resume_qa.check_fingerprints` is the check: typography no one types by hand,
+  a tool name in the file properties, generated-prose vocabulary, and structural
+  uniformity. It must return `[]` for every generated resume.
+- **Uniformity is the one worth understanding.** No local check predicts what a
+  third-party AI detector will say, and none should claim to. What is checkable
+  is the property those tools are built around: a page where every bullet is the
+  same length and built the same way reads as machine-made to a person long
+  before any tool is involved. The first draft of the composed STAR bullets put
+  a semicolon in 18 of 19 — every fact true, every source cited, and it still
+  read as generated. Vary the construction.
+- Employment bullets are composed situation-action-result, three per role, from
+  `~/careeros/star_bullets.json`. Each names the claims it draws on and
+  `star.load` verifies it against their union through `verify_override`. Never
+  loosen that gate to fit a phrasing; rewrite the phrasing in the claims' own
+  vocabulary, which is what the three rejected ones needed.

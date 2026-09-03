@@ -204,6 +204,127 @@ def check_resume(resume: dict[str, Any], profile: Any) -> list[dict[str, str]]:
     return findings
 
 
+# ------------------------------------------------------- machine fingerprints
+# Two different things get called "AI detection" and only one of them is
+# checkable here.
+#
+# The first is artifacts: typography no one types by hand, a toolchain name in
+# the file properties, and vocabulary that clusters in generated prose. Those
+# are facts about the document and this checks them.
+#
+# The second is a statistical classifier reading the prose. Nothing here
+# predicts what one of those will say, and no local check can. What it can do
+# is measure the property those tools are built around -- uniformity. A page
+# where every bullet is the same length and built the same way reads as
+# machine-made to a person long before any tool is involved, and that is worth
+# failing on its own merits.
+
+FINGERPRINT_CHARS = {
+    "\u2014": "em dash",
+    "\u2013": "en dash",
+    "\u2018": "left single quote",
+    "\u2019": "right single quote",
+    "\u201c": "left double quote",
+    "\u201d": "right double quote",
+    "\u2022": "bullet character",
+    "\u2026": "ellipsis character",
+}
+
+# Vocabulary that clusters in generated prose. Not proof of anything on its
+# own; a resume carrying several is worth a second look.
+TELL_WORDS = (
+    "delve", "leverage", "robust", "seamless", "spearhead", "synerg", "holistic",
+    "cutting-edge", "state-of-the-art", "pivotal", "meticulous", "realm",
+    "landscape", "testament", "underscore", "furthermore", "moreover",
+    "showcase", "utilize", "facilitate", "streamline", "empower",
+    "transformative", "innovative", "dynamic", "passionate",
+    "proven track record", "wide range of", "tapestry", "deep dive",
+)
+
+# Above this share of bullets sharing one construction, the page stops reading
+# as written and starts reading as generated. Set from a real case: the first
+# pass of the composed STAR bullets put a semicolon in 18 of 19, which is not
+# something a person does across a page of their own work history.
+MAX_SHARED_CONSTRUCTION = 0.6
+MIN_LENGTH_SPREAD = 4.0     # standard deviation, in words, across bullets
+
+
+def check_fingerprints(pdf_bytes: bytes, resume: dict[str, Any]) -> list[dict[str, str]]:
+    """Artifacts and uniformity in a rendered resume.
+
+    Deliberately not a claim about what any third-party detector would return.
+    """
+    import io as _io
+    import statistics
+
+    from pypdf import PdfReader
+
+    findings: list[dict[str, str]] = []
+    reader = PdfReader(_io.BytesIO(pdf_bytes))
+    text = "".join(p.extract_text() or "" for p in reader.pages)
+
+    for char, name in FINGERPRINT_CHARS.items():
+        n = text.count(char)
+        if n:
+            findings.append({
+                "severity": "medium", "type": "fingerprint_typography", "where": "document",
+                "detail": f"{n} {name}{'s' if n > 1 else ''} in the rendered text.",
+                "fix": "documents.plain_punctuation normalises these; something bypassed it.",
+            })
+
+    meta = {str(k): str(v) for k, v in (reader.metadata or {}).items()}
+    for key in ("/Producer", "/Creator"):
+        if meta.get(key, "").strip():
+            findings.append({
+                "severity": "medium", "type": "fingerprint_metadata", "where": key,
+                "detail": f"{key} is {meta[key]!r}, which names the tool that made the file.",
+                "fix": "build_pdf passes producer='' and creator=''.",
+            })
+
+    low = text.lower()
+    hits = [w for w in TELL_WORDS if w in low]
+    if hits:
+        findings.append({
+            "severity": "low", "type": "fingerprint_vocabulary", "where": "document",
+            "detail": f"Wording that clusters in generated prose: {', '.join(hits)}.",
+            "fix": "Rewrite in the candidate's own words; the claim's vocabulary is usually better.",
+        })
+
+    bullets = [b.get("text", "") for s in resume.get("sections", []) for b in s.get("bullets", [])]
+    if len(bullets) >= 4:
+        lengths = [len(b.split()) for b in bullets]
+        spread = statistics.pstdev(lengths)
+        if spread < MIN_LENGTH_SPREAD:
+            findings.append({
+                "severity": "medium", "type": "fingerprint_uniform_length", "where": "bullets",
+                "detail": (f"Bullet lengths vary by only {spread:.1f} words "
+                           f"(mean {statistics.mean(lengths):.0f}). Uniform length is the "
+                           "property text classifiers are built around."),
+                "fix": "Vary how much each bullet says. Not every one needs the same shape.",
+            })
+
+        for mark, label in ((";", "a semicolon"), (" - ", "a dash clause")):
+            share = sum(1 for b in bullets if mark in b) / len(bullets)
+            if share > MAX_SHARED_CONSTRUCTION:
+                findings.append({
+                    "severity": "medium", "type": "fingerprint_uniform_construction",
+                    "where": "bullets",
+                    "detail": (f"{share:.0%} of bullets use {label}. A page where every "
+                               "bullet is built the same way reads as generated."),
+                    "fix": "Vary the construction: some two sentences, some one, some subordinate.",
+                })
+
+        openers = [b.split()[0].lower() for b in bullets if b.split()]
+        if openers and len(set(openers)) < len(openers) * 0.6:
+            findings.append({
+                "severity": "low", "type": "fingerprint_uniform_opener", "where": "bullets",
+                "detail": f"Only {len(set(openers))} distinct opening words across {len(openers)} bullets.",
+                "fix": "Lead different bullets with different kinds of word.",
+            })
+
+    return findings
+
+
 # --------------------------------------------------------------- ATS checks
 REQUIRED_SECTIONS = ["PROFESSIONAL SUMMARY", "SKILLS", "PROFESSIONAL EXPERIENCE", "EDUCATION"]
 
