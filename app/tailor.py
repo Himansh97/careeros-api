@@ -218,8 +218,14 @@ def tailor_resume(
     _order_by_coverage(sections, weights)
     _select_bullets(sections, weights=weights)
 
+    # Resolved once and reused: the headline, the project ordering and the
+    # response all describe the same decision, so they cannot disagree.
+    from .resume_variant import resolve
+
+    variant = resolve(job, profile)
+
     projects = _build_projects(
-        project_claims, weights, job.get("description", "")
+        project_claims, weights, job.get("description", ""), variant=variant
     )
 
     # Align wording to the posting's vocabulary before auditing, so the
@@ -249,7 +255,11 @@ def tailor_resume(
     return {
         "jobId": job["id"],
         "summary": edits.get("summary") or generated_summary,
-        "headline": edits.get("headline") or _headline(job, profile),
+        "headline": edits.get("headline") or variant.label or profile.headline
+        or "Business Analytics Consultant",
+        # The framing decision, carried so the candidate can see which argument
+        # this document is making before it is sent, and why.
+        "variant": variant.as_dict(),
         "editedFields": sorted(edits.keys()),
         "matchedSkills": score["strongMatches"] + score["partialMatches"],
         "jobTitle": job["title"],
@@ -301,6 +311,7 @@ def _build_projects(
     description: str = "",
     max_projects: int = 3,
     max_bullets: int = 3,
+    variant: Any = None,
 ) -> list[dict[str, Any]]:
     """Group project-tagged claims into ranked, deduplicated project entries.
 
@@ -308,6 +319,14 @@ def _build_projects(
     bullets are chosen by the same marginal-coverage rule used for employment,
     so a project earns its space by answering something the page has not
     already answered.
+
+    `variant` nudges that order toward the role family. The nudge is smaller
+    than one requirement hit on purpose: what the posting actually says is
+    better evidence of what this reader wants than the family label inferred
+    from its title, so a project the posting names still outranks one the
+    family merely prefers. It only decides ties and near-ties, which is
+    exactly where a data engineering reader should see the signed ledger first
+    and a product reader should see the decision layer first.
     """
     grouped: dict[str, list[tuple[int, list[str], EvidenceClaim]]] = {}
     for n, hits, claim in project_claims:
@@ -323,7 +342,8 @@ def _build_projects(
                 # Requirement hits, plus how much of the project's own
                 # vocabulary this posting actually uses.
                 "relevance": sum(n for n, _, _ in items)
-                + _project_affinity([c for _, _, c in items], description) * 300,
+                + _project_affinity([c for _, _, c in items], description) * 300
+                + _variant_preference(name, variant),
                 "bullets": [
                     {
                         "id": c.claim_id,
@@ -369,6 +389,37 @@ def _build_projects(
             covered.update(best["hits"])
         entry["bullets"] = chosen
     return entries
+
+
+def _project_key(name: str) -> str:
+    """The identifier part of a project name, before its description.
+
+    Projects are recorded as "Custody — signed AI decision ledger", so an
+    exact-equality match against "Custody" silently never fires. That is
+    exactly what happened: the preference was wired, its unit test passed
+    against the short name it assumed, and the ordering did not move on real
+    data. Matching the leading identifier is what the caller means.
+    """
+    head = re.split(r"\s+[—–-]\s+", (name or "").strip(), maxsplit=1)[0]
+    return head.strip().lower()
+
+
+def _variant_preference(project_name: str, variant: Any) -> int:
+    """A tie-breaker, deliberately worth less than a single requirement hit.
+
+    `_project_affinity` scores each posting-vocabulary hit at 300. This tops
+    out at 200, so a project the posting genuinely talks about can never be
+    displaced by one the role family merely prefers. Ordering within
+    `leads_with` is preserved so the first named project wins a tie against
+    the second.
+    """
+    if variant is None or not getattr(variant, "leads_with", ()):
+        return 0
+    key = _project_key(project_name)
+    for position, wanted in enumerate(variant.leads_with):
+        if key == _project_key(wanted):
+            return 200 - position * 50
+    return 0
 
 
 def _order_by_coverage(
@@ -523,50 +574,6 @@ def _select_bullets(
 #
 # Order matters: the first pattern that matches wins, so the more specific
 # families are listed before the general ones.
-_FAMILIES: list[tuple[str, str, tuple[str, ...]]] = [
-    (
-        r"machine learning|\bml\b|\bai\b|data scien",
-        "AI/ML Analyst",
-        ("machine learning", "statistical modeling", "python"),
-    ),
-    (
-        r"business intelligence|\bbi\b(?!\w)",
-        "Business Intelligence Analyst",
-        ("power bi", "dashboarding"),
-    ),
-    (
-        # Any engineering title in a data or analytics context, which is where
-        # "Sr Data Solution Engineer" and "Analytics Engineer" both live.
-        r"(data|analytics|etl|pipeline|platform|backend).{0,24}engineer"
-        r"|engineer.{0,24}(data|analytics)",
-        "Analytics Engineer",
-        ("etl", "data pipelines"),
-    ),
-    (
-        r"project manager|program manager|delivery manager|scrum",
-        "Analytics Delivery Manager",
-        ("project management", "stakeholder management"),
-    ),
-    (
-        # Finance-flavoured analyst titles: FP&A, revenue, financial, risk.
-        r"fp&a|financial analyst|revenue analyst|risk.{0,20}analyst",
-        "Financial Analyst",
-        ("sql", "data analysis"),
-    ),
-    (
-        r"business analyst|operations analyst|product analyst|business analytics",
-        "Business Analyst",
-        ("requirements gathering", "stakeholder management"),
-    ),
-    (
-        # The catch-all for anything still calling itself an analyst.
-        r"data analyst|reporting analyst|analytics analyst|\banalyst\b",
-        "Data Analyst",
-        ("sql", "data analysis"),
-    ),
-]
-
-
 def _headline(job: dict[str, Any], profile: CandidateProfile) -> str:
     """Position the candidate against this posting's role family.
 
@@ -587,21 +594,17 @@ def _headline(job: dict[str, Any], profile: CandidateProfile) -> str:
     aliases and inflections are handled identically. Falling back to the
     candidate's own headline is always safe: it is theirs, and it claims
     nothing about this posting.
-    """
-    from .scoring import _find_evidence
 
-    title = (job.get("title") or "").lower()
-    for pattern, label, defining in _FAMILIES:
-        if not re.search(pattern, title):
-            continue
-        # One defining skill with real evidence is enough to position; demanding
-        # all of them would refuse families the candidate genuinely works in.
-        for skill in defining:
-            _, match = _find_evidence(skill, profile)
-            if match in ("exact", "partial"):
-                return label
-        break
-    return profile.headline or "Business Analytics Consultant"
+    The family table moved to `resume_variant`, which resolves the same
+    decision and keeps it. It was computed here and discarded, so project
+    ordering and the API could not see what the headline had already worked
+    out — and a second copy of the table would have been a second vocabulary
+    to drift.
+    """
+    from .resume_variant import resolve
+
+    variant = resolve(job, profile)
+    return variant.label or profile.headline or "Business Analytics Consultant"
 
 
 def _summary(

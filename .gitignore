@@ -2,6 +2,12 @@
 __pycache__/
 *.pyc
 *.db
+# SQLite's write-ahead sidecars. `*.db` does not match them, and the -wal file
+# holds recent writes to the applications table — candidate data, which
+# non-negotiable #3 keeps out of git. One `git add -A` was all it would take.
+*.db-shm
+*.db-wal
+*.db-journal
 .env
 # Any copy of it too. A rename-and-restore left one behind once, and a
 # bare `.env` pattern does not match `.env.backup-20260815-144759`.

@@ -1048,6 +1048,32 @@ async def reset_resume_edits(job_id: str, scope: str = "user") -> dict[str, Any]
     return {"ok": True, "jobId": job_id, "scope": scope}
 
 
+@app.get("/api/jobs/{job_id}/resume/variant")
+async def resume_variant_for_job(job_id: str) -> dict[str, Any]:
+    """Which argument this posting will get, and why, before anything is sent.
+
+    Separate from the resume itself because it is cheap and answers a different
+    question. Building the document runs the whole tailoring pipeline; this
+    reads a title and the evidence file, so the candidate can check the framing
+    across a queue of postings without rendering a PDF for each one.
+
+    `isDefault` is the field that matters. It separates "this is a data
+    engineering posting" from "I could not tell, so I did not narrow" — two
+    outcomes that were indistinguishable while the family was computed inside
+    the headline and discarded.
+    """
+    from .resume_variant import resolve
+
+    job = await _job_or_404(job_id)
+    variant = resolve(job, _profile())
+    return {
+        "jobId": job_id,
+        "jobTitle": job.get("title", ""),
+        "company": (job.get("company") or {}).get("name", ""),
+        **variant.as_dict(),
+    }
+
+
 @app.get("/api/jobs/{job_id}/resume.{fmt}")
 async def resume_document(job_id: str, fmt: str, download: bool = False):
     """Download the tailored resume as an ATS-friendly PDF or DOCX."""
