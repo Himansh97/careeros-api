@@ -92,6 +92,22 @@ a third-party scraping service either — relocating the request does not change
 whose terms are breached, and most of those services want session cookies from
 the candidate's own account.
 
+**JobDataLake costs two calls per job, and that is deliberate.** Its search
+endpoint returns no description. `score_job` on an empty description returns
+**85 with no gaps** -- above a real posting the candidate fits worse, because
+there are no stated requirements to miss -- so a job with no description must
+never enter the pool. Each row is hydrated from `/v1/jobs/:handle` and dropped
+if it cannot be. Do not "optimise" that away.
+
+**Work rights are per country, in `work_rights` on the profile.** The
+`work_location` blocker used to reason from the US-shaped `work_authorization`
+string alone, which treated every non-US country identically and ruled out all
+127 India postings while the candidate holds Indian citizenship. An absent
+country means no recorded right and still blocks: a data gap must not become a
+green light on the one question where being wrong is expensive. Dublin and
+Sao Paulo still block, and `tests/test_work_rights.py` asserts that removing
+the recorded India right restores the India block.
+
 India coverage comes from JobDataLake, not Naukri. `JOBDATALAKE_API_KEY` in
 `.env` turns it on; without it the India region reports itself unconfigured and
 refuses to be selected, because the direct readers are US employers and serving

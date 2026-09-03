@@ -98,6 +98,11 @@ class CandidateProfile:
     employment_history: list[dict[str, Any]]
     headline: str = ""
     portfolio_url: str = ""
+    # Where the candidate may work, keyed by ISO country code. Defaults to
+    # empty, which the eligibility gate reads as "no recorded right" and
+    # therefore blocks -- the safe direction. `work_authorization` above stays
+    # as the US-shaped summary the resume and application answers use.
+    work_rights: dict[str, dict[str, Any]] = field(default_factory=dict)
     professional_summary: str = ""
     credentials_line: list[str] = field(default_factory=list)
     evidence: list[EvidenceClaim] = field(default_factory=list)
@@ -167,6 +172,10 @@ def load_profile() -> CandidateProfile:
         location=raw.get("location", ""),
         linkedin_url=raw.get("linkedin_url", ""),
         work_authorization=raw.get("work_authorization", ""),
+        work_rights={
+            k: v for k, v in (raw.get("work_rights") or {}).items()
+            if not k.startswith("_") and isinstance(v, dict)
+        },
         portfolio_url=raw.get("portfolio_url", ""),
         education=raw.get("education", []),
         certifications=raw.get("certifications", []),

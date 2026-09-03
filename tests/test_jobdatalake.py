@@ -26,27 +26,51 @@ class FakeResponse:
 
 
 class FakeClient:
-    """Records the request so the query built for a region can be asserted."""
+    """Routes list and detail, because the adapter makes both calls.
 
-    def __init__(self, payload):
+    The search endpoint returns no description and the detail endpoint does, so
+    a fake that answered both with the same payload would pass while the real
+    adapter dropped every job. It did, before these were rewritten against the
+    live schema.
+    """
+
+    def __init__(self, payload, detail=None):
         self.payload = payload
+        self.detail = detail if detail is not None else DETAIL
         self.calls = []
 
     async def get(self, url, params=None, headers=None, timeout=None):
         self.calls.append({"url": url, "params": params, "headers": headers})
-        return FakeResponse(self.payload)
+        if url.rstrip("/").endswith("/jobs"):
+            return FakeResponse(self.payload)
+        return FakeResponse(self.detail)
 
 
+# The real search response: no description, company_name flat, `url` not
+# `apply_url`, `job_handle` not `handle`, posted_at in Unix milliseconds.
 ROW = {
-    "handle": "acme-data-analyst-ab12c",
+    "id": "6a99bac471c4b76e23ef5e1d",
+    "job_handle": "acme-data-analyst-ab12c",
     "title": "Data Analyst",
-    "company": {"name": "Acme"},
+    "company_name": "Acme",
+    "domain_name": "acme.com",
     "locations": ["Mumbai, India"],
+    "countries": ["IN"],
     "remote_type": "on_site",
-    "description": "<p>SQL and Python.</p>",
-    "apply_url": "https://acme.wd1.myworkdayjobs.com/job/123",
-    "ats_source": "workday",
-    "posted_at": "2026-09-01",
+    "url": "https://acme.wd1.myworkdayjobs.com/job/123",
+    "posted_at": 1788459717875,
+}
+
+# The real detail response: has the description, and posted_at as ISO.
+DETAIL = {
+    "id": "6a99bac471c4b76e23ef5e1d",
+    "job_handle": "acme-data-analyst-ab12c",
+    "title": "Data Analyst",
+    "url": "https://acme.wd1.myworkdayjobs.com/job/123",
+    "description": "<p>SQL and Python, five years of data analysis.</p>",
+    "posted_at": "2026-09-03T18:21:57.875Z",
+    "locations": ["Mumbai, India"],
+    "company": {"name": "Acme"},
 }
 
 
@@ -107,20 +131,57 @@ class TestRowsBecomeJobs(unittest.TestCase):
         job = got[0]
         self.assertEqual(job["title"], "Data Analyst")
         self.assertEqual(job["company"]["name"], "Acme")
-        self.assertEqual(job["applyUrl"], ROW["apply_url"])
+        self.assertEqual(job["applyUrl"], ROW["url"])
         # The stamp is the label, which is what test_handshake_source pins:
         # a source an adapter writes but the coverage page cannot name is the
         # drift that test exists to catch, and it caught this one.
         self.assertEqual(job["source"], "JobDataLake")
         self.assertIn(job["source"], sources.SOURCE_LABELS)
-        self.assertEqual(job["atsPlatform"], "workday")
         self.assertNotIn("<p>", job["description"])
+        self.assertIn("five years", job["description"])
+        # ISO from the detail endpoint, milliseconds from search. Handling only
+        # one silently nulled every date.
+        self.assertEqual(job["postedAt"], "2026-09-03")
+
+    def test_a_job_with_no_description_is_dropped(self):
+        """The important one. score_job on an empty description returns 85 with
+        no gaps, above a real posting the candidate fits worse, because there
+        are no stated requirements to miss. An unscoreable job that outranks
+        scoreable ones is worse than an absent one."""
+        client = FakeClient({"jobs": [ROW]}, detail={**DETAIL, "description": ""})
+        with mock.patch("app.config.jobdatalake_key", return_value="k"):
+            self.assertEqual(run(sources.fetch_jobdatalake(client)), [])
+
+    def test_a_posting_that_fails_to_hydrate_is_dropped_not_fatal(self):
+        """One posting failing is not a source outage: _safe_result would mark
+        the whole adapter unhealthy for the sake of a single bad row."""
+        class Flaky(FakeClient):
+            async def get(self, url, params=None, headers=None, timeout=None):
+                if not url.rstrip("/").endswith("/jobs"):
+                    raise RuntimeError("502")
+                return FakeResponse(self.payload)
+
+        with mock.patch("app.config.jobdatalake_key", return_value="k"):
+            self.assertEqual(run(sources.fetch_jobdatalake(Flaky({"jobs": [ROW]}))), [])
 
     def test_a_row_with_no_apply_url_is_dropped(self):
-        self.assertEqual(self._fetch({"jobs": [{**ROW, "apply_url": ""}]}), [])
+        client = FakeClient({"jobs": [{**ROW, "url": ""}]}, detail={**DETAIL, "url": ""})
+        with mock.patch("app.config.jobdatalake_key", return_value="k"):
+            self.assertEqual(run(sources.fetch_jobdatalake(client)), [])
 
-    def test_a_row_with_no_title_is_dropped(self):
-        self.assertEqual(self._fetch({"jobs": [{**ROW, "title": "  "}]}), [])
+    def test_a_posting_with_no_title_anywhere_is_dropped(self):
+        """Detail is merged over search, so a title missing from the search row
+        but present in detail is used rather than dropped -- correct, and the
+        reason this blanks both."""
+        client = FakeClient({"jobs": [{**ROW, "title": "  "}]},
+                            detail={**DETAIL, "title": ""})
+        with mock.patch("app.config.jobdatalake_key", return_value="k"):
+            self.assertEqual(run(sources.fetch_jobdatalake(client)), [])
+
+    def test_detail_fills_a_field_the_search_row_lacks(self):
+        got = self._fetch({"jobs": [{**ROW, "title": ""}]})
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0]["title"], "Data Analyst")
 
     def test_a_remote_row_says_so_in_its_location(self):
         got = self._fetch({"jobs": [{**ROW, "remote_type": "fully_remote"}]})

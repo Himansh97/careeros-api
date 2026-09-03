@@ -25,6 +25,8 @@ employers to `GREENHOUSE_COMPANIES` / `ASHBY_COMPANIES`, not to crawl Wellfound.
 """
 from __future__ import annotations
 
+import time as _time
+
 import asyncio
 import datetime as _dt
 import html
@@ -836,54 +838,99 @@ JOBDATALAKE_URL = "https://api.jobdatalake.com/v1/jobs"
 
 
 
-def _jobdatalake_job(row: dict[str, Any]) -> dict[str, Any] | None:
-    """One API row as a CareerOS job, or None if it cannot be applied to.
+def _jobdatalake_job(row: dict[str, Any], description: str) -> dict[str, Any] | None:
+    """One API row as a CareerOS job, or None if it cannot be used.
 
-    A posting with no apply URL is dropped rather than shown. The pipeline's
-    whole output is somewhere to click, and a row that cannot be applied to
-    would occupy a slot a real posting should have.
+    Two ways a row is dropped. Without an apply URL there is nowhere to send
+    the candidate, and the pipeline's whole output is somewhere to click.
+
+    Without a description it must not enter the pool at all, which is the less
+    obvious one. `score_job` on an empty description returns **85 with no
+    gaps** -- higher than a real posting the candidate is a worse fit for,
+    because there are no stated requirements to miss. That is the same failure
+    AGENTS.md records from the mortgage-compliance posting that scored 98/100
+    with "no gaps" for a job he was not qualified for. A job with no
+    requirements text is unscoreable, and an unscoreable job that ranks above
+    scoreable ones is worse than an absent one.
     """
-    apply_url = (row.get("apply_url") or row.get("url") or "").strip()
+    apply_url = (row.get("url") or row.get("apply_url") or "").strip()
     title = (row.get("title") or "").strip()
-    if not apply_url or not title:
+    if not apply_url or not title or not description.strip():
         return None
 
-    company = row.get("company") or {}
-    name = (company.get("name") if isinstance(company, dict) else company) or ""
+    company = row.get("company")
+    if isinstance(company, dict):
+        name = company.get("name") or company.get("company_name") or ""
+    else:
+        name = row.get("company_name") or company or ""
     name = str(name).strip() or "Unknown"
 
     locations = row.get("locations") or []
-    if isinstance(locations, list):
-        place = ", ".join(str(x) for x in locations[:2] if x)
-    else:
-        place = str(locations)
+    place = ", ".join(str(x) for x in locations[:2] if x) if isinstance(locations, list) else str(locations)
     if row.get("remote_type") == "fully_remote" and "remote" not in place.lower():
         place = f"{place}, Remote".strip(", ")
 
     return _job(
-        jid=f"jdl_{row.get('handle') or row.get('id')}",
+        jid=f"jdl_{row.get('job_handle') or row.get('handle') or row.get('id')}",
         title=title,
         company=name,
-        location=place,
-        description=strip_html(row.get("description") or row.get("description_html") or ""),
+        location=place or "Not specified",
+        description=strip_html(description),
         apply_url=apply_url,
         source="JobDataLake",
-        # The originating ATS, when the aggregator knows it. Worth keeping:
-        # it is how a posting reached here, and the apply flow branches on it.
-        ats=(row.get("ats_source") or row.get("atsSource") or None),
-        posted=row.get("posted_at"),
+        # The domain is the closest thing the list carries to an originating
+        # ATS. The apply URL names the real one, and the apply flow reads that.
+        ats=None,
+        posted=_jobdatalake_date(row.get("posted_at")),
     )
+
+
+def _jobdatalake_date(value: Any) -> str | None:
+    """`posted_at` in two shapes, because the two endpoints disagree.
+
+    The search endpoint returns Unix milliseconds (1788459717875); the detail
+    endpoint returns ISO ('2026-09-03T18:21:57.875Z') for the same posting.
+    Hydration merges detail over search, so handling only the integer form
+    silently dropped every date on every job.
+    """
+    import datetime as _dt
+
+    if isinstance(value, str) and value.strip():
+        try:
+            return _dt.datetime.fromisoformat(
+                value.strip().replace("Z", "+00:00")
+            ).date().isoformat()
+        except ValueError:
+            return None
+
+    try:
+        ms = int(value)
+    except (TypeError, ValueError):
+        return None
+    if ms <= 0:
+        return None
+    return _dt.datetime.fromtimestamp(ms / 1000, tz=_dt.timezone.utc).date().isoformat()
 
 
 async def fetch_jobdatalake(
     client: Any,
     query: str = "*",
     region: str = DEFAULT_REGION,
-    per_page: int = 100,
+    per_page: int = 60,
     posted_within_days: int = 30,
+    hydrate_limit: int = 60,
 ) -> list[dict[str, Any]]:
-    """Postings from JobDataLake for one region, or nothing when unconfigured."""
-    import time
+    """Postings from JobDataLake for one region, or nothing when unconfigured.
+
+    Two calls per job, not one. The search endpoint returns no description --
+    only title, company, locations and skills -- and a job with no requirements
+    text cannot be scored (see `_jobdatalake_job`). So each row is hydrated
+    from `/v1/jobs/:handle`, and any that cannot be is dropped.
+
+    That costs `1 + n` credits per refresh, which is why `hydrate_limit` is
+    bounded and modest. The free tier is 1,000 credits; a 60-job refresh is 61.
+    """
+    import asyncio
 
     from .config import jobdatalake_key
 
@@ -892,21 +939,47 @@ async def fetch_jobdatalake(
         return []
 
     spec = REGIONS.get(region) or REGIONS[DEFAULT_REGION]
-    params = {
+    headers = {"X-API-Key": key}
+    params: dict[str, Any] = {
         "q": query or "*",
         "per_page": min(per_page, 100),
         "sort_by": "posted_at:desc",
-        "posted_after": int((time.time() - posted_within_days * 86400) * 1000),
+        "posted_after": int((_time.time() - posted_within_days * 86400) * 1000),
     }
     if spec["countries"]:
         params["countries"] = spec["countries"]
     if spec["location"]:
         params["location"] = spec["location"]
 
-    response = await client.get(
-        JOBDATALAKE_URL, params=params, headers={"X-API-Key": key}, timeout=20.0
-    )
+    response = await client.get(JOBDATALAKE_URL, params=params, headers=headers, timeout=20.0)
     response.raise_for_status()
     body = response.json()
     rows = body.get("jobs") or body.get("data") or body.get("results") or []
-    return [j for j in (_jobdatalake_job(r) for r in rows) if j]
+
+    async def hydrate(row: dict[str, Any]) -> dict[str, Any] | None:
+        handle = row.get("job_handle") or row.get("handle")
+        if not handle:
+            return None
+        try:
+            detail = await client.get(
+                f"{JOBDATALAKE_URL}/{handle}", headers=headers, timeout=20.0
+            )
+            detail.raise_for_status()
+            payload = detail.json()
+            full = payload.get("job") if isinstance(payload.get("job"), dict) else payload
+        except Exception:
+            # One posting failing to hydrate is not a source outage. The
+            # surrounding _safe_result would mark the whole adapter unhealthy.
+            return None
+        return _jobdatalake_job({**row, **full}, full.get("description") or "")
+
+    # Their published limit is 10 requests per second. Eight in flight leaves
+    # room for the rest of the crawl, which runs concurrently with this.
+    gate = asyncio.Semaphore(8)
+
+    async def bounded(row: dict[str, Any]) -> dict[str, Any] | None:
+        async with gate:
+            return await hydrate(row)
+
+    hydrated = await asyncio.gather(*(bounded(r) for r in rows[:hydrate_limit]))
+    return [j for j in hydrated if j]

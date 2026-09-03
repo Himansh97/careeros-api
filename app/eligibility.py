@@ -116,6 +116,44 @@ _US_MARKERS = (
 )
 
 
+# The markers above name places; work rights are recorded per ISO country. This
+# maps one to the other so a location the candidate may legally work in can be
+# told apart from one they cannot. Only countries where a right could plausibly
+# be held need an entry -- anything unmapped has no recorded right and is
+# blocked, which is the safe direction.
+_COUNTRY_OF_MARKER: dict[str, str] = {
+    "india": "IN", "bengaluru": "IN", "bangalore": "IN", "mumbai": "IN",
+    "hyderabad": "IN", "pune": "IN", "chennai": "IN", "delhi": "IN",
+    "noida": "IN", "gurgaon": "IN", "gurugram": "IN", "kolkata": "IN",
+    "ahmedabad": "IN", "pondicherry": "IN",
+    "canada": "CA", "toronto": "CA", "vancouver": "CA",
+    "united kingdom": "GB", " uk": "GB", "u.k.": "GB", "london": "GB",
+}
+
+
+def country_for(place: str) -> str | None:
+    """The ISO code for a place name, when one is known."""
+    low = (place or "").lower()
+    for marker, code in _COUNTRY_OF_MARKER.items():
+        if marker in low:
+            return code
+    return None
+
+
+def may_work_in(profile: Any, place: str) -> bool:
+    """Whether the candidate has a recorded, unrestricted right to work there.
+
+    Absent means no, deliberately. A missing entry is "not recorded", and
+    treating that as permission would turn a data gap into a green light on the
+    one question where being wrong is expensive.
+    """
+    code = country_for(place)
+    if not code:
+        return False
+    right = (getattr(profile, "work_rights", None) or {}).get(code) or {}
+    return bool(right.get("unrestricted"))
+
+
 def _foreign_location(job: dict[str, Any]) -> str | None:
     """The non-US place this role is based, or None.
 
@@ -157,15 +195,21 @@ def check_eligibility(job: dict[str, Any], profile: Any) -> dict[str, Any]:
     # simply does not reach it. The gate only read the description before, so a
     # Dublin/London People Analytics role scored 96 and led the shortlist, and a
     # São Paulo posting sat alongside it. F-1 OPT authorises work in the US only.
+    # A non-US location is only a blocker where no right to work is recorded.
+    # This rule used to reason from the US-shaped `work_authorization` string
+    # alone, so it treated every country identically and ruled out all 127
+    # India postings as ineligible while the candidate holds Indian
+    # citizenship. It still blocks Dublin and Sao Paulo, because no right is
+    # recorded for those.
     foreign = _foreign_location(job)
-    if foreign and non_citizen:
+    if foreign and non_citizen and not may_work_in(profile, job.get("location") or foreign):
         blockers.append(
             {
                 "type": "work_location",
                 "detail": (
                     f"Role is based in {foreign}. F-1/OPT authorises employment "
-                    "in the United States only, and confers no right to work "
-                    "abroad."
+                    "in the United States only, and no right to work in "
+                    f"{foreign} is recorded."
                 ),
                 "quote": job.get("location", "") or foreign,
             }
